@@ -641,27 +641,22 @@ theorem readU8_encode_in_phdr (e : ElfFile)
       · exact absurd hN hN2
       exact hOK
     · rw [hBuf3Sz]; exact section_end_le_encodedFileSize e i hi hN1 hN2
-  -- Step 2: shdr splice preserves byte (shdr region disjoint from phdr).
-  have hStep2 : Reader.readU8 buf3 (phoff + k) = Reader.readU8 buf2 (phoff + k) := by
-    show Reader.readU8 (splice buf2 shoff shdrW) (phoff + k) = _
-    apply Reader.readU8_splice_disjoint buf2 shoff shdrW hShdrFit (phoff + k)
-      (by rw [hBuf2Sz]; exact hrLtTotal)
+  -- Steps 2–3: shdr splice (disjoint) + phdr splice (inside) collapse
+  -- to a single `simp_splice` once the phdr/shdr disjointness is in
+  -- the local context.
+  have hPhShDisj :
+      (phoff + k) + 1 ≤ shoff ∨ shoff + shdrW.size ≤ (phoff + k) := by
     have hI := hDisj.phdr_shdr_disjoint
-    -- phdrShdrDisjoint : IntervalDisjoint phoff (phoff + phnum*56) shoff (shoff + shnum*64)
     unfold ElfFile.phdrShdrDisjoint IntervalDisjoint at hI
     rcases hI with hL | hR
-    · -- phoff + phnum*56 ≤ shoff: read at phoff+k is left of shdr region.
-      left; omega
-    · -- shoff + shnum*64 ≤ phoff: read at phoff+k is right of shdr region.
-      right; rw [hShdrWSz]; omega
-  -- Step 3: phdr splice INSIDE returns the payload.
-  have hStep3 : Reader.readU8 buf2 (phoff + k) = Reader.readU8 phdrW k := by
-    show Reader.readU8 (splice buf1 phoff phdrW) (phoff + k) = _
-    rw [Reader.readU8_splice_at_off_inside buf1 phoff phdrW hPhdrFit (phoff + k)
-      (Nat.le_add_right _ _) (by rw [hPhdrWSz]; omega)]
-    rw [show phoff + k - phoff = k from by omega]
+    · left; omega
+    · right; rw [hShdrWSz]; omega
+  have hPhdrInside : (phoff + k) - phoff < phdrW.size := by rw [hPhdrWSz]; omega
+  have hStep23 : Reader.readU8 buf3 (phoff + k) = Reader.readU8 phdrW k := by
+    show Reader.readU8 (splice (splice buf1 phoff phdrW) shoff shdrW) (phoff + k) = _
+    simp_splice
   show Reader.readU8 (e.sections.foldl _ buf3) (phoff + k) = Reader.readU8 phdrW k
-  rw [hStep1, hStep2, hStep3]
+  rw [hStep1, hStep23]
 
 /-- `readU16` analog of `readU8_encode_in_phdr`. -/
 theorem readU16_encode_in_phdr (e : ElfFile)
@@ -953,11 +948,10 @@ theorem readU8_encode_in_shdr (e : ElfFile)
       exact hOK
     · rw [hBuf3Sz]; exact section_end_le_encodedFileSize e i hi hN1 hN2
   -- Step 2: shdr splice INSIDE returns the payload.
+  have hShdrInside : (shoff + k) - shoff < shdrW.size := by rw [hShdrWSz]; omega
   have hStep2 : Reader.readU8 buf3 (shoff + k) = Reader.readU8 shdrW k := by
     show Reader.readU8 (splice buf2 shoff shdrW) (shoff + k) = _
-    rw [Reader.readU8_splice_at_off_inside buf2 shoff shdrW hShdrFit (shoff + k)
-      (Nat.le_add_right _ _) (by rw [hShdrWSz]; omega)]
-    rw [show shoff + k - shoff = k from by omega]
+    simp_splice
   show Reader.readU8 (e.sections.foldl _ buf3) (shoff + k) = Reader.readU8 shdrW k
   rw [hStep1, hStep2]
 

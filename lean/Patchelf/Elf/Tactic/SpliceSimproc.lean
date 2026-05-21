@@ -50,8 +50,12 @@ attribute [splice_simp]
   -- `have` clauses at the call site.
   Patchelf.Elf.Encoder.splice_size
   Patchelf.Elf.zeroBytes_size
-  -- arithmetic cleanups
+  -- arithmetic cleanups: collapse `(off + k) - off = k`-shaped offsets
+  -- that arise when an inside-splice lemma rewrites a read at
+  -- `(off + k)` to `readU{N} w (off + k - off)`.
   Nat.sub_zero
+  Nat.add_sub_cancel
+  Nat.add_sub_cancel_left
 
 namespace Patchelf.Elf.Tactic
 
