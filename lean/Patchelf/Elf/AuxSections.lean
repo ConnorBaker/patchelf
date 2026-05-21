@@ -13,8 +13,11 @@
   restore via an `elf_section` DSL that binds parser + encoder +
   ops together in one declaration.
 -/
+module
 
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

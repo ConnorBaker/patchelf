@@ -24,29 +24,32 @@
 
   Test status: all 49 shell tests in `tests/cases/` pass.
 -/
+module
 
-import Patchelf.Elf.Parser
-import Patchelf.Elf.Encoder
+public import Patchelf.Elf.Parser
+public import Patchelf.Elf.Encoder
 
 -- 14 mutating ops + adapter live under Elf/Ops/ and Elf/
 -- respectively.  The byte-level parser/encoder (Parser / Encoder)
 -- are the byte-layer wire codecs.
 
-import Patchelf.Elf.Adapter
-import Patchelf.Elf.Ops.OsAbi
-import Patchelf.Elf.Ops.Execstack
-import Patchelf.Elf.Ops.AddDebugTag
-import Patchelf.Elf.Ops.NoDefaultLib
-import Patchelf.Elf.Ops.AddNeeded
-import Patchelf.Elf.Ops.Rpath
-import Patchelf.Elf.Ops.Soname
-import Patchelf.Elf.Ops.RemoveRPath
-import Patchelf.Elf.Ops.RemoveNeeded
-import Patchelf.Elf.Ops.AddRpathEntry
-import Patchelf.Elf.Ops.Interpreter
-import Patchelf.Elf.Ops.ReplaceNeeded
-import Patchelf.Elf.Ops.ClearSymbolVersion
-import Patchelf.Elf.Ops.RenameDynamicSymbols
+public import Patchelf.Elf.Adapter
+public import Patchelf.Elf.Ops.OsAbi
+public import Patchelf.Elf.Ops.Execstack
+public import Patchelf.Elf.Ops.AddDebugTag
+public import Patchelf.Elf.Ops.NoDefaultLib
+public import Patchelf.Elf.Ops.AddNeeded
+public import Patchelf.Elf.Ops.Rpath
+public import Patchelf.Elf.Ops.Soname
+public import Patchelf.Elf.Ops.RemoveRPath
+public import Patchelf.Elf.Ops.RemoveNeeded
+public import Patchelf.Elf.Ops.AddRpathEntry
+public import Patchelf.Elf.Ops.Interpreter
+public import Patchelf.Elf.Ops.ReplaceNeeded
+public import Patchelf.Elf.Ops.ClearSymbolVersion
+public import Patchelf.Elf.Ops.RenameDynamicSymbols
+
+@[expose] public section
 
 namespace Patchelf.CLI
 
@@ -398,11 +401,11 @@ inductive RunResult
 namespace Run
 
 /-- Shared precondition-failure wrapper. -/
-private def badPrecondition (opName detail : String) : CliError :=
+def badPrecondition (opName detail : String) : CliError :=
   .opPreconditionFailed s!"{opName}: bad precondition ({detail})"
 
 /-- Convert the policy to the `forceRpath` Bool consumed by `modifyRPath`. -/
-private def policyForce (p : RpathTagPolicy) : Bool :=
+def policyForce (p : RpathTagPolicy) : Bool :=
   match p with
   | .default => false
   | .force   => true
@@ -414,7 +417,7 @@ end Run
     Most ops take `e : ValidElfFile → (args) → (_h : e.dynamic.isSome) → ValidElfFile`.
     This helper wires bytes → typed → op → bytes → encode,
     handling the `isSome` precondition via runtime match. -/
-private def runDynOp (opName : String) (e : Patchelf.Elf.ElfFile)
+def runDynOp (opName : String) (e : Patchelf.Elf.ElfFile)
     (f : (v : Patchelf.Elf.ValidElfFile) → v.dynamic.isSome → Patchelf.Elf.ValidElfFile) :
     Except CliError RunResult :=
   match Patchelf.Elf.Adapter.ofElfFile e with
@@ -431,7 +434,7 @@ private def runDynOp (opName : String) (e : Patchelf.Elf.ElfFile)
 
 /-- No-precondition wrapper (for ops like setOsAbi, modifyExecstack
     that don't require dynamic section). -/
-private def runOpNoPre (e : Patchelf.Elf.ElfFile)
+def runOpNoPre (e : Patchelf.Elf.ElfFile)
     (f : Patchelf.Elf.ValidElfFile → Patchelf.Elf.ValidElfFile) :
     Except CliError RunResult :=
   match Patchelf.Elf.Adapter.ofElfFile e with

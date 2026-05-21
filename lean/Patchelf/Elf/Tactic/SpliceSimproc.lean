@@ -25,9 +25,12 @@
   pre-module Lean files.  Naming the lemmas inline in the simp set
   avoids the issue and is no less explicit.
 -/
+module
 
-import Lean
-import Patchelf.Elf.Splice
+public meta import Lean
+public import Patchelf.Elf.Splice
+
+@[expose] public section
 
 namespace Patchelf.Elf.Tactic
 

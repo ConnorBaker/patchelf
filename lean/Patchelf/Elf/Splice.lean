@@ -2,8 +2,11 @@
   `Encoder.splice`: overwrite a byte-array region with fresh bytes
   while preserving the outer size.  Used by the byte-layer encoder.
 -/
+module
 
-import Patchelf.Elf.Reader
+public import Patchelf.Elf.Reader
+
+@[expose] public section
 
 namespace Patchelf.Elf.Encoder
 

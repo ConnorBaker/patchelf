@@ -13,8 +13,11 @@
   was removed.  Today this file is `updateSectionContent` plus
   three `@[simp]` projection lemmas.
 -/
+module
 
-import Patchelf.Elf.ElfFile
+public import Patchelf.Elf.ElfFile
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

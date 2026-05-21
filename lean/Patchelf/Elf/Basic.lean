@@ -14,9 +14,12 @@
   require parameterizing every decoder over a size/endianness
   tag — straightforward but orthogonal.
 -/
+module
 
-import Patchelf.Elf.Layout
-import Std.Tactic.BVDecide
+public import Patchelf.Elf.Layout
+meta import Std.Tactic.BVDecide
+
+@[expose] public section
 
 namespace Patchelf.Elf
 
@@ -815,14 +818,17 @@ theorem append_lookup (st : StringTable) (s : String)
   -- Apply findNullFrom_of_runway with nullIdx = st.bytes.size + s.toUTF8.size.
   let nullIdx := st.bytes.size + s.toUTF8.size
   have hFullSize : (st.bytes ++ s.toUTF8 ++ (⟨#[0]⟩ : ByteArray)).size = nullIdx + 1 := by
-    simp [ByteArray.size_append]; show _ + 1 = nullIdx + 1; rfl
+    simp only [ByteArray.size_append]
+    show st.bytes.size + s.toUTF8.size + 1 = nullIdx + 1
+    rfl
   have hNullLt : nullIdx < (st.bytes ++ s.toUTF8 ++ (⟨#[0]⟩ : ByteArray)).size := by
     rw [hFullSize]; omega
   -- The byte at nullIdx is 0.
   have hNullZero : (st.bytes ++ s.toUTF8 ++ (⟨#[0]⟩ : ByteArray))[nullIdx]'hNullLt = 0 := by
     -- nullIdx = (st.bytes ++ s.toUTF8).size.
     have hABSize : (st.bytes ++ s.toUTF8).size = nullIdx := by
-      simp [ByteArray.size_append]; rfl
+      simp only [ByteArray.size_append]
+      rfl
     rw [ByteArray.getElem_append_right (a := st.bytes ++ s.toUTF8)
         (b := (⟨#[0]⟩ : ByteArray)) (hle := hABSize ▸ Nat.le_refl _)]
     have : nullIdx - (st.bytes ++ s.toUTF8).size = 0 := by rw [hABSize]; omega
@@ -838,7 +844,8 @@ theorem append_lookup (st : StringTable) (s : String)
     refine ⟨hj, ?_⟩
     -- (st.bytes ++ s.toUTF8 ++ ⟨#[0]⟩)[j] = (st.bytes ++ s.toUTF8)[j] (since j < mid.size).
     have hMidSize : (st.bytes ++ s.toUTF8).size = nullIdx := by
-      simp [ByteArray.size_append]; rfl
+      simp only [ByteArray.size_append]
+      rfl
     have hjMidLt : j < (st.bytes ++ s.toUTF8).size := by rw [hMidSize]; exact hjHi
     rw [ByteArray.getElem_append_left (a := st.bytes ++ s.toUTF8)
         (b := (⟨#[0]⟩ : ByteArray)) hjMidLt]

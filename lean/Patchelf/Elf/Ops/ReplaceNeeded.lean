@@ -3,9 +3,12 @@
 
   Uses `mapDynamicOp` + `replaceNeededBy_getElem_rewritten`.
 -/
+module
 
-import Patchelf.Elf.ObservableCombinators
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.ObservableCombinators
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

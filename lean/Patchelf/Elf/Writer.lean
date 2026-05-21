@@ -6,6 +6,9 @@
   Per-struct (ElfHeader, ProgramHeader, ...) serializers live in
   `Serialize.lean`; this file stays focused on bit-level LE encoding.
 -/
+module
+
+@[expose] public section
 
 namespace Patchelf.Elf.Writer
 

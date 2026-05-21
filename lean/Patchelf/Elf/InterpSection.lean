@@ -5,8 +5,11 @@
   at encode time.  The path is the WHOLE section content; no internal
   structure.  Ops treat it as a single-field overwrite.
 -/
+module
 
-import Patchelf.Elf.Basic -- For the Repr ByteArray instance
+public import Patchelf.Elf.Basic -- For the Repr ByteArray instance
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

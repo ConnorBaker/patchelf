@@ -23,15 +23,18 @@
     `GnuHashTable_write_decode_extract` — the variable-length
     byte-roundtrip theorems.
 -/
+module
 
-import Patchelf.Elf.Basic
-import Patchelf.Elf.Layout
-import Patchelf.Elf.Writer
-import Patchelf.Elf.Reader
-import Patchelf.Elf.Serialize
-import Patchelf.Elf.Decode
-import Patchelf.Elf.ByteLevel
-import Patchelf.Elf.SchemaDSL
+public import Patchelf.Elf.Basic
+public import Patchelf.Elf.Layout
+public import Patchelf.Elf.Writer
+public import Patchelf.Elf.Reader
+public import Patchelf.Elf.Serialize
+public import Patchelf.Elf.Decode
+public import Patchelf.Elf.ByteLevel
+public meta import Patchelf.Elf.SchemaDSL
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

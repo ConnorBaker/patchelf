@@ -3,9 +3,12 @@
 
   `DF_1_NODEFLIB = 0x00000800` per `elf.h` — NOT `DF_1_PIE = 0x08000000`.
 -/
+module
 
-import Patchelf.Elf.ObservableCombinators
-import Std.Tactic.BVDecide
+public import Patchelf.Elf.ObservableCombinators
+meta import Std.Tactic.BVDecide
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

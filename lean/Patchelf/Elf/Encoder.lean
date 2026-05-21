@@ -24,16 +24,19 @@
   the Tier D byte-roundtrip conditional on a
   `DecodeRoundtripWitness` bundle — see that file.
 -/
+module
 
-import Patchelf.Elf.ElfFile
-import Patchelf.Elf.Layout
-import Patchelf.Elf.Writer
-import Patchelf.Elf.Splice
-import Patchelf.Elf.Serialize
-import Patchelf.Elf.Schemas
-import Patchelf.Elf.DynamicLemmas
-import Patchelf.Elf.SectionOps
-import Patchelf.Elf.LayoutEngine
+public import Patchelf.Elf.ElfFile
+public import Patchelf.Elf.Layout
+public import Patchelf.Elf.Writer
+public import Patchelf.Elf.Splice
+public import Patchelf.Elf.Serialize
+public import Patchelf.Elf.Schemas
+public import Patchelf.Elf.DynamicLemmas
+public import Patchelf.Elf.SectionOps
+public import Patchelf.Elf.LayoutEngine
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

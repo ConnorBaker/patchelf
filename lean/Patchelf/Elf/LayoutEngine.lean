@@ -18,19 +18,22 @@
   keeping stable offsets when possible; this pass exists for the
   "sections grew, need to reflow" case.
 -/
+module
 
-import Patchelf.Elf.ElfFile
-import Patchelf.Elf.SectionOps
+public import Patchelf.Elf.ElfFile
+public import Patchelf.Elf.SectionOps
+
+@[expose] public section
 
 namespace Patchelf.Elf
 
 open Layout
 
 /-- Update a section's `offset` field. -/
-private def Section.withOffset (s : Section) (newOff : Nat) : Section :=
+def Section.withOffset (s : Section) (newOff : Nat) : Section :=
   { s with offset := ⟨newOff⟩ }
 
-private def phdrWithOffsetSize (ph : Patchelf.Elf.ProgramHeader)
+def phdrWithOffsetSize (ph : Patchelf.Elf.ProgramHeader)
     (newOff newSize : Nat) : Patchelf.Elf.ProgramHeader :=
   { ph with offset := ⟨newOff⟩,
             filesz := ⟨newSize⟩,
@@ -60,7 +63,7 @@ theorem layoutAlreadyValid_of_spliceRegionsDisjoint (e : ElfFile)
     original index in the input array — needed because section 0 is
     treated specially even when its type isn't SHT_NULL).  Threads
     `(acc, cursor)` (placed sections so far, current file offset). -/
-private def layoutStep (acc : Array Section × Nat) (idxAndSec : Nat × Section) :
+def layoutStep (acc : Array Section × Nat) (idxAndSec : Nat × Section) :
     Array Section × Nat :=
   let (i, s) := idxAndSec
   let (sectionsAcc, cursor) := acc
@@ -81,7 +84,7 @@ private def layoutStep (acc : Array Section × Nat) (idxAndSec : Nat × Section)
 
     Foldl form (vs. tail-recursion) so proofs can use
     `Array.foldl_induction` directly. -/
-private def layoutSectionsFold (sections : Array Section) (cursor0 : Nat) :
+def layoutSectionsFold (sections : Array Section) (cursor0 : Nat) :
     Array Section × Nat :=
   let indexed := sections.mapIdx (fun i s => (i, s))
   indexed.foldl (init := (Array.mkEmpty sections.size, cursor0)) layoutStep
@@ -89,7 +92,7 @@ private def layoutSectionsFold (sections : Array Section) (cursor0 : Nat) :
 /-- Rebuild a single phdr entry against the freshly-laid-out section
     array.  PT_INTERP / PT_DYNAMIC pick up their target section's new
     offset and `encodedSize`; other phdr types pass through unchanged. -/
-private def relocatePhdr (interpIdx dynamicIdx : Option Nat)
+def relocatePhdr (interpIdx dynamicIdx : Option Nat)
     (newSections : Array Section) (ph : Patchelf.Elf.ProgramHeader) :
     Patchelf.Elf.ProgramHeader :=
   if ph.type = PhType.PT_INTERP then
@@ -168,18 +171,18 @@ theorem spliceRegionsDisjoint_of_layoutFullyValid (e : ElfFile)
     `withOffset` only rewrites `offset`; every other section field
     (including `content`, hence `encodedSize`) is unchanged. -/
 
-@[simp] private theorem withOffset_type (s : Section) (n : Nat) :
+@[simp] theorem withOffset_type (s : Section) (n : Nat) :
     (Section.withOffset s n).type = s.type := rfl
 
-@[simp] private theorem withOffset_content (s : Section) (n : Nat) :
+@[simp] theorem withOffset_content (s : Section) (n : Nat) :
     (Section.withOffset s n).content = s.content := rfl
 
-@[simp] private theorem withOffset_encodedSize (s : Section) (n : Nat) :
+@[simp] theorem withOffset_encodedSize (s : Section) (n : Nat) :
     (Section.withOffset s n).encodedSize = s.encodedSize := by
   unfold Section.encodedSize
   rfl
 
-@[simp] private theorem withOffset_addralign (s : Section) (n : Nat) :
+@[simp] theorem withOffset_addralign (s : Section) (n : Nat) :
     (Section.withOffset s n).addralign = s.addralign := rfl
 
 /-! ## `roundUp` arithmetic facts -/
@@ -204,7 +207,7 @@ theorem le_roundUp (n align : Nat) : n ≤ roundUp n align := by
 namespace LayoutSectionsFold
 
 /-- One step of the layout fold advances `acc.size` by 1. -/
-private theorem step_size_eq (acc : Array Section × Nat)
+theorem step_size_eq (acc : Array Section × Nat)
     (idx : Nat) (s : Section) :
     (layoutStep acc (idx, s)).1.size = acc.1.size + 1 := by
   unfold layoutStep
@@ -213,7 +216,7 @@ private theorem step_size_eq (acc : Array Section × Nat)
   · simp [hAlt, Array.size_push]
 
 /-- One step of the layout fold's cursor is monotone. -/
-private theorem step_cursor_mono (acc : Array Section × Nat)
+theorem step_cursor_mono (acc : Array Section × Nat)
     (idx : Nat) (s : Section) :
     acc.2 ≤ (layoutStep acc (idx, s)).2 := by
   unfold layoutStep
@@ -229,7 +232,7 @@ private theorem step_cursor_mono (acc : Array Section × Nat)
     indices read through to the original.  Used to discharge the four
     "preserved by step" subgoals in the placement / pair-disjoint
     stability proofs. -/
-private theorem layoutStep_getElem_lt (state : Array Section × Nat)
+theorem layoutStep_getElem_lt (state : Array Section × Nat)
     (idx : Nat) (s : Section) (j : Nat) (hjLt : j < state.1.size) :
     (layoutStep state (idx, s)).1[j]'(by rw [step_size_eq]; omega)
       = state.1[j]'hjLt := by
@@ -240,7 +243,7 @@ private theorem layoutStep_getElem_lt (state : Array Section × Nat)
 
 /-! Size + cursor floor invariants. -/
 
-private theorem size_eq (sections : Array Section) (cursor0 : Nat) :
+theorem size_eq (sections : Array Section) (cursor0 : Nat) :
     (layoutSectionsFold sections cursor0).1.size = sections.size := by
   unfold layoutSectionsFold
   let indexed := sections.mapIdx (fun i s => (i, s))
@@ -258,7 +261,7 @@ private theorem size_eq (sections : Array Section) (cursor0 : Nat) :
       rw [step_size_eq, ih])
   exact h
 
-private theorem cursor_floor (sections : Array Section) (cursor0 : Nat) :
+theorem cursor_floor (sections : Array Section) (cursor0 : Nat) :
     cursor0 ≤ (layoutSectionsFold sections cursor0).2 := by
   unfold layoutSectionsFold
   let indexed := sections.mapIdx (fun i s => (i, s))
@@ -283,7 +286,7 @@ private theorem cursor_floor (sections : Array Section) (cursor0 : Nat) :
       with offset preserved from the original,
     * or it has fresh offset `o` with `cursor0 ≤ o` and
       `o + encodedSize ≤ state.2`. -/
-private structure Placement (sections : Array Section) (cursor0 : Nat)
+structure Placement (sections : Array Section) (cursor0 : Nat)
     (state : Array Section × Nat) (j : Nat) : Prop where
   hjA : j < state.1.size
   hjS : j < sections.size
@@ -300,7 +303,7 @@ private structure Placement (sections : Array Section) (cursor0 : Nat)
 
 /-- Stability of `Placement` under a layout step: existing entries
     survive the push + cursor advance unchanged. -/
-private theorem placement_step_existing (sections : Array Section) (cursor0 : Nat)
+theorem placement_step_existing (sections : Array Section) (cursor0 : Nat)
     (state : Array Section × Nat) (idx : Nat) (s : Section) (j : Nat)
     (hPl : Placement sections cursor0 state j) :
     Placement sections cursor0 (layoutStep state (idx, s)) j := by
@@ -326,7 +329,7 @@ private theorem placement_step_existing (sections : Array Section) (cursor0 : Na
       · rw [hPushEq]; exact Nat.le_trans hPlace.2.2 hCurLe
 
 /-- The freshly-pushed entry has `Placement`. -/
-private theorem placement_step_new (sections : Array Section) (cursor0 : Nat)
+theorem placement_step_new (sections : Array Section) (cursor0 : Nat)
     (state : Array Section × Nat) (i : Nat) (s : Section)
     (hSize : state.1.size = i)
     (hCur : cursor0 ≤ state.2)
@@ -387,7 +390,7 @@ private theorem placement_step_new (sections : Array Section) (cursor0 : Nat)
     Returns `Or.inl hNOBITS` or `Or.inr hNULL`.  Used to collapse
     the 3-arm `rcases hExempt.1 with hj0 | hN | hNB` cascade — the
     j = 0 case is discharged by hSection0Null. -/
-private theorem Placement.exempt_to_NOBITS_or_NULL
+theorem Placement.exempt_to_NOBITS_or_NULL
     {sections : Array Section} {cursor0 : Nat}
     {state : Array Section × Nat} {j : Nat}
     (hPl : Placement sections cursor0 state j)
@@ -412,7 +415,7 @@ private theorem Placement.exempt_to_NOBITS_or_NULL
     NOBITS-NOBITS-NULL-NULL-IntervalDisjoint shape so the bridge from
     layoutForEncoding output to spliceRegionsDisjoint composes by
     `exact`. -/
-private def PairDisjoint (state : Array Section × Nat) (j j' : Nat) : Prop :=
+def PairDisjoint (state : Array Section × Nat) (j j' : Nat) : Prop :=
   ∀ (hjA : j < state.1.size) (hjA' : j' < state.1.size),
     let s  := state.1[j]'hjA
     let s' := state.1[j']'hjA'
@@ -423,7 +426,7 @@ private def PairDisjoint (state : Array Section × Nat) (j j' : Nat) : Prop :=
       s'.offset.val (s'.offset.val + s'.encodedSize)
 
 /-- `PairDisjoint` is symmetric. -/
-private theorem pairDisjoint_symm (state : Array Section × Nat) (j j' : Nat)
+theorem pairDisjoint_symm (state : Array Section × Nat) (j j' : Nat)
     (hPD : PairDisjoint state j j') : PairDisjoint state j' j := by
   unfold PairDisjoint
   intros hjA hjA'
@@ -441,7 +444,7 @@ private theorem pairDisjoint_symm (state : Array Section × Nat) (j j' : Nat)
 
 /-- Stability of `PairDisjoint` under a layout step: indices `< state.1.size`
     survive the push (getElem unchanged). -/
-private theorem pairDisjoint_step_existing
+theorem pairDisjoint_step_existing
     (state : Array Section × Nat) (idx : Nat) (s : Section)
     (j j' : Nat) (hjLt : j < state.1.size) (hjLt' : j' < state.1.size)
     (hPD : PairDisjoint state j j') :
@@ -463,7 +466,7 @@ private theorem pairDisjoint_step_existing
     of an existing-exempt entry's discharge: by the type_eq from
     Placement, the output entry at index 0 also has type SHT_NULL,
     which satisfies the disjointness disjunction. -/
-private theorem pairDisjoint_step_new_vs_old
+theorem pairDisjoint_step_new_vs_old
     (sections : Array Section) (cursor0 : Nat)
     (state : Array Section × Nat) (i : Nat) (s : Section) (j : Nat)
     (hSize : state.1.size = i)
@@ -521,7 +524,7 @@ private theorem pairDisjoint_step_new_vs_old
 
 /-- Strengthened motive for the layout fold: size, cursor floor,
     per-entry placement, and pairwise non-overlap. -/
-private structure LayoutInv (sections : Array Section) (cursor0 : Nat)
+structure LayoutInv (sections : Array Section) (cursor0 : Nat)
     (k : Nat) (state : Array Section × Nat) : Prop where
   size_eq : state.1.size = k
   cursor_floor : cursor0 ≤ state.2

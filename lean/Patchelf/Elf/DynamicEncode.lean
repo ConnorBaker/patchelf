@@ -24,9 +24,12 @@
   computation, PT_INTERP/PT_DYNAMIC derivation.  Those are the next
   steps if the DynamicSection encoder design holds up.
 -/
+module
 
-import Patchelf.Elf.DynamicSection
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.DynamicSection
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

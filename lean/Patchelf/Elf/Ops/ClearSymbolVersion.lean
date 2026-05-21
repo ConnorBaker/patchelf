@@ -22,9 +22,12 @@
   stated conditional on the bounds predicate holding for the witness
   index.
 -/
+module
 
-import Patchelf.Elf.ValidElfFile
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.ValidElfFile
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

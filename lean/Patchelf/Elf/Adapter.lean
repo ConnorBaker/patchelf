@@ -15,14 +15,17 @@
   This adapter is deliberately NOT a total semantic round-trip —
   it's the minimum needed for typed-op-through-bytes operation.
 -/
+module
 
-import Patchelf.Elf.ElfFile
-import Patchelf.Elf.SectionOps  -- provides ElfFile.updateSectionContent
-import Patchelf.Elf.ValidElfFile
-import Patchelf.Elf.DynamicParse   -- DynamicSection.parseFrom
-import Patchelf.Elf.DynamicEncode  -- DynamicSection.assembleEntries
-import Patchelf.Elf.Schemas        -- decodeVerneedChain / decodeSysVHash / decodeGnuHash + Verneed.write etc.
-import Patchelf.Elf.Serialize      -- writeArray (used by applyVerneed)
+public import Patchelf.Elf.ElfFile
+public import Patchelf.Elf.SectionOps  -- provides ElfFile.updateSectionContent
+public import Patchelf.Elf.ValidElfFile
+public import Patchelf.Elf.DynamicParse   -- DynamicSection.parseFrom
+public import Patchelf.Elf.DynamicEncode  -- DynamicSection.assembleEntries
+public import Patchelf.Elf.Schemas        -- decodeVerneedChain / decodeSysVHash / decodeGnuHash + Verneed.write etc.
+public import Patchelf.Elf.Serialize      -- writeArray (used by applyVerneed)
+
+@[expose] public section
 
 namespace Patchelf.Elf
 
@@ -60,7 +63,7 @@ namespace Adapter
     fallback, which will surface as `symbolNameOutOfBounds` downstream —
     the right behavior because the malformed input couldn't have had
     meaningful offsets anyway. -/
-private def fallbackStringSection : StringSection :=
+def fallbackStringSection : StringSection :=
   ⟨⟨#[0]⟩, by right; exact ⟨Nat.one_pos, rfl⟩⟩
 
 /-- Wrap a byte-layer StringTable into a typed StringSection.  If well-formed,
@@ -292,18 +295,18 @@ def patchDynamicEntries {ds : StringSection} (byteDyn : Array DynEntry)
     header/phdrs from typed as its last step — this shape makes the
     round-trip theorems `(toElfFile t typed).header = typed.header` rfl-provable. -/
 
-private def applyDynstr (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
+def applyDynstr (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
   match e.dynstrIdx with
   | none     => e
   | some iDs => e.updateSectionContent iDs (.strtab ⟨typed.dynstr.bytes⟩)
 
-private def applyDynsym (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
+def applyDynsym (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
   match e.dynsymIdx, typed.dynsym with
   | some iDsym, some typedSyms =>
       e.updateSectionContent iDsym (.dynsym (typedSyms.symbols.map symbolOfTyped))
   | _, _ => e
 
-private def applyDynamic (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
+def applyDynamic (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
   match e.dynamicIdx, typed.dynamic with
   | some iDyn, some typedDyn =>
       match e.dynamic with
@@ -316,30 +319,30 @@ private def applyDynamic (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
           e.updateSectionContent iDyn (.dynamic (typedDyn.assembleEntries ctx))
   | _, _ => e
 
-private def applyVersym (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
+def applyVersym (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
   match e.versymIdx, typed.versym with
   | some iVs, some vs => e.updateSectionContent iVs (.versym vs)
   | _, _ => e
 
-private def applySysvHash (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
+def applySysvHash (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
   match e.sysvHashIdx, typed.sysvHash with
   | some iHsh, some shs =>
       e.updateSectionContent iHsh (.raw (SysVHashTable.write shs.table))
   | _, _ => e
 
-private def applyGnuHash (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
+def applyGnuHash (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
   match e.gnuHashIdx, typed.gnuHash with
   | some iGh, some ghs =>
       e.updateSectionContent iGh (.raw (GnuHashTable.write ghs.table))
   | _, _ => e
 
-private def applyVerneed (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
+def applyVerneed (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
   match e.verneedIdx, typed.verneed with
   | some iVn, some vn =>
       e.updateSectionContent iVn (.raw (writeArray Verneed.write vn.entries))
   | _, _ => e
 
-private def applyInterp (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
+def applyInterp (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
   match e.interpIdx, typed.interp with
   | some iIn, some ip => e.updateSectionContent iIn (.raw ip.toBytes)
   | _, _ => e

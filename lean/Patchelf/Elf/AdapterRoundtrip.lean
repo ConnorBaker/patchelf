@@ -24,8 +24,11 @@
   Each success branch closes with `cases h; rfl`; error branches
   close with `simp_all`.
 -/
+module
 
-import Patchelf.Elf.Adapter
+public import Patchelf.Elf.Adapter
+
+@[expose] public section
 
 namespace Patchelf.Elf.Adapter
 

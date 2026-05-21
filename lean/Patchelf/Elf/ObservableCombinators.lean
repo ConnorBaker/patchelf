@@ -23,9 +23,12 @@
   After this lands, a grow-dynstr op's observable collapses from
   ~20 LOC to ~5 LOC.
 -/
+module
 
-import Patchelf.Elf.ValidElfFile
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.ValidElfFile
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

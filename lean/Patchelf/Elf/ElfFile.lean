@@ -16,11 +16,14 @@
   Architecture and invariant details: see `lean/STATUS.md` and
   `research/REWRITE-ABI.md`.
 -/
+module
 
-import Patchelf.Elf.Basic
-import Patchelf.Elf.Layout
-import Patchelf.Elf.Schemas
-import Lean
+public import Patchelf.Elf.Basic
+public import Patchelf.Elf.Layout
+public import Patchelf.Elf.Schemas
+public meta import Lean
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

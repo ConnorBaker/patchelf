@@ -15,8 +15,11 @@
   `Basic.lean` — we reuse `append_size`, `append_wellFormed`, `append_lookup`,
   etc. so we don't re-prove byte-level runway lemmas.
 -/
+module
 
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

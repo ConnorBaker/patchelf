@@ -4,9 +4,12 @@
   Modal op.  `.set` grows dynstr + sets rpath/runpath slot.
   `.remove` drops both.
 -/
+module
 
-import Patchelf.Elf.ObservableCombinators
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.ObservableCombinators
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

@@ -94,9 +94,12 @@
   `ProgramHeader`, `SectionHeader`, `ElfHeader` (see
   `Patchelf/Elf/Schemas.lean`).
 -/
+module
 
-import Lean
-import Patchelf.Elf.ByteLevel
+public meta import Lean
+public import Patchelf.Elf.ByteLevel
+
+@[expose] public section
 
 namespace Patchelf.Elf.SchemaDSL
 
@@ -252,7 +255,7 @@ syntax (name := elfSchemaCmd) "elf_schema " ident " := " num
     field occupies; for primitive/codec it's the primitive width, for
     raw_bytes it's `N`, for embed it's the sub-struct's size. -/
 
-private inductive FieldKind where
+private meta inductive FieldKind where
   /-- Plain primitive: `UInt{8,16,32,64}`. `width` is in bytes. -/
   | primitive (width : Nat)
   /-- Wrapped primitive: the Lean-level field type is a 1-field
@@ -300,7 +303,7 @@ private inductive FieldKind where
   deriving Inhabited
 
 /-- The on-disk byte-size a field occupies. -/
-private def FieldKind.byteSize : FieldKind → Nat
+private meta def FieldKind.byteSize : FieldKind → Nat
   | .primitive w          => w
   | .wrapped w _ _        => w
   | .wrappedNat w _ _     => w
@@ -308,15 +311,15 @@ private def FieldKind.byteSize : FieldKind → Nat
   | .rawBytes n _         => n
   | .embed n _ _ _ _ _ _ _ => n
 
-private structure FieldSpec where
+private meta structure FieldSpec where
   name   : Name
   offset : Nat
   kind   : FieldKind
   deriving Inhabited
 
-private def FieldSpec.byteSize (f : FieldSpec) : Nat := f.kind.byteSize
+private meta def FieldSpec.byteSize (f : FieldSpec) : Nat := f.kind.byteSize
 
-private def parseWidthTok? :
+private meta def parseWidthTok? :
     TSyntax `elfSchemaWidth → CommandElabM Nat
   | `(elfSchemaWidth| u8)  => pure 1
   | `(elfSchemaWidth| u16) => pure 2
@@ -324,7 +327,7 @@ private def parseWidthTok? :
   | `(elfSchemaWidth| u64) => pure 8
   | w => throwErrorAt w "elf_schema: unknown width"
 
-private def parseFieldStx (stx : TSyntax `elfSchemaField) :
+private meta def parseFieldStx (stx : TSyntax `elfSchemaField) :
     CommandElabM FieldSpec := do
   -- Each field kind has its own quotation pattern; the order of
   -- branches doesn't matter because the patterns are mutually
@@ -404,25 +407,25 @@ private def parseFieldStx (stx : TSyntax `elfSchemaField) :
 /-- Root-qualified `Patchelf.Elf`.  The `_root_` prefix lets the
     emitted declarations use fully-qualified names regardless of
     whether the caller has already entered `namespace Patchelf.Elf`. -/
-private def rootElfNs : Name := `_root_ ++ `Patchelf ++ `Elf
+private meta def rootElfNs : Name := `_root_ ++ `Patchelf ++ `Elf
 
 /-- `_root_.Patchelf.Elf.Decode`. -/
-private def rootDecodeNs : Name := rootElfNs ++ `Decode
+private meta def rootDecodeNs : Name := rootElfNs ++ `Decode
 
 /-- `_root_.Patchelf.Elf.ByteWidth`. -/
-private def rootByteWidthNs : Name := rootElfNs ++ `ByteWidth
+private meta def rootByteWidthNs : Name := rootElfNs ++ `ByteWidth
 
 /-- `Writer.writeU{N}` / `Reader.readU{N}` for byte-width `w`.  The
     width is given in BYTES (1/2/4/8); the generated name uses the
     corresponding bit-width (8/16/32/64). -/
-private def writeUIdent (w : Nat) : Ident :=
+private meta def writeUIdent (w : Nat) : Ident :=
   mkIdent (`Patchelf ++ `Elf ++ `Writer ++ .mkSimple s!"writeU{8 * w}")
 
-private def readUIdent (w : Nat) : Ident :=
+private meta def readUIdent (w : Nat) : Ident :=
   mkIdent (`Patchelf ++ `Elf ++ `Reader ++ .mkSimple s!"readU{8 * w}")
 
 /-- `Patchelf.Elf.writeU{N}_readU{N}_extract` lemma name for width `w`. -/
-private def writeReadExtractIdent (w : Nat) : Ident :=
+private meta def writeReadExtractIdent (w : Nat) : Ident :=
   mkIdent (`Patchelf ++ `Elf
     ++ .mkSimple s!"writeU{8 * w}_readU{8 * w}_extract")
 
@@ -440,7 +443,7 @@ private def writeReadExtractIdent (w : Nat) : Ident :=
     forward-roundtrip proof for prec schemas, where after a
     `cases x with | mk name ... =>` the field names are local
     bindings rather than projections of `x`. -/
-private def writeFieldTerm (f : FieldSpec) (bareNames : Bool := false) :
+private meta def writeFieldTerm (f : FieldSpec) (bareNames : Bool := false) :
     CommandElabM (TSyntax `term) := do
   let fieldAccess ←
     if bareNames then `($(mkIdent f.name):ident) else `(x.$(mkIdent f.name):ident)
@@ -465,7 +468,7 @@ private def writeFieldTerm (f : FieldSpec) (bareNames : Bool := false) :
     `($wfId $fieldAccess)
 
 /-- Build the full write function body: chain of `++` applications. -/
-private def writeBodyQuoted (fields : Array FieldSpec) :
+private meta def writeBodyQuoted (fields : Array FieldSpec) :
     CommandElabM (TSyntax `term) := do
   let parts ← fields.mapM writeFieldTerm
   match parts.toList with
@@ -476,7 +479,7 @@ private def writeBodyQuoted (fields : Array FieldSpec) :
 
     Each field emits one structInstField, except raw_bytes with
     size_field which emits TWO (the bytes + the size-proof). -/
-private def decodeFieldAssigns (fields : Array FieldSpec) :
+private meta def decodeFieldAssigns (fields : Array FieldSpec) :
     CommandElabM (Array (TSyntax ``Lean.Parser.Term.structInstField)) := do
   let rdPfx : Name := `Patchelf ++ `Elf ++ `Reader
   let readBytesId     : Ident := mkIdent (rdPfx ++ `readBytes)
@@ -530,7 +533,7 @@ private def decodeFieldAssigns (fields : Array FieldSpec) :
     `show` tactic and also the form to which the per-field rewrites
     (writeUN_readUN_extract, Reader.readBytes, embed roundtrip) drive
     the LHS. -/
-private def postRewriteFieldTerm (f : FieldSpec) :
+private meta def postRewriteFieldTerm (f : FieldSpec) :
     CommandElabM (TSyntax `term) := do
   let offsetLit : TSyntax `num := Syntax.mkNumLit (toString f.offset)
   match f.kind with
@@ -551,7 +554,7 @@ private def postRewriteFieldTerm (f : FieldSpec) :
     Replaces the string-based `roundtripProof` with quotation-based
     emission.  Each tactic is a `TSyntax `tactic` built via
     `` `(tactic| ...) ``; external identifiers come from `mkIdent`. -/
-private def roundtripProofTactics (writeId decodeId : Ident) (total : Nat)
+private meta def roundtripProofTactics (writeId decodeId : Ident) (total : Nat)
     (fields : Array FieldSpec) :
     CommandElabM (Array (TSyntax `tactic)) := do
   let n := fields.size
@@ -677,7 +680,7 @@ private def roundtripProofTactics (writeId decodeId : Ident) (total : Nat)
     `wrap_nat` fields are present).  `bareNames := true` produces bare
     `<fname>.val` instead of `x.<fname>.val` (used inside the prec
     proof shape after `cases x with | mk ...`). -/
-private def wrapNatFitBinders (fields : Array FieldSpec)
+private meta def wrapNatFitBinders (fields : Array FieldSpec)
     (bareNames : Bool := false) :
     CommandElabM (Array (TSyntax ``Lean.Parser.Term.bracketedBinder)) := do
   let mut binders : Array (TSyntax ``Lean.Parser.Term.bracketedBinder) := #[]
@@ -702,7 +705,7 @@ private def wrapNatFitBinders (fields : Array FieldSpec)
     of per-field write expressions used in the `show $offLit =
     $prefix.size + 0` step.  `bareNames` propagates to
     `writeFieldTerm`. -/
-private def writePrefixChain (fields : Array FieldSpec) (upTo : Nat)
+private meta def writePrefixChain (fields : Array FieldSpec) (upTo : Nat)
     (bareNames : Bool := false) :
     CommandElabM (TSyntax `term) := do
   let parts ← (fields.extract 0 upTo).mapM (writeFieldTerm · bareNames)
@@ -722,7 +725,7 @@ private def writePrefixChain (fields : Array FieldSpec) (upTo : Nat)
     `bareNames := true` produces bare local names (post-`cases`
     destructuring) instead of `x.<field>` projections; required for
     the prec proof shape's prefix-chain step. -/
-private def forwardFieldTactics (fields : Array FieldSpec) (i : Nat)
+private meta def forwardFieldTactics (fields : Array FieldSpec) (i : Nat)
     (sizeHints : Array (TSyntax `Lean.Parser.Tactic.simpLemma) := #[])
     (bareNames : Bool := false) :
     CommandElabM (Array (TSyntax `tactic)) := do
@@ -776,7 +779,7 @@ private def forwardFieldTactics (fields : Array FieldSpec) (i : Nat)
     schemas.  Assumes every field is `.primitive`, `.wrapped`, or
     `.codec` — `.rawBytes` and `.embed-with-prec` are handled by
     `forwardProofTacticsPrec`. -/
-private def forwardProofTactics (writeId decodeId : Ident)
+private meta def forwardProofTactics (writeId decodeId : Ident)
     (fields : Array FieldSpec) :
     CommandElabM (Array (TSyntax `tactic)) := do
   let n := fields.size
@@ -808,7 +811,7 @@ private def forwardProofTactics (writeId decodeId : Ident)
 
     Each non-embed leg uses `forwardFieldTactics` with size hints
     `[ByteArray.size_append, hSz]` and `bareNames := true`. -/
-private def forwardProofTacticsPrec (typeName : Name) (writeId decodeId : Ident)
+private meta def forwardProofTacticsPrec (typeName : Name) (writeId decodeId : Ident)
     (fields : Array FieldSpec) :
     CommandElabM (Array (TSyntax `tactic)) := do
   let n := fields.size
@@ -897,7 +900,7 @@ private structure SchemaOpts where
 /-- Extract optional `decode_as` / `roundtrip_as` / `bytewidth_as` /
     `skip_write` / `skip_decode` / `skip_bytewidth` /
     `with_array_decoder` clauses. -/
-private def parseOpts
+private meta def parseOpts
     (optsStx : TSyntaxArray `Patchelf.Elf.SchemaDSL.elfSchemaOpt)
     : CommandElabM SchemaOpts := do
   let mut opts : SchemaOpts := {}
@@ -921,7 +924,7 @@ private def parseOpts
   return opts
 
 @[command_elab elfSchemaCmd]
-def elabElfSchema : CommandElab := fun stx => do
+meta def elabElfSchema : CommandElab := fun stx => do
   match stx with
   | `(elf_schema $typeName:ident := $totalStx:num $optsStx:elfSchemaOpt* $fieldsStx:elfSchemaField*) =>
     let total := totalStx.getNat

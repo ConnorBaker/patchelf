@@ -5,6 +5,9 @@
   phdr-type code can't be accidentally compared to an shdr-type code,
   or a fixed section size confused with a byte offset.
 -/
+module
+
+@[expose] public section
 
 namespace Patchelf.Elf.Layout
 

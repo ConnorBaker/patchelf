@@ -20,12 +20,15 @@
   variant handles the nested `readU32 (off + 4 + k)` form, which
   doesn't fit a uniform template.
 -/
+module
 
-import Patchelf.Elf.Writer
-import Patchelf.Elf.Reader
-import Patchelf.Elf.Serialize
-import Std.Tactic.BVDecide
-import Lean
+public import Patchelf.Elf.Writer
+public import Patchelf.Elf.Reader
+public import Patchelf.Elf.Serialize
+public meta import Std.Tactic.BVDecide
+public meta import Lean
+
+@[expose] public section
 
 namespace Patchelf.Elf
 
@@ -55,7 +58,7 @@ open Lean Elab Command
     definition); the U64 roundtrip theorem below uses those forms
     directly, bridging via `have : off + k = off + 4 + (k-4)` in
     the per-case branches that need it. -/
-private def buildReadByteLemma (bw : Nat) (k : Nat) :
+private meta def buildReadByteLemma (bw : Nat) (k : Nat) :
     CommandElabM (TSyntax `command) := do
   let shift := k * 8
   let shiftLit : TSyntax `num := Syntax.mkNumLit (toString shift)
@@ -76,7 +79,7 @@ private def buildReadByteLemma (bw : Nat) (k : Nat) :
       `(bs[off + $kLit]'(by omega))
   if bw = 64 then
     `(command|
-      private theorem $thmName (bs : ByteArray) (off : Nat)
+      theorem $thmName (bs : ByteArray) (off : Nat)
           (h0 : off < bs.size) (h1 : off + 1 < bs.size)
           (h2 : off + 2 < bs.size) (h3 : off + 3 < bs.size)
           (h4 : off + 4 < bs.size)
@@ -90,7 +93,7 @@ private def buildReadByteLemma (bw : Nat) (k : Nat) :
         bv_decide)
   else if bw = 32 then
     `(command|
-      private theorem $thmName (bs : ByteArray) (off : Nat)
+      theorem $thmName (bs : ByteArray) (off : Nat)
           (h0 : off < bs.size) (h1 : off + 1 < bs.size)
           (h2 : off + 2 < bs.size) (h3 : off + 3 < bs.size) :
           (($readUId bs off >>> $shiftLit) &&& 0xff).toUInt8 = $rhs := by
@@ -99,7 +102,7 @@ private def buildReadByteLemma (bw : Nat) (k : Nat) :
         bv_decide)
   else -- bw = 16
     `(command|
-      private theorem $thmName (bs : ByteArray) (off : Nat)
+      theorem $thmName (bs : ByteArray) (off : Nat)
           (h0 : off < bs.size) (h1 : off + 1 < bs.size) :
           (($readUId bs off >>> $shiftLit) &&& 0xff).toUInt8 = $rhs := by
         unfold $readUId readU8
@@ -109,13 +112,13 @@ private def buildReadByteLemma (bw : Nat) (k : Nat) :
 /-- Build `writeU{bw}_getElem` via term-level `match` + per-case `rfl`.
     The match body is constructed by parsing a generated string (the
     shape is fixed regardless of width; only the arm count varies). -/
-private def buildGetElemLemma (bw : Nat) :
+private meta def buildGetElemLemma (bw : Nat) :
     CommandElabM (TSyntax `command) := do
   let byteCount := bw / 8
   let mut branches : String := ""
   for k in [0:byteCount] do
     branches := branches ++ s!"        | ⟨{k}, _⟩ => rfl\n"
-  let thmText := s!"private theorem writeU{bw}_getElem (v : UInt{bw}) (i : Fin {byteCount}) :\n" ++
+  let thmText := s!"theorem writeU{bw}_getElem (v : UInt{bw}) (i : Fin {byteCount}) :\n" ++
                  s!"    (writeU{bw} v)[i.val]'(by show i.val < {byteCount}; exact i.isLt) =\n" ++
                  s!"      ((v >>> (8 * i.val.toUInt{bw})) &&& 0xff).toUInt8 :=\n" ++
                  s!"  match i with\n{branches}"
@@ -593,7 +596,7 @@ theorem writeArray_push {α} (f : α → ByteArray) (l : Array α) (x : α) :
     input), the extract of `writeArray f arr` at offset `i * N` of width
     `N` recovers `f arr[i]`.  Built via `Array.pop`/`writeArray_push`
     induction directly at the extract level (no per-byte detour). -/
-private theorem writeArray_uniform_extract_aux {α} (N : Nat)
+theorem writeArray_uniform_extract_aux {α} (N : Nat)
     (f : α → ByteArray) (hUniform : ∀ x, (f x).size = N) :
     ∀ (n : Nat) (arr : Array α) (_ : arr.size = n)
       (i : Nat) (hi : i < arr.size),
@@ -668,7 +671,7 @@ theorem writeArray_uniform_extract_at_index {α} (N : Nat)
     (writeArray f arr).extract (i * N) (i * N + N) = f (arr[i]'hi) :=
   writeArray_uniform_extract_aux N f hUniform arr.size arr rfl i hi
 
-private theorem readU32_writeArray_aux : ∀ (n : Nat) (arr : Array UInt32) (_ : arr.size = n)
+theorem readU32_writeArray_aux : ∀ (n : Nat) (arr : Array UInt32) (_ : arr.size = n)
     (i : Nat) (hi : i < arr.size),
     Reader.readU32 (writeArray writeU32 arr) (i * 4) = arr[i] := by
   intro n
@@ -711,7 +714,7 @@ theorem readU32_writeArray (arr : Array UInt32) (i : Nat) (hi : i < arr.size) :
     Reader.readU32 (writeArray writeU32 arr) (i * 4) = arr[i] :=
   readU32_writeArray_aux arr.size arr rfl i hi
 
-private theorem readU64_writeArray_aux : ∀ (n : Nat) (arr : Array UInt64) (_ : arr.size = n)
+theorem readU64_writeArray_aux : ∀ (n : Nat) (arr : Array UInt64) (_ : arr.size = n)
     (i : Nat) (hi : i < arr.size),
     Reader.readU64 (writeArray writeU64 arr) (i * 8) = arr[i] := by
   intro n
@@ -754,7 +757,7 @@ theorem readU64_writeArray (arr : Array UInt64) (i : Nat) (hi : i < arr.size) :
     Reader.readU64 (writeArray writeU64 arr) (i * 8) = arr[i] :=
   readU64_writeArray_aux arr.size arr rfl i hi
 
-private theorem readU16_writeArray_aux : ∀ (n : Nat) (arr : Array UInt16) (_ : arr.size = n)
+theorem readU16_writeArray_aux : ∀ (n : Nat) (arr : Array UInt16) (_ : arr.size = n)
     (i : Nat) (hi : i < arr.size),
     Reader.readU16 (writeArray writeU16 arr) (i * 2) = arr[i] := by
   intro n

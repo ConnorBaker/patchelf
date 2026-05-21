@@ -6,9 +6,12 @@
   Symbol (st_info, st_other, st_shndx, st_value, st_size) is preserved
   verbatim.
 -/
+module
 
-import Patchelf.Elf.StringSection
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.StringSection
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

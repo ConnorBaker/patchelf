@@ -4,8 +4,11 @@
   Single record update; observable follows from `mapDynamicOp_observable`
   plus rfl on the cleared fields.
 -/
+module
 
-import Patchelf.Elf.ObservableCombinators
+public import Patchelf.Elf.ObservableCombinators
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

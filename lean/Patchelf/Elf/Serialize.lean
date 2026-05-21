@@ -9,10 +9,13 @@
   (Verneed, SysV hash, GNU hash) are hand-written in `Schemas.lean`
   too, co-located with the DSL outputs they depend on.
 -/
+module
 
-import Patchelf.Elf.Basic
-import Patchelf.Elf.Layout
-import Patchelf.Elf.Writer
+public import Patchelf.Elf.Basic
+public import Patchelf.Elf.Layout
+public import Patchelf.Elf.Writer
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

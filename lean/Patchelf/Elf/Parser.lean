@@ -26,13 +26,16 @@
   IsValid` instance; on failure a generic `shdrIdxMismatch` is
   thrown (per-clause error classification is future work).
 -/
+module
 
-import Patchelf.Elf.ElfFile
-import Patchelf.Elf.Layout
-import Patchelf.Elf.Reader
-import Patchelf.Elf.Decode
-import Patchelf.Elf.Schemas
-import Patchelf.Elf.ParseHeader
+public import Patchelf.Elf.ElfFile
+public import Patchelf.Elf.Layout
+public import Patchelf.Elf.Reader
+public import Patchelf.Elf.Decode
+public import Patchelf.Elf.Schemas
+public import Patchelf.Elf.ParseHeader
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

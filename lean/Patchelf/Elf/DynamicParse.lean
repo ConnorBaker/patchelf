@@ -38,9 +38,12 @@
   exact binaries users want to patch.  The derived values in the
   encoder are guaranteed correct.
 -/
+module
 
-import Patchelf.Elf.DynamicSection
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.DynamicSection
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 
@@ -58,7 +61,7 @@ namespace DynamicSection
 /-- Try to coerce a `UInt64` into `Fin ds.size`.  Returns `none` if
     the value is out of bounds; callers turn that into a
     `valueOutOfBounds` error. -/
-private def tryMkFin (ds : StringSection) (v : UInt64) : Option (Fin ds.size) :=
+def tryMkFin (ds : StringSection) (v : UInt64) : Option (Fin ds.size) :=
   if h : v.toNat < ds.size then some ⟨v.toNat, h⟩ else none
 
 /-- Per-entry dispatch step.  Takes the accumulator-so-far + the
@@ -68,7 +71,7 @@ private def tryMkFin (ds : StringSection) (v : UInt64) : Option (Fin ds.size) :=
     during the fold (represented via updates on an already-allocated
     structure).  Coherence tags and DT_NULL are skipped silently;
     unknown tags fall through to `unstructured`. -/
-private def stepEntry (ds : StringSection) (acc : DynamicSection ds)
+def stepEntry (ds : StringSection) (acc : DynamicSection ds)
     (d : DynEntry) : Except DynamicParseError (DynamicSection ds) :=
   match d.tag with
   -- Terminator + coherence tags: DROP (return acc unchanged).

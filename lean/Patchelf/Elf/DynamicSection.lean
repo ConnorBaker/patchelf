@@ -26,8 +26,11 @@
   `Array.map (Fin.castLE h)` on the offset fields; non-offset fields
   pass through unchanged.
 -/
+module
 
-import Patchelf.Elf.StringSection
+public import Patchelf.Elf.StringSection
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

@@ -54,11 +54,14 @@
     size lemmas, and the hypotheses bundled in
     `DecodeRoundtripWitness`.
 -/
+module
 
-import Patchelf.Elf.ElfFile
-import Patchelf.Elf.Parser
-import Patchelf.Elf.Encoder
-import Patchelf.Elf.Tactic.SpliceSimproc
+public import Patchelf.Elf.ElfFile
+public import Patchelf.Elf.Parser
+public import Patchelf.Elf.Encoder
+public meta import Patchelf.Elf.Tactic.SpliceSimproc
+
+@[expose] public section
 
 namespace Patchelf.Elf
 
@@ -125,7 +128,7 @@ theorem encode_size_eq (e : ElfFile) :
     These 4 lemmas (header / phdr / shdr / section regions) feed the
     `DecodeRoundtripWitness` discharges below. -/
 
-private theorem readU8_encode_in_header (e : ElfFile)
+theorem readU8_encode_in_header (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -232,7 +235,7 @@ private theorem readU8_encode_in_header (e : ElfFile)
   rw [hStep1, hStep234]
 
 /-- `readU16` analog of `readU8_encode_in_header`. -/
-private theorem readU16_encode_in_header (e : ElfFile)
+theorem readU16_encode_in_header (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -244,7 +247,7 @@ private theorem readU16_encode_in_header (e : ElfFile)
   rw [readU8_encode_in_header e hSync hLay hDisj (r + 1) (by omega)]
 
 /-- `readU32` analog. -/
-private theorem readU32_encode_in_header (e : ElfFile)
+theorem readU32_encode_in_header (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -255,7 +258,7 @@ private theorem readU32_encode_in_header (e : ElfFile)
   iterate 4 rw [readU8_encode_in_header e hSync hLay hDisj _ (by omega)]
 
 /-- `readU64` analog. -/
-private theorem readU64_encode_in_header (e : ElfFile)
+theorem readU64_encode_in_header (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -268,7 +271,7 @@ private theorem readU64_encode_in_header (e : ElfFile)
 
 /-- Per-byte preservation: the i-th byte of `(encode e)` agrees with
     the i-th byte of `ElfHeader.write e.header` for `i < ehdrSize`. -/
-private theorem getElem_encode_in_header (e : ElfFile)
+theorem getElem_encode_in_header (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -283,7 +286,7 @@ private theorem getElem_encode_in_header (e : ElfFile)
 
 /-- Extract equality on the header region: `(encode e).extract 0 ehdrSize
     = ElfHeader.write e.header`.  Per-byte preservation lifted to extract. -/
-private theorem extract_encode_eq_header_write (e : ElfFile)
+theorem extract_encode_eq_header_write (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint) :
@@ -315,7 +318,7 @@ set_option maxHeartbeats 4000000 in
 
     Routes through `decodeHeader_eq_slice` to avoid the 14-field
     `congr 1` cascade. -/
-private theorem decodeHeader_encode (e : ElfFile)
+theorem decodeHeader_encode (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -375,7 +378,7 @@ set_option maxHeartbeats 4000000 in
     `(ElfIdent.write hdr.ident).extract 0 7`, then peels the
     2 inner ++s to land on `head.extract 0 7 = head` (since
     head.size = 7). -/
-private theorem write_extract_head (hdr : ElfHeader) (h : hdr.ident.head.size = 7) :
+theorem write_extract_head (hdr : ElfHeader) (h : hdr.ident.head.size = 7) :
     (ElfHeader.write hdr).extract 0 7 = hdr.ident.head := by
   unfold ElfHeader.write
   -- The writer chain is left-associated.  Use `extract_append_left_within`
@@ -430,7 +433,7 @@ private theorem write_extract_head (hdr : ElfHeader) (h : hdr.ident.head.size = 
 set_option maxHeartbeats 800000 in
 /-- The encoded buffer's first 7 bytes are `e.header.ident.head`.
     Composes `extract_encode_eq_header_write` with `write_extract_head`. -/
-private theorem extract_encode_eq_ident_head (e : ElfFile)
+theorem extract_encode_eq_ident_head (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -447,7 +450,7 @@ private theorem extract_encode_eq_ident_head (e : ElfFile)
 
 /-- Per-byte equality at offset `i < 7` of `(encode e)` recovers
     `e.header.ident.head[i]`.  Direct from `extract_encode_eq_ident_head`. -/
-private theorem readU8_encode_eq_ident_head (e : ElfFile)
+theorem readU8_encode_eq_ident_head (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -581,7 +584,7 @@ theorem parseHeader_encode (e : ElfFile)
       4. `readU{N} buf2 r = readU{N} phdrW (r - phoff) = readU{N} phdrW k` via
          `readU{N}_splice_at_off_inside` (phdr region IS the splice). -/
 
-private theorem readU8_encode_in_phdr (e : ElfFile)
+theorem readU8_encode_in_phdr (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -671,7 +674,7 @@ private theorem readU8_encode_in_phdr (e : ElfFile)
   rw [hStep1, hStep2, hStep3]
 
 /-- `readU16` analog of `readU8_encode_in_phdr`. -/
-private theorem readU16_encode_in_phdr (e : ElfFile)
+theorem readU16_encode_in_phdr (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -685,7 +688,7 @@ private theorem readU16_encode_in_phdr (e : ElfFile)
       readU8_encode_in_phdr e hSync hLay hDisj (k + 1) (by omega)]
 
 /-- `readU32` analog. -/
-private theorem readU32_encode_in_phdr (e : ElfFile)
+theorem readU32_encode_in_phdr (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -705,7 +708,7 @@ private theorem readU32_encode_in_phdr (e : ElfFile)
       readU8_encode_in_phdr e hSync hLay hDisj (k + 3) (by omega)]
 
 /-- `readU64` analog. -/
-private theorem readU64_encode_in_phdr (e : ElfFile)
+theorem readU64_encode_in_phdr (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -720,7 +723,7 @@ private theorem readU64_encode_in_phdr (e : ElfFile)
 
 /-- Per-byte preservation: the i-th byte of `(encode e)` agrees with
     the i-th byte of `writeArray PH.write e.phdrs` when `i ∈ [phoff, phoff + phnum*56)`. -/
-private theorem getElem_encode_in_phdr (e : ElfFile)
+theorem getElem_encode_in_phdr (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -737,7 +740,7 @@ private theorem getElem_encode_in_phdr (e : ElfFile)
 /-- Extract equality on the phdr region: `(encode e).extract phoff (phoff +
     phnum*56) = writeArray PH.write e.phdrs`.  Per-byte preservation
     lifted to extract via `ext_getElem`. -/
-private theorem extract_encode_eq_phdrs_writer (e : ElfFile)
+theorem extract_encode_eq_phdrs_writer (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint) :
@@ -765,7 +768,7 @@ private theorem extract_encode_eq_phdrs_writer (e : ElfFile)
     `writeArray PH.write arr` recovers `arr[i]`.  Composes
     `writeArray_uniform_extract_at_index` (window = `(arr[i]).write`)
     with `decodePhdr_eq_slice` and `ProgramHeader_decode_write`. -/
-private theorem decodePhdr_writeArray_at_index (arr : Array ProgramHeader)
+theorem decodePhdr_writeArray_at_index (arr : Array ProgramHeader)
     (i : Nat) (hi : i < arr.size)
     (hFitOff : (arr[i]'hi).offset.val < UInt64.size)
     (hFitVAddr : (arr[i]'hi).vaddr.val < UInt64.size)
@@ -900,7 +903,7 @@ theorem phdrs_decode_encode (e : ElfFile)
     The shdr splice is the LAST splice in the encoder pipeline, so we
     don't need to traverse phdr / header splices for shdr-region reads. -/
 
-private theorem readU8_encode_in_shdr (e : ElfFile)
+theorem readU8_encode_in_shdr (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -969,7 +972,7 @@ private theorem readU8_encode_in_shdr (e : ElfFile)
   rw [hStep1, hStep2]
 
 /-- `readU16` analog of `readU8_encode_in_shdr`. -/
-private theorem readU16_encode_in_shdr (e : ElfFile)
+theorem readU16_encode_in_shdr (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -983,7 +986,7 @@ private theorem readU16_encode_in_shdr (e : ElfFile)
       readU8_encode_in_shdr e hSync hLay hDisj (k + 1) (by omega)]
 
 /-- `readU32` analog. -/
-private theorem readU32_encode_in_shdr (e : ElfFile)
+theorem readU32_encode_in_shdr (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -1003,7 +1006,7 @@ private theorem readU32_encode_in_shdr (e : ElfFile)
       readU8_encode_in_shdr e hSync hLay hDisj (k + 3) (by omega)]
 
 /-- `readU64` analog. -/
-private theorem readU64_encode_in_shdr (e : ElfFile)
+theorem readU64_encode_in_shdr (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -1019,7 +1022,7 @@ private theorem readU64_encode_in_shdr (e : ElfFile)
 /-- Per-byte preservation: the i-th byte of `(encode e)` agrees with
     the i-th byte of `writeArray SectionHeader.write (e.sections.map toShdr)`
     when `i ∈ [shoff, shoff + shnum*64)`. -/
-private theorem getElem_encode_in_shdr (e : ElfFile)
+theorem getElem_encode_in_shdr (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -1035,7 +1038,7 @@ private theorem getElem_encode_in_shdr (e : ElfFile)
 
 /-- Extract equality on the shdr region: `(encode e).extract shoff (shoff +
     shnum*64) = writeArray SectionHeader.write (e.sections.map toShdr)`. -/
-private theorem extract_encode_eq_shdrs_writer (e : ElfFile)
+theorem extract_encode_eq_shdrs_writer (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint) :
@@ -1155,7 +1158,7 @@ theorem shdrs_decode_encode (e : ElfFile)
         foldl, knowing section i is non-skipped and other sections are
         disjoint from it. -/
 
-private theorem readU8_encode_in_section (e : ElfFile)
+theorem readU8_encode_in_section (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -1225,7 +1228,7 @@ private theorem readU8_encode_in_section (e : ElfFile)
   exact readU8_foldl_section_recovers e.sections buf3 i hi hType_NB hType_NL
     hSectionFit hOverlap hAllSizesFit k hk
 
-private theorem readU16_encode_in_section (e : ElfFile)
+theorem readU16_encode_in_section (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -1249,7 +1252,7 @@ private theorem readU16_encode_in_section (e : ElfFile)
 /-- Reading `s.encodedSize` bytes of `s.writeContent` recovers a buffer
     of that size, from offset 0.  This trivially captures the splice
     payload's bytes. -/
-private theorem readBytes_writeContent_eq (s : Section)
+theorem readBytes_writeContent_eq (s : Section)
     (hSize : s.writeContent.size = s.encodedSize) :
     Reader.readBytes s.writeContent 0 s.encodedSize = s.writeContent := by
   unfold Reader.readBytes
@@ -1264,7 +1267,7 @@ private theorem readBytes_writeContent_eq (s : Section)
 /-- Reading bytes from `(encode e)` at section i's region recovers
     `s_i.writeContent`, given the standard preconditions and section i
     being non-NOBITS/non-NULL. -/
-private theorem readBytes_encode_in_section (e : ElfFile)
+theorem readBytes_encode_in_section (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -1306,7 +1309,7 @@ private theorem readBytes_encode_in_section (e : ElfFile)
     case. -/
 
 /-- Per-element decoder bridge for dynamic entries. -/
-private theorem decodeDynEntry_writeArray_at_index (arr : Array DynEntry)
+theorem decodeDynEntry_writeArray_at_index (arr : Array DynEntry)
     (i : Nat) (hi : i < arr.size) :
     Decode.decodeDynEntry (writeArray DynEntry.write arr) (i * Layout.dynEntrySize)
       = arr[i]'hi := by
@@ -1331,7 +1334,7 @@ private theorem decodeDynEntry_writeArray_at_index (arr : Array DynEntry)
 /-- Loop-induction: starting from index `i` with accumulator
     `arr.extract 0 i`, the loop appends entries `i, i+1, ...` and
     terminates when it sees the DT_NULL entry at `arr.size - 1`. -/
-private theorem decodeDynamicLoop_writeArray_step
+theorem decodeDynamicLoop_writeArray_step
     (arr : Array DynEntry) (hSizePos : 0 < arr.size)
     (hLastNull : (arr[arr.size - 1]'(by omega)).tag = DynTag.null)
     (hNoEarlyNull : ∀ (j : Nat) (h : j < arr.size),
@@ -1450,7 +1453,7 @@ theorem decodeDynamic_writeArray_eq (ds : Array DynEntry)
 /-- `decodeDynamicLoop` only inspects bytes via per-entry decodes; if
     two buffers/offsets agree on every per-entry decode in the
     iteration range, the loop produces equal outputs. -/
-private theorem decodeDynamicLoop_congr
+theorem decodeDynamicLoop_congr
     (bs1 bs2 : ByteArray) (baseOff1 baseOff2 maxCount : Nat)
     (hAgree : ∀ (j : Nat), j < maxCount →
       Decode.decodeDynEntry bs1 (baseOff1 + j * Layout.dynEntrySize)
@@ -1481,7 +1484,7 @@ private theorem decodeDynamicLoop_congr
 
 /-- `decodeDynamic` agrees on two buffers when per-entry decodes agree
     over the iteration range. -/
-private theorem decodeDynamic_congr
+theorem decodeDynamic_congr
     (bs1 bs2 : ByteArray) (baseOff1 baseOff2 maxCount : Nat)
     (hAgree : ∀ (j : Nat), j < maxCount →
       Decode.decodeDynEntry bs1 (baseOff1 + j * Layout.dynEntrySize)
@@ -1496,7 +1499,7 @@ private theorem decodeDynamic_congr
     Composes `decodeDynamic_congr` (bridge encoder bytes to writeArray
     bytes) with `decodeDynamic_writeArray_eq` (the loop induction). -/
 
-private theorem decodeDynamic_encode_dynamic (e : ElfFile)
+theorem decodeDynamic_encode_dynamic (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -1618,7 +1621,7 @@ private theorem decodeDynamic_encode_dynamic (e : ElfFile)
     template as `decodePhdr_writeArray_at_index`. -/
 
 /-- Per-element decoder bridge for symbols. -/
-private theorem decodeSym_writeArray_at_index (arr : Array Symbol)
+theorem decodeSym_writeArray_at_index (arr : Array Symbol)
     (i : Nat) (hi : i < arr.size) :
     Decode.decodeSym (writeArray Symbol.write arr) (i * Layout.symEntrySize)
       = arr[i]'hi := by
@@ -1641,7 +1644,7 @@ private theorem decodeSym_writeArray_at_index (arr : Array Symbol)
   exact Symbol_decode_write (arr[i]'hi)
 
 /-- Per-element decoder bridge for `.versym` (UInt16 array). -/
-private theorem readU16_writeArray_writeU16_at (vs : Array UInt16)
+theorem readU16_writeArray_writeU16_at (vs : Array UInt16)
     (i : Nat) (hi : i < vs.size) :
     Reader.readU16 (writeArray Writer.writeU16 vs) (i * 2) = vs[i]'hi :=
   readU16_writeArray vs i hi
@@ -1655,7 +1658,7 @@ private theorem readU16_writeArray_writeU16_at (vs : Array UInt16)
       * `readU16_writeArray` to bridge back to per-element.
 
     `Section.encodedSize = vs.size * 2` from `Section.encodedSize` on `.versym`. -/
-private theorem decodeVersym_encode_versym (e : ElfFile)
+theorem decodeVersym_encode_versym (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -1701,7 +1704,7 @@ private theorem decodeVersym_encode_versym (e : ElfFile)
     For a `.dynsym syms`-content section, decoding via `decodeDynsym`
     recovers `syms`.  Mirrors `phdrs_decode_encode` exactly, swapping
     Phdr/Sym artifacts. -/
-private theorem decodeDynsym_encode_dynsym (e : ElfFile)
+theorem decodeDynsym_encode_dynsym (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -1802,7 +1805,7 @@ private theorem decodeDynsym_encode_dynsym (e : ElfFile)
 
 /-! ## .strtab section discharge -/
 
-private theorem decodeStringTable_encode_strtab (e : ElfFile)
+theorem decodeStringTable_encode_strtab (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -1829,7 +1832,7 @@ private theorem decodeStringTable_encode_strtab (e : ElfFile)
 
 /-! ## .raw section discharge -/
 
-private theorem decodeRaw_encode_raw (e : ElfFile)
+theorem decodeRaw_encode_raw (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -1863,7 +1866,7 @@ private theorem decodeRaw_encode_raw (e : ElfFile)
     is structurally trivial: both sides reduce to
     `.raw ByteArray.empty`. -/
 
-private theorem decodeRaw_encode_null (e : ElfFile)
+theorem decodeRaw_encode_null (e : ElfFile)
     (i : Nat) (hi : i < e.sections.size)
     (_hType_NL : (e.sections[i]'hi).type = ShType.SHT_NULL)
     (bs : ByteArray)
@@ -1916,7 +1919,7 @@ private theorem decodeRaw_encode_null (e : ElfFile)
 
 /-- Helper: `(toShdr s).size.val = s.encodedSize` definitionally.
     No fit precondition needed since `.val` is now `Nat`. -/
-private theorem encodedSize_toUInt64_toNat (s : Section)
+theorem encodedSize_toUInt64_toNat (s : Section)
     (_h : s.encodedSize < UInt64.size) :
     s.encodedSize = s.encodedSize := rfl
 
@@ -1925,7 +1928,7 @@ private theorem encodedSize_toUInt64_toNat (s : Section)
     `e.dynamic = some ds`.  Composes `findUniqueTypeIdx_eq_some` (using
     `sectionsAtDistinctTypes` for uniqueness) with the `e.dynamic`
     accessor's match. -/
-private theorem dynamic_eq_some_of_section (e : ElfFile)
+theorem dynamic_eq_some_of_section (e : ElfFile)
     (hUnique : e.typeUniqueAt ShType.SHT_DYNAMIC)
     (i : Nat) (hi : i < e.sections.size)
     (hType : (e.sections[i]'hi).type = ShType.SHT_DYNAMIC)
@@ -2289,7 +2292,7 @@ theorem decodeRoundtripWitness_of_preconditions (e : ElfFile)
 
 /-- `sectionsFromShdrs` on the shdr-projection recovers `e.sections`,
     given the section_decode_encode discharge. -/
-private theorem sectionsFromShdrs_eq (e : ElfFile)
+theorem sectionsFromShdrs_eq (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
@@ -2566,13 +2569,13 @@ theorem parseHeader_byte_facts (bs : ByteArray) (h : ElfHeader)
       `e.dynamic = some dyn` is derived from the section's content. -/
 
 /-- Helper: `v = v.toNat.toUInt64` for any UInt64 v. -/
-private theorem uint64_toNat_toUInt64 (v : UInt64) : v.toNat.toUInt64 = v := by
+theorem uint64_toNat_toUInt64 (v : UInt64) : v.toNat.toUInt64 = v := by
   unfold Nat.toUInt64 UInt64.ofNat UInt64.toNat
   simp
 
 /-- `updateSectionContent iDyn newContent = e` when `newContent` equals
     the existing content at iDyn. -/
-private theorem updateSectionContent_eq_self (e : ElfFile) (iDyn : Nat)
+theorem updateSectionContent_eq_self (e : ElfFile) (iDyn : Nat)
     (h : iDyn < e.sections.size) (newContent : SectionContent)
     (heq : (e.sections[iDyn]'h).content = newContent) :
     e.updateSectionContent iDyn newContent = e := by

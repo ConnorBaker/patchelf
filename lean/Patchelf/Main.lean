@@ -19,9 +19,12 @@
     3 op precondition failed
     4 I/O error
 -/
+module
 
-import Patchelf.CLI
-import Patchelf.Elf.Parser
+public import Patchelf.CLI
+public import Patchelf.Elf.Parser
+
+@[expose] public section
 
 open Patchelf.CLI
 open Patchelf.Elf (ParseError)

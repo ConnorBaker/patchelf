@@ -15,53 +15,56 @@
   typed algebra via `Adapter.ofElfFile`, runs an op, converts
   back with `Adapter.toElfFile`, and encodes to bytes.
 -/
+module
 
 -- Core primitives
-import Patchelf.Elf.Basic
-import Patchelf.Elf.Layout
-import Patchelf.Elf.Reader
-import Patchelf.Elf.Writer
-import Patchelf.Elf.Serialize
-import Patchelf.Elf.ByteLevel
-import Patchelf.Elf.SchemaDSL
-import Patchelf.Elf.Schemas
-import Patchelf.Elf.Decode
+public import Patchelf.Elf.Basic
+public import Patchelf.Elf.Layout
+public import Patchelf.Elf.Reader
+public import Patchelf.Elf.Writer
+public import Patchelf.Elf.Serialize
+public import Patchelf.Elf.ByteLevel
+public import Patchelf.Elf.SchemaDSL
+public import Patchelf.Elf.Schemas
+public import Patchelf.Elf.Decode
 
 -- Byte-level layer (parser / encoder / layout / byte roundtrip)
-import Patchelf.Elf.ElfFile
-import Patchelf.Elf.Parser
-import Patchelf.Elf.Encoder
-import Patchelf.Elf.LayoutEngine
-import Patchelf.Elf.ByteRoundtrip
-import Patchelf.Elf.SectionOps
+public import Patchelf.Elf.ElfFile
+public import Patchelf.Elf.Parser
+public import Patchelf.Elf.Encoder
+public import Patchelf.Elf.LayoutEngine
+public import Patchelf.Elf.ByteRoundtrip
+public import Patchelf.Elf.SectionOps
 
 -- Typed-section algebra + adapter + round-trip
-import Patchelf.Elf.StringSection
-import Patchelf.Elf.DynamicSection
-import Patchelf.Elf.SymbolSection
-import Patchelf.Elf.AuxSections
-import Patchelf.Elf.InterpSection
-import Patchelf.Elf.ValidElfFile
-import Patchelf.Elf.DynamicParse
-import Patchelf.Elf.DynamicEncode
-import Patchelf.Elf.Adapter
-import Patchelf.Elf.AdapterRoundtrip
+public import Patchelf.Elf.StringSection
+public import Patchelf.Elf.DynamicSection
+public import Patchelf.Elf.SymbolSection
+public import Patchelf.Elf.AuxSections
+public import Patchelf.Elf.InterpSection
+public import Patchelf.Elf.ValidElfFile
+public import Patchelf.Elf.DynamicParse
+public import Patchelf.Elf.DynamicEncode
+public import Patchelf.Elf.Adapter
+public import Patchelf.Elf.AdapterRoundtrip
 
 -- Observable-correctness combinators
-import Patchelf.Elf.ObservableCombinators
+public import Patchelf.Elf.ObservableCombinators
 
 -- Ops
-import Patchelf.Elf.Ops.OsAbi
-import Patchelf.Elf.Ops.Execstack
-import Patchelf.Elf.Ops.AddDebugTag
-import Patchelf.Elf.Ops.NoDefaultLib
-import Patchelf.Elf.Ops.AddNeeded
-import Patchelf.Elf.Ops.AddRpathEntry
-import Patchelf.Elf.Ops.RemoveNeeded
-import Patchelf.Elf.Ops.RemoveRPath
-import Patchelf.Elf.Ops.Rpath
-import Patchelf.Elf.Ops.Soname
-import Patchelf.Elf.Ops.ReplaceNeeded
-import Patchelf.Elf.Ops.ClearSymbolVersion
-import Patchelf.Elf.Ops.RenameDynamicSymbols
-import Patchelf.Elf.Ops.Interpreter
+public import Patchelf.Elf.Ops.OsAbi
+public import Patchelf.Elf.Ops.Execstack
+public import Patchelf.Elf.Ops.AddDebugTag
+public import Patchelf.Elf.Ops.NoDefaultLib
+public import Patchelf.Elf.Ops.AddNeeded
+public import Patchelf.Elf.Ops.AddRpathEntry
+public import Patchelf.Elf.Ops.RemoveNeeded
+public import Patchelf.Elf.Ops.RemoveRPath
+public import Patchelf.Elf.Ops.Rpath
+public import Patchelf.Elf.Ops.Soname
+public import Patchelf.Elf.Ops.ReplaceNeeded
+public import Patchelf.Elf.Ops.ClearSymbolVersion
+public import Patchelf.Elf.Ops.RenameDynamicSymbols
+public import Patchelf.Elf.Ops.Interpreter
+
+@[expose] public section

@@ -4,8 +4,11 @@
   Uses `mapDynamicOp` combinator.  Main observable collapses to a
   single `obtain` + case split on `dyn.debug`.
 -/
+module
 
-import Patchelf.Elf.ObservableCombinators
+public import Patchelf.Elf.ObservableCombinators
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

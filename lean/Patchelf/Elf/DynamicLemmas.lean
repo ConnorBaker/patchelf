@@ -14,8 +14,11 @@
   `.dynamic` as `Option (DynamicSection ds)` with named fields,
   so those lemmas had no callers and were removed.
 -/
+module
 
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

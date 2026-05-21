@@ -5,9 +5,12 @@
   The observable is 3 lines of tactic — the boilerplate is in
   `ObservableCombinators.lean`.
 -/
+module
 
-import Patchelf.Elf.ObservableCombinators
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.ObservableCombinators
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

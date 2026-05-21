@@ -2,12 +2,15 @@
   Minimal header parsing shared between the byte-layer parser and
   any caller that needs a `ParseError`.
 -/
+module
 
-import Patchelf.Elf.Basic
-import Patchelf.Elf.Layout
-import Patchelf.Elf.Reader
-import Patchelf.Elf.Decode
-import Patchelf.Elf.Schemas
+public import Patchelf.Elf.Basic
+public import Patchelf.Elf.Layout
+public import Patchelf.Elf.Reader
+public import Patchelf.Elf.Decode
+public import Patchelf.Elf.Schemas
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

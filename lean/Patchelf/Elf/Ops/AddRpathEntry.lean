@@ -6,9 +6,12 @@
     2. Set DT_RPATH (if `forceRpath`) or DT_RUNPATH to the new offset,
        clearing the other slot.
 -/
+module
 
-import Patchelf.Elf.ObservableCombinators
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.ObservableCombinators
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

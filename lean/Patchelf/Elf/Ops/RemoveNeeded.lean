@@ -4,9 +4,12 @@
   Op is `mapDynamicOp` with `filterNeededBy`; observable is a
   2-line corollary of `filterNeededBy_lookup_preserved`.
 -/
+module
 
-import Patchelf.Elf.ObservableCombinators
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.ObservableCombinators
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

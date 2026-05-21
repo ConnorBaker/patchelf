@@ -12,9 +12,12 @@
   `match` on dynsym) so the structural projections reduce by simp,
   letting observables close cleanly.
 -/
+module
 
-import Patchelf.Elf.ValidElfFile
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.ValidElfFile
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

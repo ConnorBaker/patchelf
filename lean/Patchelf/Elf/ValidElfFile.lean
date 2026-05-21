@@ -32,13 +32,16 @@
     * `dynStrszCoherent` / `dynAddressCoherentForTag × 5`
       (derived at encode)
 -/
+module
 
-import Patchelf.Elf.StringSection
-import Patchelf.Elf.DynamicSection
-import Patchelf.Elf.SymbolSection
-import Patchelf.Elf.AuxSections
-import Patchelf.Elf.InterpSection
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.StringSection
+public import Patchelf.Elf.DynamicSection
+public import Patchelf.Elf.SymbolSection
+public import Patchelf.Elf.AuxSections
+public import Patchelf.Elf.InterpSection
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

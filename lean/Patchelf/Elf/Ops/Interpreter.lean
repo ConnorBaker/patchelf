@@ -7,10 +7,13 @@
 
   No fitsInExistingSlot precondition (the encoder handles layout).
 -/
+module
 
-import Patchelf.Elf.ValidElfFile
-import Patchelf.Elf.Basic
-import Patchelf.Elf.Layout
+public import Patchelf.Elf.ValidElfFile
+public import Patchelf.Elf.Basic
+public import Patchelf.Elf.Layout
+
+@[expose] public section
 
 namespace Patchelf.Elf
 
@@ -59,6 +62,6 @@ theorem setInterpreter_pt_interp_filesz
          (⟨((⟨path.toUTF8⟩ : InterpSection).toBytes.size)⟩ :
            Patchelf.Elf.Layout.ByteSize)) = _
   rw [InterpSection.toBytes_size]
-  rfl
+  simp [String.toUTF8_eq_toByteArray, String.size_toByteArray]
 
 end Patchelf.Elf

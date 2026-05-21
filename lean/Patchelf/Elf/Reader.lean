@@ -4,6 +4,9 @@
   Out-of-bounds reads return 0 (Lean stdlib convention). Callers must
   bounds-check before relying on the returned value.
 -/
+module
+
+@[expose] public section
 
 namespace Patchelf.Elf.Reader
 

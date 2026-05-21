@@ -5,8 +5,11 @@
   the manual 4-step splice cascade.  All theorems below are proved
   with `simp_splice` alone, with omega discharging the side conditions.
 -/
+module
 
-import Patchelf.Elf.Tactic.SpliceSimproc
+public import Patchelf.Elf.Tactic.SpliceSimproc
+
+@[expose] public section
 
 namespace Patchelf.Elf.Tactic.Test
 

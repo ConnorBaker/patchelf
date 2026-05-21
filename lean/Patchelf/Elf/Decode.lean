@@ -14,10 +14,13 @@
   shape, hand-written where it doesn't (chained / variable-size /
   validation-additive).
 -/
+module
 
-import Patchelf.Elf.Basic
-import Patchelf.Elf.Layout
-import Patchelf.Elf.Reader
+public import Patchelf.Elf.Basic
+public import Patchelf.Elf.Layout
+public import Patchelf.Elf.Reader
+
+@[expose] public section
 
 namespace Patchelf.Elf.Decode
 
@@ -141,11 +144,11 @@ theorem decodeChain_size_le {α : Type}
   simpa using this
 
 /-- Read a packed array of u32s from `bs[off..off+n*4)`. -/
-private def readU32Array (bs : ByteArray) (off n : Nat) : Array UInt32 :=
+def readU32Array (bs : ByteArray) (off n : Nat) : Array UInt32 :=
   buildArray n (fun i => readU32 bs (off + i * 4))
 
 /-- Read a packed array of u64s from `bs[off..off+n*8)`. -/
-private def readU64Array (bs : ByteArray) (off n : Nat) : Array UInt64 :=
+def readU64Array (bs : ByteArray) (off n : Nat) : Array UInt64 :=
   buildArray n (fun i => readU64 bs (off + i * 8))
 
 /-- Exposed unfold: `readU32Array` reduces to `buildArray`.  Keeps

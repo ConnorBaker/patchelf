@@ -3,9 +3,12 @@
 
   Pure record update + trivial observables. No dynstr interaction.
 -/
+module
 
-import Patchelf.Elf.ValidElfFile
-import Patchelf.Elf.Basic
+public import Patchelf.Elf.ValidElfFile
+public import Patchelf.Elf.Basic
+
+@[expose] public section
 
 namespace Patchelf.Elf
 

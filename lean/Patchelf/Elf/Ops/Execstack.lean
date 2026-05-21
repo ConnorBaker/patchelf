@@ -4,10 +4,13 @@
   Phdr-only op: map every PT_GNU_STACK phdr, flip PF_X bit.  Nothing
   else in ValidElfFile changes.
 -/
+module
 
-import Patchelf.Elf.ValidElfFile
-import Patchelf.Elf.Basic
-import Patchelf.Elf.Layout
+public import Patchelf.Elf.ValidElfFile
+public import Patchelf.Elf.Basic
+public import Patchelf.Elf.Layout
+
+@[expose] public section
 
 namespace Patchelf.Elf
 
