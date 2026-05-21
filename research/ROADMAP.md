@@ -341,6 +341,68 @@ by construction.  `SectionOps.lean` is now 51 LOC: just
 `ElfFile.updateSectionContent` def + 3 actively-used `@[simp]`
 projection lemmas.
 
+#### 5.4 Splice/extract simproc with `omega` side-condition discharge
+
+**Severity:** mechanical-proof compression. Roughly 800 LOC of the
+2,927-LOC `ByteRoundtrip.lean` file (~25 lemmas across 4 splice
+regions × 4–5 read widths) is per-byte/per-width threading: each
+proof is a 4-step splice-disjoint cascade differing only in width
+and region. See `STATUS.md` and `INVENTORY.md` for the bucket
+structure.
+
+**What to do:** add a `simproc` (Lean 4.29 syntax: `simproc <name>
+(<pattern>) := <body>`, body has type `Lean.Meta.Simp.Simproc =
+Expr → SimpM Step`) that:
+
+1. Recognizes terms of the form `readUN (splice bs off w) i` and
+   `readUN (extract bs lo hi) i` for `N ∈ {8, 16, 32, 64}`.
+2. Synthesizes a fresh metavariable for the disjointness side
+   condition (`IntervalDisjoint i (i+N) off (off+w.size)` for
+   splice; `i + N ≤ hi - lo` for extract).
+3. Discharges the side condition via `Lean.Elab.Tactic.Omega.omega
+   [] mvarId` (the `MetaM`-level entry point at
+   `lean4/src/Lean/Elab/Tactic/Omega/Frontend.lean:672`, NOT the
+   `TacticM` wrapper).
+4. On success, rewrites to `readUN bs i` (disjoint) or `readUN w
+   (i - off)` (inside) — using existing `readUN_splice_*` lemmas as
+   the rewrite witnesses.
+5. On failure (omega cannot prove disjointness), returns
+   `.continue` so simp falls through to other rules.
+
+Implementation pattern templates in core Lean:
+- `lean4/src/Lean/Meta/Tactic/Simp/BuiltinSimprocs/Fin.lean:141-168`
+  (Fin bound checks via meta-level proof construction)
+- `lean4/src/Lean/Meta/Tactic/Simp/BuiltinSimprocs/BitVec.lean:42-67`
+  (`reduceBin`/`reduceUnary` shape)
+
+**Caveat — first-mover.** A search of core Lean's
+`BuiltinSimprocs/` and `Grind/SimpUtil.lean` finds **zero** existing
+simprocs that call `omega` programmatically. The pattern is
+supported by the type system (`SimpM` extends `MetaM`, `omega` has
+a `MetaM` entry) but has no in-tree precedent.  Budget ~30 LOC of
+plumbing to construct the side-goal mvar, run omega in a `try`, and
+recover gracefully; expect to debug the integration.
+
+**Estimated LOC reduction:** ~800 LOC of bucket-1 threading lemmas
+in `ByteRoundtrip.lean` collapse to mechanical `simp`-only proofs.
+Bucket 2 (decoder-step `writeArray_at_index` lemmas, ~241 LOC)
+shrinks modestly via the same simproc plus existing
+`writeArray_uniform_extract_at_index` lemmas.
+
+**Sequencing relative to Phase 3.**  This compression is
+*coextensive* with what the planned Track 1 / Codec algebra +
+Phase 3 unification deletes by other means.  Doing it now de-risks
+Phase 3 by reducing the manual proof surface that must be ported
+through the unification refactor.  Cap effort at one week; if the
+omega-from-simproc plumbing stalls beyond that, abandon and
+proceed directly to Phase 3 — the eventual deletion is a superset.
+
+**Where to land:** new file `Patchelf/Elf/Tactic/SpliceSimproc.lean`,
+imported by `ByteRoundtrip.lean`.  Acceptance: at least one
+existing threading-lemma proof in `ByteRoundtrip.lean` rewritten to
+use the simproc, full `lake build` green, all 49 shell tests pass,
+zero `sorry`.
+
 ---
 
 ## Out of scope (not on the roadmap)

@@ -58,6 +58,7 @@
 import Patchelf.Elf.ElfFile
 import Patchelf.Elf.Parser
 import Patchelf.Elf.Encoder
+import Patchelf.Elf.Tactic.SpliceSimproc
 
 namespace Patchelf.Elf
 
@@ -195,34 +196,40 @@ private theorem readU8_encode_in_header (e : ElfFile)
     · -- s.offset + s.encodedSize ≤ buf3.size
       rw [hBuf3Sz]
       exact section_end_le_encodedFileSize e i hi hN1 hN2
-  -- Step 2: shdr splice preserves byte at offset r.
-  have hStep2 : Reader.readU8 buf3 r = Reader.readU8 buf2 r := by
-    show Reader.readU8 (splice buf2 shoff shdrW) r = _
-    apply Reader.readU8_splice_disjoint buf2 shoff shdrW hShdrFit r
-      (by rw [hBuf2Sz]; exact hrLtTotal)
+  -- Steps 2–4: shdr/phdr disjoint splices + header inside-splice.
+  -- These three manual cascades collapse to a single `simp_splice`.
+  -- ROADMAP §5.4: omega discharger handles every side condition
+  -- (splice fit, read fit, disjointness, inside-bounds).
+  have hShdrDisj : r + 1 ≤ shoff ∨ shoff + shdrW.size ≤ r := by
     have hI := hDisj.hdr_shdr_disjoint
     unfold ElfFile.headerShdrDisjoint IntervalDisjoint at hI
     rcases hI with hL | hR
     · left; omega
     · right; rw [hShdrWSz]; omega
-  -- Step 3: phdr splice preserves byte at offset r.
-  have hStep3 : Reader.readU8 buf2 r = Reader.readU8 buf1 r := by
-    show Reader.readU8 (splice buf1 phoff phdrW) r = _
-    apply Reader.readU8_splice_disjoint buf1 phoff phdrW hPhdrFit r
-      (by rw [hBuf1Sz]; exact hrLtTotal)
+  have hPhdrDisj : r + 1 ≤ phoff ∨ phoff + phdrW.size ≤ r := by
     have hI := hDisj.hdr_phdr_disjoint
     unfold ElfFile.headerPhdrDisjoint IntervalDisjoint at hI
     rcases hI with hL | hR
     · left; omega
     · right; rw [hPhdrWSz]; omega
-  -- Step 4: header splice INSIDE returns the payload.
-  have hStep4 : Reader.readU8 buf1 r = Reader.readU8 hdrW r := by
-    show Reader.readU8 (splice buf0 0 hdrW) r = _
-    apply Reader.readU8_splice_at_0_inside buf0 hdrW hHdrFit r
-    rw [hHdrWSz]; omega
+  have hHdrInside : r < hdrW.size := by rw [hHdrWSz]; omega
+  have hStep234 : Reader.readU8 buf3 r = Reader.readU8 hdrW r := by
+    show Reader.readU8
+      (splice (splice (splice buf0 0 hdrW) phoff phdrW) shoff shdrW) r = _
+    have hr_buf0 : r < buf0.size := by rw [hBuf0Sz]; exact hrLtTotal
+    have hr_buf1 : r < (splice buf0 0 hdrW).size := by
+      rw [splice_size]; exact hr_buf0
+    have hr_buf2 : r < (splice (splice buf0 0 hdrW) phoff phdrW).size := by
+      rw [splice_size]; exact hr_buf1
+    -- Make the buffer-size goals omega can see.
+    have hSplBuf1 : (splice buf0 0 hdrW).size = buf0.size := splice_size _ _ _
+    have hSplBuf2 :
+        (splice (splice buf0 0 hdrW) phoff phdrW).size = buf0.size := by
+      rw [splice_size, hSplBuf1]
+    simp_splice
   -- Compose.  The goal already has the foldl form on the LHS.
   show Reader.readU8 (e.sections.foldl _ buf3) r = Reader.readU8 hdrW r
-  rw [hStep1, hStep2, hStep3, hStep4]
+  rw [hStep1, hStep234]
 
 /-- `readU16` analog of `readU8_encode_in_header`. -/
 private theorem readU16_encode_in_header (e : ElfFile)
