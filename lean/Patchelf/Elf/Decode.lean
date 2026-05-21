@@ -27,27 +27,21 @@ namespace Patchelf.Elf.Decode
 open Layout Reader
 
 /-- Build an `Array α` of length `n` by mapping each index `i < n` through
-    `f`. Every packed-table decoder in this file reduces to a call of
-    `buildArray`. Keeps the size lemma — `buildArray_size` — in one place. -/
+    `f`. Thin wrapper over `Array.ofFn` (which is a single primitive call
+    rather than a fold). -/
 def buildArray {α : Type} (n : Nat) (f : Nat → α) : Array α :=
-  (List.range n).foldl (fun acc i => acc.push (f i)) #[]
+  Array.ofFn (n := n) (fun i => f i.val)
 
 @[simp] theorem buildArray_size {α : Type} (n : Nat) (f : Nat → α) :
     (buildArray n f).size = n := by
-  unfold buildArray
-  rw [List.foldl_push_eq_append]
-  simp
+  unfold buildArray; simp
 
 /-- `buildArray n f` produces `#[f 0, f 1, ..., f (n-1)]`; indexing at
     position `i < n` recovers `f i`. -/
 theorem buildArray_getElem {α : Type} (n : Nat) (f : Nat → α)
     (i : Nat) (hi : i < (buildArray n f).size) :
     (buildArray n f)[i] = f i := by
-  have hiN : i < n := by rw [buildArray_size] at hi; exact hi
-  unfold buildArray
-  simp only [List.foldl_push_eq_append, Array.empty_append]
-  show (List.map f (List.range n)).toArray[i]'(by simp; exact hiN) = f i
-  rw [List.getElem_toArray, List.getElem_map, List.getElem_range]
+  unfold buildArray; simp
 
 /-- Decode a section's string-table contents: the `sz` bytes starting at
     `off` in `bs`. Always succeeds structurally; null-termination is a

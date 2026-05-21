@@ -492,7 +492,7 @@ theorem writeArray_fixed_extract {α : Type} (N : Nat)
     have hXsDecoded : ∀ (i : Nat) (hi : i < xs.length),
         xs[i] = decode bs (off + (accStart + 1 + i) * N) := by
       intro i hi
-      have := hEach (i + 1) (by simp; omega)
+      have := hEach (i + 1) (by grind)
       simp only [List.getElem_cons_succ] at this
       rw [this, show accStart + (i + 1) = accStart + 1 + i from by omega]
     have ihR := ih (accStart + 1) hXsDecoded hXsFit

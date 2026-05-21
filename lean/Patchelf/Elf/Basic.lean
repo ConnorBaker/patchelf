@@ -931,7 +931,7 @@ def sysvHash (bs : ByteArray) : UInt32 :=
         go (i + 1) h''
     else h
   termination_by bs.size - i
-  decreasing_by simp_wf; omega
+  decreasing_by omega
   go 0 0
 
 /-- GNU hash of a byte sequence. Mirrors C++ patchelf.cc:2058.
@@ -944,7 +944,7 @@ def gnuHash (bs : ByteArray) : UInt32 :=
       else go (i + 1) ((h <<< 5) + h + c.toUInt32)
     else h
   termination_by bs.size - i
-  decreasing_by simp_wf; omega
+  decreasing_by omega
   go 0 5381
 
 /-- Program header (ELF64 subset).  Used by both the byte-layer `ElfFile` and typed `ValidElfFile`

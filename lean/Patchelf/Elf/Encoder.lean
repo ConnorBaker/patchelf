@@ -76,17 +76,13 @@ def encodedFileSize (e : ElfFile) : Nat :=
   max (max ehdrEnd phdrEnd) (max shdrEnd sectionEnd)
 
 /-- Allocate a zero-initialized ByteArray of the given size.
-    Straightforward — backed by `ByteArray.mkEmpty` + iterated `push`. -/
+    Backed by `Array.replicate`, which is `@[extern "lean_mk_array"]` —
+    one C call rather than an iterated `push` over `List.range`. -/
 def zeroBytes (n : Nat) : ByteArray :=
-  (List.range n).foldl (fun acc _ => acc.push 0) ByteArray.empty
+  ⟨Array.replicate n (0 : UInt8)⟩
 
 @[simp] theorem zeroBytes_size (n : Nat) : (zeroBytes n).size = n := by
-  unfold zeroBytes
-  induction n with
-  | zero => simp
-  | succ k ih =>
-    rw [List.range_succ, List.foldl_append]
-    simp [ih]
+  unfold zeroBytes; simp [ByteArray.size]
 
 /-- Sync DT_STRSZ entries in `.dynamic` to match the current
     `.dynstr.bytes.size`.  Mirrors C++ patchelf's rewriteSections pass.

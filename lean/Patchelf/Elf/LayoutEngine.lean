@@ -87,7 +87,7 @@ def layoutStep (acc : Array Section × Nat) (idxAndSec : Nat × Section) :
 def layoutSectionsFold (sections : Array Section) (cursor0 : Nat) :
     Array Section × Nat :=
   let indexed := sections.mapIdx (fun i s => (i, s))
-  indexed.foldl (init := (Array.mkEmpty sections.size, cursor0)) layoutStep
+  indexed.foldl (init := (Array.emptyWithCapacity sections.size, cursor0)) layoutStep
 
 /-- Rebuild a single phdr entry against the freshly-laid-out section
     array.  PT_INTERP / PT_DYNAMIC pick up their target section's new
@@ -248,12 +248,12 @@ theorem size_eq (sections : Array Section) (cursor0 : Nat) :
   unfold layoutSectionsFold
   let indexed := sections.mapIdx (fun i s => (i, s))
   have hIndexedSize : indexed.size = sections.size := Array.size_mapIdx
-  show (Array.foldl layoutStep (Array.mkEmpty sections.size, cursor0) indexed).1.size
+  show (Array.foldl layoutStep (Array.emptyWithCapacity sections.size, cursor0) indexed).1.size
         = sections.size
   rw [show sections.size = indexed.size from hIndexedSize.symm] at *
   have h := @Array.foldl_induction (Nat × Section) (Array Section × Nat) indexed
     (motive := fun k state => state.1.size = k)
-    (init := (Array.mkEmpty indexed.size, cursor0))
+    (init := (Array.emptyWithCapacity indexed.size, cursor0))
     (h0 := by simp)
     (f := layoutStep)
     (hf := by
@@ -265,10 +265,10 @@ theorem cursor_floor (sections : Array Section) (cursor0 : Nat) :
     cursor0 ≤ (layoutSectionsFold sections cursor0).2 := by
   unfold layoutSectionsFold
   let indexed := sections.mapIdx (fun i s => (i, s))
-  show cursor0 ≤ (Array.foldl layoutStep (Array.mkEmpty sections.size, cursor0) indexed).2
+  show cursor0 ≤ (Array.foldl layoutStep (Array.emptyWithCapacity sections.size, cursor0) indexed).2
   have h := @Array.foldl_induction (Nat × Section) (Array Section × Nat) indexed
     (motive := fun _ state => cursor0 ≤ state.2)
-    (init := (Array.mkEmpty sections.size, cursor0))
+    (init := (Array.emptyWithCapacity sections.size, cursor0))
     (h0 := Nat.le_refl _)
     (f := layoutStep)
     (hf := by
@@ -550,11 +550,11 @@ theorem layoutSectionsFold_inv (sections : Array Section) (cursor0 : Nat)
   let indexed := sections.mapIdx (fun i s => (i, s))
   have hIndexedSize : indexed.size = sections.size := Array.size_mapIdx
   show LayoutInv sections cursor0 sections.size
-    (Array.foldl layoutStep (Array.mkEmpty sections.size, cursor0) indexed)
+    (Array.foldl layoutStep (Array.emptyWithCapacity sections.size, cursor0) indexed)
   rw [show sections.size = indexed.size from hIndexedSize.symm]
   apply @Array.foldl_induction (Nat × Section) (Array Section × Nat) indexed
     (motive := LayoutInv sections cursor0)
-    (init := (Array.mkEmpty sections.size, cursor0))
+    (init := (Array.emptyWithCapacity sections.size, cursor0))
     (h0 := by
       refine ⟨?_, Nat.le_refl _, ?_, ?_⟩
       · simp
