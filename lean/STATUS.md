@@ -12,48 +12,17 @@
 > STATUS.md and `research/ROADMAP.md` will be reconciled with the
 > design doc once the validator work lands.
 
-This document records the current state of the Lean 4 patchelf port.
-Forward-looking work items live in `research/ROADMAP.md`.
+This document records the **current state** of the Lean 4 patchelf
+port — what works, what doesn't, what's verified, what isn't.
 
-The port has **two tiers** that live side by side under `lean/Patchelf/Elf/`:
+For the **architectural model** (three-layer stack, validity ladder,
+pipeline, op convention, verification surface), see
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-- **Byte layer** — `ElfFile { header, phdrs, sections }` with
-  typed section content (`SectionContent.raw | strtab | dynamic |
-  dynsym | versym | nobits`).  `.gnu.version_r`, `.hash`, and
-  `.gnu.hash` sections are stored as `.raw` at the byte layer;
-  the typed-section algebra's `Adapter.ofElfFile` decodes them
-  on demand.  No `bytes` field, no broken-out `Option` section
-  fields, no `*ShdrIdx` fields.  Raw bytes exist only at the
-  parse/encode boundary.  Provides `Parser` + `Encoder` +
-  `LayoutEngine` for the wire codec, plus `ByteRoundtrip` for
-  the `parse_encode_roundtrip` theorem.  The parser returns
-  `ParsedElf = { elf : ElfFile, isValid : elf.IsValid }` — a
-  plain ElfFile bundled with its IsValid witness.
-- **Typed-section algebra** — `ValidElfFile` is a record of
-  named typed sections (`dynstr : StringSection`, `dynamic :
-  Option (DynamicSection dynstr)`, `dynsym : Option
-  (SymbolSection dynstr)`, …).  Cross-section offset invariants
-  are at the TYPE LEVEL: string-ref offsets are `Fin ds.size`,
-  so bounds predicates are vacuous by construction.  All 14
-  mutating ops (in `Elf/Ops/`) live here, along with their
-  observable-correctness theorems.
+For **forward-looking work items**, see [`research/ROADMAP.md`](../research/ROADMAP.md).
 
-The `Adapter` bridges the two: `ofElfFile : ElfFile → Except
-AdapterError ValidElfFile` and `toElfFile : ElfFile → ValidElfFile →
-ElfFile` (the byte-layer input is the "template" for opaque sections
-the typed algebra doesn't model).  The CLI flow is bytes →
-Parser → ParsedElf → Adapter.ofElfFile → ValidElfFile → op →
-Adapter.toElfFile → ElfFile → Encoder → bytes.
-
-**Two co-equal sources of truth.**  Both layers persist through
-every op.  The typed algebra is the **edit surface**; the byte
-layer is the **layout-pinned reference** for entries the typed
-layer doesn't model (DT_RELA/REL/JMPREL addresses, DT_INIT/FINI,
-ordering of pre-existing dynamic entries, opaque section
-contents).  `Adapter.patchDynamicEntries` reads the byte side
-positionally to preserve those verbatim while applying typed-side
-edits.  Layout-sensitive ops (e.g. moving `.dynstr` to a new
-vaddr) would need a byte-layer pass too; the current 14 ops don't.
+For a **complete inventory** of every theorem/definition by file, see
+[`INVENTORY.md`](INVENTORY.md).
 
 ---
 
@@ -97,84 +66,12 @@ Multi-op invocations work by re-parsing the current bytes between ops.
 
 ---
 
-## Architecture
+## Codebase size
 
-```
-Patchelf/
-├── Elf/
-│   │  -- Shared primitives
-│   ├── Basic.lean              OsAbi, ElfIdent, ElfHeader, DynTag, DynEntry,
-│   │                           ProgramHeader, SectionHeader, DynEntry.isStringRef,
-│   │                           StringTable, sysvHash, gnuHash
-│   ├── Layout.lean             Byte offsets, fixed sizes, ShType/PhType codes
-│   ├── Reader.lean             ByteArray → UIntN primitives (LE)
-│   ├── Writer.lean             UIntN → ByteArray primitives (LE)
-│   ├── Serialize.lean          writeArray + uniform-size lemma
-│   ├── ByteLevel.lean          Per-width roundtrip lemmas + ByteWidth bundle;
-│   │                           `byte_codec_gen` elaborator + `merge_extract_at`
-│   │                           tactic macro
-│   ├── SchemaDSL.lean          `elf_schema` command elaborator
-│   │                           (6 field kinds / 8 syntax rules;
-│   │                           up to 10 emitted artifacts per schema)
-│   ├── Schemas.lean            `elf_schema` invocations for 7 structs +
-│   │                           hand-written Verneed/SysVHash/GnuHash writers +
-│   │                           their byte-roundtrip theorems
-│   ├── Decode.lean             buildArray, decodeChain, decodeStringTable,
-│   │                           decodeVersym, decodeSysVHash, decodeGnuHash
-│   ├── DynamicLemmas.lean      insertBeforeLast, hasTag, filter/map preservation
-│   │
-│   │  -- Byte layer: pure-IR `ElfFile` + wire codec
-│   ├── ElfFile.lean            ElfFile, SectionContent, IsValid (8 clauses),
-│   │                           content accessors (via section_content_accessor
-│   │                           macro), IsLoadable, IsFullyValid
-│   ├── SectionOps.lean         Section update helpers + IsValid preservation
-│   ├── ParseHeader.lean        ParseError + parseHeader (ELF header validation)
-│   ├── Splice.lean             Encoder.splice + splice_size
-│   ├── Parser.lean             parse : ByteArray → Except ParseError ParsedElf
-│   ├── LayoutEngine.lean       layoutForEncoding: recompute offsets + update
-│   │                           phdrs when current layout has overlaps
-│   ├── Encoder.lean            encode : ElfFile → ByteArray.  Runs
-│   │                           syncDtStrszInFile + conditional layoutForEncoding
-│   │                           before splicing.
-│   ├── ByteRoundtrip.lean      encode_size_eq (unconditional) +
-│   │                           parse_encode_roundtrip (unconditional
-│   │                           under EncodePreconditions bundle)
-│   │
-│   │  -- Typed-section algebra
-│   ├── StringSection.lean      StringSection + NoNullBytes + lookup
-│   ├── DynamicSection.lean     DynamicSection ds (indexed by StringSection)
-│   ├── SymbolSection.lean      SymbolSection ds
-│   ├── AuxSections.lean        VerneedSection, SysVHashSection, GnuHashSection
-│   ├── InterpSection.lean      InterpSection (byte-terminated)
-│   ├── ValidElfFile.lean       Record of typed sections + growDynstr
-│   ├── DynamicParse.lean       DynamicSection.parseFrom (byte-layer → typed)
-│   ├── DynamicEncode.lean      DynamicSection.assembleEntries (typed →
-│   │                           byte-layer; coherence tags derived, not stored)
-│   ├── Adapter.lean            ofElfFile / toElfFile — 8 applyX helpers +
-│   │                           patchDynamicEntries (positional remap)
-│   ├── AdapterRoundtrip.lean   8 preservation theorems
-│   │                           (ofElfFile_*, toElfFile_*, roundtrip_*)
-│   │                           proved via `split at h` cascades
-│   ├── ObservableCombinators.lean   growDynstrDynamicOp + mapDynamicOp
-│   │                                 + their master observable theorems
-│   │
-│   └── Ops/                    14 mutating ops
-│       ├── OsAbi.lean, Execstack.lean, AddDebugTag.lean, NoDefaultLib.lean
-│       ├── AddNeeded.lean, AddRpathEntry.lean, Rpath.lean, Soname.lean
-│       ├── RemoveNeeded.lean, RemoveRPath.lean
-│       ├── ClearSymbolVersion.lean, ReplaceNeeded.lean
-│       ├── RenameDynamicSymbols.lean
-│       └── Interpreter.lean
-├── CLI.lean                    parseArgs + dispatch (byte parse → adapter →
-│                               typed op → adapter → byte encode)
-├── Main.lean                   IO entry point
-└── Patchelf.lean               Root aggregator
-
-tests/
-├── run.sh                      harness
-├── cases/                      49 shell tests (*.sh)
-└── fixtures/                   hello-linux-x86_64 (et al.)
-```
+For the file-by-file architecture, see
+[`ARCHITECTURE.md` § File map](ARCHITECTURE.md#file-map). For the
+exhaustive declaration inventory, see
+[`INVENTORY.md`](INVENTORY.md).
 
 Total Lean source: ~13,700 LOC. Distribution by category:
 
@@ -345,38 +242,19 @@ tracked in ROADMAP item 4.2.
 Axiom dependencies: `[propext, Classical.choice, Quot.sound]` plus 3
 `bv_decide` axioms for the readU/writeU primitives. No `sorryAx`.
 
-### Typed-algebra invariants: type-level, not predicate-level
+### Typed-algebra invariants and observables
 
-`ValidElfFile` exposes structure that makes the byte layer's
-8-clause decidable `IsValid` *vacuous by construction* on its
-fields:
+For the structural picture (why `ValidElfFile` makes byte-layer
+`IsValid` clauses vacuous, why DT_* coherence tags disappear, the
+`<op> + _observable + _*_preserved` convention), see
+[`ARCHITECTURE.md` § Layer 3](ARCHITECTURE.md#layer-3--typed-section-algebra)
+and [§ Op convention](ARCHITECTURE.md#op-convention).
 
-- `dynstr : StringSection` — the `StringSection.wf` field requires
-  either size 0 or a trailing NUL.  the byte layer's `strtabsWellFormed` clause
-  is gone because no other representation is constructible.
-- `dynamic : Option (DynamicSection dynstr)` — `DynamicSection ds`
-  stores every string-ref offset as `Fin ds.size`, so the byte
-  layer's `dynamicWellFormed` clause "every string-ref entry's
-  value fits in `.dynstr`" is implied by the type.
-- `dynsym : Option (SymbolSection dynstr)` — `TypedSymbol.st_name`
-  is also `Fin dynstr.size`.  the byte layer's `dynsymNamesInBounds` clause is
-  likewise vacuous.
-- No `IsValid` predicate on `ValidElfFile` itself — the type IS
-  the predicate.
-
-DT_STRTAB / DT_SYMTAB / DT_HASH / DT_GNU_HASH / DT_VERNEED / DT_STRSZ
-are NOT stored as DynamicSection fields; they're DERIVED at encode
-time via `assembleEntries` + `LayoutCtx`.  the byte layer's 6 `dynAddressCoherent*`
-clauses and `dynStrszCoherent` clause disappear.
-
-### Typed-algebra observables: per-op semantic correctness theorems
-
-Every op in `Elf/Ops/` has at least one `_observable` theorem stating the
-post-condition a caller can observe.  The
+**Proved status:** every op in `Elf/Ops/` has at least one
+`_observable` theorem stating its post-condition. The
 `growDynstrDynamicOp_observable` and `mapDynamicOp_observable`
-combinators in `ObservableCombinators.lean` supply the shared skeleton
-(existential for the post dynamic section + the lookup-resolved
-offset); each op proves its op-specific `P` predicate inline.
+combinators in `ObservableCombinators.lean` supply the shared
+skeleton; each op proves its op-specific `P` predicate inline.
 
 ### Adapter round-trip
 
@@ -393,19 +271,21 @@ default build target.
 
 ## Encoder pipeline
 
-`encode : ElfFile → ByteArray` is a 3-phase transform:
+For the diagram, see
+[`ARCHITECTURE.md § Encoder pipeline (zoom-in)`](ARCHITECTURE.md#encoder-pipeline-zoom-in).
+The current implementation is:
 
-1. **`syncDtStrszInFile`**: rewrite every DT_STRSZ entry's `value` to
+1. **`syncDtStrszInFile`** — rewrite every DT_STRSZ entry's `value` to
    `.dynstr.bytes.size`. No-op if either `.dynamic` or `.dynstr` is
    absent.
-2. **Conditional `layoutForEncoding`**: if `layoutAlreadyValid e` is
+2. **Conditional `layoutForEncoding`** — if `layoutAlreadyValid e` is
    false (sections overlap or overlap the shdr table), repack sections
    contiguously after `max(ehdrSize, phdrTableEnd)`, respecting
    `addralign`. Place the shdr table after all sections. Update
    `header.shoff` and PT_INTERP/PT_DYNAMIC phdr offsets + sizes to
    match the new layout. Skipped when the existing layout is already
    valid (preserves byte-for-byte stability on no-growth ops).
-3. **Splice pipeline**: allocate `zeroBytes (encodedFileSize e)`,
+3. **Splice pipeline** — allocate `zeroBytes (encodedFileSize e)`,
    splice header at 0, phdr table at `phoff`, shdr table at `shoff`,
    then each non-NOBITS non-NULL section at its offset.
 
