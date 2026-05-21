@@ -24,11 +24,14 @@ module
 
 public meta import Lean
 public import Patchelf.Elf.Splice
+public import Patchelf.Elf.Encoder
 public import Patchelf.Elf.Tactic.SpliceSimprocAttr
 
 @[expose] public section
 
 attribute [splice_simp]
+  -- read-rewrite family: collapses readU{N} (splice ...) to readU{N} on
+  -- the underlying buffer (disjoint case) or the splice payload (inside).
   Patchelf.Elf.Reader.readU8_splice_disjoint
   Patchelf.Elf.Reader.readU16_splice_disjoint
   Patchelf.Elf.Reader.readU32_splice_disjoint
@@ -41,6 +44,13 @@ attribute [splice_simp]
   Patchelf.Elf.Reader.readU16_splice_at_0_inside
   Patchelf.Elf.Reader.readU32_splice_at_0_inside
   Patchelf.Elf.Reader.readU64_splice_at_0_inside
+  -- size-yielding lemmas: let the omega discharger see through
+  -- buffer-size aliases (`(splice X off w).size`, `(zeroBytes n).size`,
+  -- `(Foo.write x).size`, `(writeArray ...).size`) without manual
+  -- `have` clauses at the call site.
+  Patchelf.Elf.Encoder.splice_size
+  Patchelf.Elf.zeroBytes_size
+  -- arithmetic cleanups
   Nat.sub_zero
 
 namespace Patchelf.Elf.Tactic
@@ -53,8 +63,21 @@ open Lean Elab Tactic
     Equivalent to `simp only [splice_simp] (discharger := omega)`. -/
 syntax (name := simpSplice) "simp_splice" (Lean.Parser.Tactic.location)? : tactic
 
+/-- Discharger used by `simp_splice`: rewrite splice/zeroBytes sizes to
+    their underlying buffer sizes (so omega can see them), then run
+    omega.  The size-rewrite-then-omega ordering is what lets omega
+    discharge fit conditions for nested splices like
+    `phoff + phdrW.size ≤ (splice buf0 0 hdrW).size`. -/
+syntax "splice_disch" : tactic
+macro_rules
+  | `(tactic| splice_disch) =>
+    `(tactic| (try simp only
+                [Patchelf.Elf.Encoder.splice_size,
+                 Patchelf.Elf.zeroBytes_size] at *); omega)
+
 macro_rules
   | `(tactic| simp_splice $[$loc:location]?) =>
-    `(tactic| simp (discharger := omega) only [splice_simp] $[$loc:location]?)
+    `(tactic| simp (discharger := splice_disch) only [splice_simp]
+              $[$loc:location]?)
 
 end Patchelf.Elf.Tactic

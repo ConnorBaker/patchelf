@@ -219,16 +219,6 @@ theorem readU8_encode_in_header (e : ElfFile)
   have hStep234 : Reader.readU8 buf3 r = Reader.readU8 hdrW r := by
     show Reader.readU8
       (splice (splice (splice buf0 0 hdrW) phoff phdrW) shoff shdrW) r = _
-    have hr_buf0 : r < buf0.size := by rw [hBuf0Sz]; exact hrLtTotal
-    have hr_buf1 : r < (splice buf0 0 hdrW).size := by
-      rw [splice_size]; exact hr_buf0
-    have hr_buf2 : r < (splice (splice buf0 0 hdrW) phoff phdrW).size := by
-      rw [splice_size]; exact hr_buf1
-    -- Make the buffer-size goals omega can see.
-    have hSplBuf1 : (splice buf0 0 hdrW).size = buf0.size := splice_size _ _ _
-    have hSplBuf2 :
-        (splice (splice buf0 0 hdrW) phoff phdrW).size = buf0.size := by
-      rw [splice_size, hSplBuf1]
     simp_splice
   -- Compose.  The goal already has the foldl form on the LHS.
   show Reader.readU8 (e.sections.foldl _ buf3) r = Reader.readU8 hdrW r
