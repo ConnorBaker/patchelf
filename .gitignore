@@ -40,3 +40,8 @@ CMakeLists.txt.user
 .vscode/
 .idea/
 result
+
+/lean/.lake/
+/lean/build/
+/lean/lake-packages/
+/.claude/

@@ -1,0 +1,9 @@
+name = "patchelf"
+defaultTargets = ["Patchelf", "patchelf"]
+
+[[lean_lib]]
+name = "Patchelf"
+
+[[lean_exe]]
+name = "patchelf"
+root = "Patchelf.Main"

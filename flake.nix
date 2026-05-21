@@ -27,6 +27,14 @@
       ];
       forAllSystems = lib.genAttrs supportedSystems;
 
+      # Lean devShells are available on all supportedSystems plus darwin.
+      # The Lean rewrite is cross-platform; the C++ build remains Linux-only.
+      leanSupportedSystems = supportedSystems ++ [
+        "aarch64-darwin"
+        "x86_64-darwin"
+      ];
+      forAllLeanSystems = lib.genAttrs leanSupportedSystems;
+
       version = lib.removeSuffix "\n" (builtins.readFile ./version);
       pkgs = nixpkgs.legacyPackages.x86_64-linux;
 
@@ -197,40 +205,62 @@
         // devFlake.checks.${system} or { }
       );
 
-      devShells = forAllSystems (
+      devShells = forAllLeanSystems (
         system:
         let
-          mkShell =
-            patchelf:
-            patchelf.overrideAttrs (
-              old:
-              let
-                pkgs = nixpkgs.legacyPackages.${system};
-                modular = devFlake.getSystem pkgs.stdenv.buildPlatform.system;
-              in
-              {
-                env = (old.env or { }) // {
-                  _NIX_PRE_COMMIT_HOOKS_CONFIG = "${(pkgs.formats.yaml { }).generate "pre-commit-config.yaml"
-                    modular.pre-commit.settings.rawConfig
-                  }";
-                };
-                nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-                  #pkgs.buildPackages.cmake
-                  #pkgs.buildPackages.meson
-                  #pkgs.buildPackages.ninja
-                  modular.pre-commit.settings.package
-                  (pkgs.buildPackages.writeScriptBin "pre-commit-hooks-install" modular.pre-commit.settings.installationScript)
-                ];
-              }
-            );
+          pkgs = nixpkgs.legacyPackages.${system};
+          leanShell = pkgs.mkShell {
+            name = "patchelf-lean";
+            # cadical is the CaDiCaL SMT/SAT backend that `bv_decide` shells
+            # out to; without it `bv_decide` is unusable in this dev shell
+            # (R5-S6 empirical finding; see research/ROADMAP.md).
+            buildInputs = [
+              pkgs.lean4
+              pkgs.cadical
+            ];
+          };
         in
-        {
-          glibc = mkShell self.packages.${system}.patchelf;
-          default = self.devShells.${system}.glibc;
-        }
-        // lib.optionalAttrs (system != "i686-linux") {
-          musl = mkShell self.packages.${system}.patchelf-musl;
-        }
+        # On Linux, keep the existing C++ devShells and default to glibc.
+        # On darwin, only the Lean shell is available (the C++ tree is
+        # Linux-only).
+        if builtins.elem system supportedSystems then
+          let
+            mkShell =
+              patchelf:
+              patchelf.overrideAttrs (
+                old:
+                let
+                  modular = devFlake.getSystem pkgs.stdenv.buildPlatform.system;
+                in
+                {
+                  env = (old.env or { }) // {
+                    _NIX_PRE_COMMIT_HOOKS_CONFIG = "${(pkgs.formats.yaml { }).generate "pre-commit-config.yaml"
+                      modular.pre-commit.settings.rawConfig
+                    }";
+                  };
+                  nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+                    #pkgs.buildPackages.cmake
+                    #pkgs.buildPackages.meson
+                    #pkgs.buildPackages.ninja
+                    modular.pre-commit.settings.package
+                    (pkgs.buildPackages.writeScriptBin "pre-commit-hooks-install" modular.pre-commit.settings.installationScript)
+                  ];
+                }
+              );
+          in
+          {
+            glibc = mkShell self.packages.${system}.patchelf;
+            default = self.devShells.${system}.glibc;
+            lean = leanShell;
+          }
+          // lib.optionalAttrs (system != "i686-linux") {
+            musl = mkShell self.packages.${system}.patchelf-musl;
+          }
+        else
+          {
+            lean = leanShell;
+            default = leanShell;
+          }
       );
 
       packages = forAllSystems (
