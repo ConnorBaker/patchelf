@@ -23,7 +23,7 @@ forward-looking view.
 
 **Build and test from `lean/`:**
 ```sh
-nix develop ../.#lean -c lake build              # 92/92 jobs expected
+nix develop ../.#lean -c lake build              # 94/94 jobs expected
 nix develop ../.#lean -c bash tests/run.sh       # 49/49 shell tests expected
 grep -rn "sorry\b" Patchelf/                     # zero matches expected
 ```
@@ -47,11 +47,13 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
   use the `_eq` companion lemmas for unfolding.  Removing the
   attribute will time out per-byte access proofs at >32M
   heartbeats.
-- For do-blocks that need proof navigation, rewrite to explicit
-  `if-then-else` (the `Id.run do` form elaborates to lambda
-  continuations that resist `simp [bind]`).  See
+- For do-blocks that need proof navigation, two routes work:
+  (a) rewrite to explicit `if-then-else` — the `Id.run do` form
+  elaborates to lambda continuations that resist `simp [bind]`.  See
   `Parse.parseHeader` and `LayoutEngine.layoutAlreadyValid` for
-  precedent.
+  precedent.  (b) for genuinely imperative shapes (`let mut` +
+  `for`), use `mvcgen` from `Std.Tactic.Do` (Lean 4.21+); see
+  `Adapter.patchDynamicEntries` for a current `Id.run do` candidate.
 - For loop-based decoders (`decodeDynamic`), use two-state
   foldl/loop induction — see `decodeDynamic_writeArray_eq` for
   the template.
@@ -341,67 +343,68 @@ by construction.  `SectionOps.lean` is now 51 LOC: just
 `ElfFile.updateSectionContent` def + 3 actively-used `@[simp]`
 projection lemmas.
 
-#### 5.4 Splice/extract simproc with `omega` side-condition discharge
+#### 5.4 Splice/extract simp set + tactic — DONE (with calibration)
 
-**Severity:** mechanical-proof compression. Roughly 800 LOC of the
-2,927-LOC `ByteRoundtrip.lean` file (~25 lemmas across 4 splice
-regions × 4–5 read widths) is per-byte/per-width threading: each
-proof is a 4-step splice-disjoint cascade differing only in width
-and region. See `STATUS.md` and `INVENTORY.md` for the bucket
-structure.
+**What landed.**
+- `Patchelf/Elf/Tactic/SpliceSimprocAttr.lean` — registers the
+  `[splice_simp]` simp set via `register_simp_attr` (works because
+  the codebase moved to module syntax).
+- `Patchelf/Elf/Tactic/SpliceSimproc.lean` — populates `[splice_simp]`
+  with the 12 read-rewrite lemmas + size-yielding lemmas (`splice_size`,
+  `zeroBytes_size`) + arithmetic cleanups (`Nat.sub_zero`,
+  `Nat.add_sub_cancel`, `Nat.add_sub_cancel_left`).  Provides a
+  `simp_splice` tactic macro that runs `simp (discharger :=
+  splice_disch) only [splice_simp]`, where `splice_disch` first
+  rewrites splice-buffer sizes then runs `omega` so omega can see
+  through nested `(splice X off w).size`.
+- `Patchelf/Elf/Tactic/SpliceSimprocTest.lean` — 7 self-tests covering
+  disjoint/inside variants at all 4 widths plus nested cascades.
 
-**What to do:** add a `simproc` (Lean 4.29 syntax: `simproc <name>
-(<pattern>) := <body>`, body has type `Lean.Meta.Simp.Simproc =
-Expr → SimpM Step`) that:
+**Approach taken — simp-with-discharger, not a true simproc.**  The
+original §5.4 design called for a procedural `simproc` that
+pattern-matches `readUN (splice ...)` and calls
+`Lean.Elab.Tactic.Omega.omega` programmatically.  Investigation found
+**zero in-tree precedent** for calling omega from a simproc and
+budgeted ~30 LOC for the integration.  We instead used the
+declarative simp-set + custom-discharger form, which has the same
+effect at the call sites (`simp_splice` closes the goal) without the
+first-mover risk.  A true simproc upgrade is still possible if a
+later use case requires it.
 
-1. Recognizes terms of the form `readUN (splice bs off w) i` and
-   `readUN (extract bs lo hi) i` for `N ∈ {8, 16, 32, 64}`.
-2. Synthesizes a fresh metavariable for the disjointness side
-   condition (`IntervalDisjoint i (i+N) off (off+w.size)` for
-   splice; `i + N ≤ hi - lo` for extract).
-3. Discharges the side condition via `Lean.Elab.Tactic.Omega.omega
-   [] mvarId` (the `MetaM`-level entry point at
-   `lean4/src/Lean/Elab/Tactic/Omega/Frontend.lean:672`, NOT the
-   `TacticM` wrapper).
-4. On success, rewrites to `readUN bs i` (disjoint) or `readUN w
-   (i - off)` (inside) — using existing `readUN_splice_*` lemmas as
-   the rewrite witnesses.
-5. On failure (omega cannot prove disjointness), returns
-   `.continue` so simp falls through to other rules.
+**Where it was applied.**  The threading-lemma family in
+`ByteRoundtrip.lean` had a smaller splice-cascade surface than the
+original audit suggested:
+- `readU8_encode_in_{header,phdr,shdr}` — 3 sites with multi-step
+  splice cascades.  All 3 collapsed to single `simp_splice` calls.
+- `readU16/U32/U64_encode_in_{header,phdr,shdr}` (12 sites) — these
+  delegate to the readU8 variant via byte decomposition; never used
+  the splice cascade directly.  Already minimal.
+- `readU8/U16_encode_in_section` (2 sites) — use
+  `readU8_foldl_section_recovers`, not a splice cascade.
+- `getElem_encode_in_*` and `extract_encode_eq_*` (5 sites) — lift
+  from already-collapsed primitives.
 
-Implementation pattern templates in core Lean:
-- `lean4/src/Lean/Meta/Tactic/Simp/BuiltinSimprocs/Fin.lean:141-168`
-  (Fin bound checks via meta-level proof construction)
-- `lean4/src/Lean/Meta/Tactic/Simp/BuiltinSimprocs/BitVec.lean:42-67`
-  (`reduceBin`/`reduceUnary` shape)
+**LOC calibration.**  The original §5.4 estimate ("~800 LOC of
+bucket-1 threading lemmas collapse") was overstated.  Actual LOC
+delta: **~25 LOC removed** across the 3 sites that had real splice
+cascades.  The remaining bucket-1 LOC is structural plumbing
+(per-section foldl preservation, disjointness extraction from
+`spliceRegionsDisjoint`, buffer-size aliases) that is not
+splice-cascade-shaped and would not benefit from `simp_splice`.
 
-**Caveat — first-mover.** A search of core Lean's
-`BuiltinSimprocs/` and `Grind/SimpUtil.lean` finds **zero** existing
-simprocs that call `omega` programmatically. The pattern is
-supported by the type system (`SimpM` extends `MetaM`, `omega` has
-a `MetaM` entry) but has no in-tree precedent.  Budget ~30 LOC of
-plumbing to construct the side-goal mvar, run omega in a `try`, and
-recover gracefully; expect to debug the integration.
+**What this means for Track 1 / Phase 3.**  The compression-via-
+`simp_splice` route turned out to be a much smaller win than the
+EverParse-style codec algebra (Track 1, partially landed) or Phase 3
+unification.  The §5.4 "coextensive with Track 1" framing in the
+original entry was approximately right in shape but not in
+magnitude.  Don't hold up Phase 3 on further `simp_splice` rollout —
+there is none.
 
-**Estimated LOC reduction:** ~800 LOC of bucket-1 threading lemmas
-in `ByteRoundtrip.lean` collapse to mechanical `simp`-only proofs.
-Bucket 2 (decoder-step `writeArray_at_index` lemmas, ~241 LOC)
-shrinks modestly via the same simproc plus existing
-`writeArray_uniform_extract_at_index` lemmas.
-
-**Sequencing relative to Phase 3.**  This compression is
-*coextensive* with what the planned Track 1 / Codec algebra +
-Phase 3 unification deletes by other means.  Doing it now de-risks
-Phase 3 by reducing the manual proof surface that must be ported
-through the unification refactor.  Cap effort at one week; if the
-omega-from-simproc plumbing stalls beyond that, abandon and
-proceed directly to Phase 3 — the eventual deletion is a superset.
-
-**Where to land:** new file `Patchelf/Elf/Tactic/SpliceSimproc.lean`,
-imported by `ByteRoundtrip.lean`.  Acceptance: at least one
-existing threading-lemma proof in `ByteRoundtrip.lean` rewritten to
-use the simproc, full `lake build` green, all 49 shell tests pass,
-zero `sorry`.
+**`[splice_simp]` going forward.**  The simp set is extensible.
+Future contributors who add `readUN_splice_*` or splice-buffer-size
+lemmas can attach `@[splice_simp]` to make them available to
+`simp_splice` callers automatically — no `Tactic/SpliceSimproc.lean`
+edit required.
 
 ---
 
@@ -439,14 +442,19 @@ ValidElfFile
 └── interp   : Option InterpSection
 
 DynamicSection ds
-├── needed   : Array (Fin ds.size)     -- DT_NEEDED offsets
-├── rpath    : Option (Fin ds.size)    -- DT_RPATH
-├── runpath  : Option (Fin ds.size)    -- DT_RUNPATH
-├── soname   : Option (Fin ds.size)    -- DT_SONAME
-├── flags1   : Option UInt64           -- DT_FLAGS_1 (not a strref)
-├── debug    : Option UInt64           -- DT_DEBUG
-└── unstructured : Array DynEntry      -- everything else (preserved verbatim)
+├── needed  : Array (Fin ds.size)     -- DT_NEEDED offsets
+├── rpath   : Option (Fin ds.size)    -- DT_RPATH
+├── runpath : Option (Fin ds.size)    -- DT_RUNPATH
+├── soname  : Option (Fin ds.size)    -- DT_SONAME
+├── flags1  : Option UInt64           -- DT_FLAGS_1 (not a strref)
+└── debug   : Option UInt64           -- DT_DEBUG
 ```
+
+Opaque tags (DT_RELA/REL/JMPREL, DT_INIT/FINI, etc.) are NOT stored
+on `DynamicSection ds` — they live on the byte-layer
+`Array DynEntry` and get preserved verbatim through
+`Adapter.patchDynamicEntries`'s positional remap (the catch-all
+`| _ => push d` arm).
 
 Cross-section bounds invariants (e.g. "every DT_NEEDED value is
 `< dynstr.size`") are type-level: `Fin ds.size` in every
