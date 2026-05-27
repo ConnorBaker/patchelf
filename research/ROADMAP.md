@@ -5,17 +5,16 @@ port.  Current state of landed work is in
 [`lean/STATUS.md`](../lean/STATUS.md); this document is the
 forward-looking view.
 
-> **Active design work.** The next major arc is designed in
-> [`REWRITE-PHASE-3-DESIGN.md`](REWRITE-PHASE-3-DESIGN.md), which
-> supersedes several entries below (§1.1, §1.2, §3.5, §3.6, §5.1;
-> see the design doc's §8c for explicit dispositions of all
-> ROADMAP §3.x items). The design doc is the load-bearing
-> planning document for the validator + atomic write work, the
-> (possibly skipped) unification refactor, and the
-> `LayoutPlan` / `apply` / loader-coherent layout machinery.
-> Three open compression decisions are tracked in the design
-> doc's §8a; this ROADMAP will be rewritten once the validator
-> work lands and the compression path is chosen.
+> **Layout + validator landed.** The PT_LOAD coherence work designed
+> in [`REWRITE-PHASE-3-DESIGN.md`](REWRITE-PHASE-3-DESIGN.md) shipped
+> in a minimal form: `growEOF` + `syncDtAddrTagsInFile` (replacing
+> `layoutForEncoding` as the primary layout strategy) plus a
+> decidable pre-write validator (`Patchelf/Elf/Validate.lean`) that
+> the CLI runs before every write.  CLI also migrated to lean4-cli
+> subcommands.  This closes ROADMAP §3.6 and §3.7 outright; renders
+> §3.1 obsolete; reduces §3.5 to "PT_GNU_STACK append" (a different
+> phdr-table-growth subset).  Items §1.1, §1.2, §5.1 remain open
+> under the design doc's broader unification arc.
 
 ---
 
@@ -23,20 +22,27 @@ forward-looking view.
 
 **Build and test from `lean/`:**
 ```sh
-nix develop ../.#lean -c lake build              # 94/94 jobs expected
+nix develop ../.#lean -c lake build              # expect a clean build
 nix develop ../.#lean -c bash tests/run.sh       # 49/49 shell tests expected
 grep -rn "sorry\b" Patchelf/                     # zero matches expected
 ```
 
 **Recommended pickup order:**
 
-- **Item 5.1's mechanical bridge** — 1.3a's structural piece is in
-  place.  Op-level Tier D is now mechanical: per-op
-  `_preserves_spliceDisjoint` follows from
-  `layoutForEncoding_produces_spliceRegionsDisjoint` plus an
-  `Adapter.toElfFile`-shape preservation argument.  ~14 ops × ~100 LOC.
+- **`growEOFWith_produces_spliceRegionsDisjoint`** is the unblocker
+  for Item 5.1.  `layoutForEncoding_produces_spliceRegionsDisjoint`
+  exists for the fallback branch only; the primary `growEOFWith`
+  branch needs an analogous proof before per-op Tier D is mechanical.
+  ~200 LOC, mirroring the existing `LayoutInv` foldl-motive
+  argument in `LayoutEngine.lean`.
 - **Items 1.1 and 1.2** can land independently and unlock op-level
-  preservation theorems.
+  preservation theorems.  1.1's decidable predicate already exists in
+  `Validate.lean`; the unfinished work is parser-side threading.  1.2's
+  `syncDtStrszInFile_preserves_valid` is the worked example — the three
+  remaining preservations should reuse the same SectionOps helpers.
+- **Item 3.5a (allocate fresh PT_LOAD)** unblocks the BSS-heavy binary
+  class that `growEOFWith` currently bails on.  Estimated ~600 LOC
+  including the validator-passing proof.
 - **Item 4.2** is an independent typed-side completeness item;
   `.verneed` is stored as `.raw` at the byte layer, so the
   byte-roundtrip doesn't depend on it.
@@ -66,204 +72,196 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 
 #### 1.1 Parser: establish `IsLoadable`, not just `IsValid`
 
-**Severity:** structural gap. `IsLoadable` and `IsFullyValid` exist
-as decidable predicates but are **never established by `parse`, never
-preserved by any op, and never consumed by any other module.** They
-are currently pure decoration.
+**Severity:** structural gap.  Partially mitigated at the I/O
+boundary: `Patchelf/Elf/Validate.lean` provides decidable
+`IsLoadableBytes` and the CLI runs `validateBytes` before every
+write (exit 5 on failure, file unchanged).  This is the *runtime*
+safety net.  The *static* gap remains: `Parser.parse` still returns
+`ParsedElf` carrying only `IsValid`, no op carries an
+`_preserves_loadable` theorem, and no proof connects parser output
+to validator success.
 
 **What to do:** extend `Parser.parse` to return
 `LoadableElfFile` (or an enhanced `ValidElfFile` with an optional
 `IsLoadable` field).  Check `sectionsNonOverlapping`,
-`ptInterpAgreement`, `ptDynamicAgreement`, `segmentCongruence` at
-the end of parse when `IsValid` holds.  On failure return a new
-`ParseError` subclass (not `shdrIdxMismatch`).
+`ptInterpAgreement`, `ptDynamicAgreement`, `segmentCongruence`,
+`shdrSectionDisjoint`, `sectionFileInSomePtLoad` at the end of
+parse when `IsValid` holds.  On failure return a new `ParseError`
+subclass (not `shdrIdxMismatch`).
 
 **Downstream:** once `parse` establishes `IsLoadable`, make every op
 preserve it via an `_preserves_loadable` theorem.  Most ops will
-preserve all 4 clauses definitionally; the interesting ones are
-`setInterpreter` (PT_INTERP agreement after changing interp offset;
-encoder's `layoutForEncoding` handles this but op-level doesn't).
+preserve all clauses definitionally; the interesting ones are
+`setInterpreter` (PT_INTERP agreement after changing interp offset)
+and any op whose post-encode would route through `growEOFWith`'s
+BSS-collision fallback.
 
 **Estimated cost:** ~500 LOC (parser extension + 14 op preservation
 theorems + per-clause Decidable instances refined for better error
-classification).
+classification).  The decidable predicate is already in
+`Validate.lean`; this work is mostly threading.
 
 #### 1.2 Pre-encode passes: `_preserves_valid` theorems
 
-**Severity:** latent correctness gap. `syncDtStrszInFile` and
-`layoutForEncoding` in Encoder/LayoutEngine have no preservation
-theorems — they're pure functions that LOOK like they preserve
-`IsValid`, but nothing proves it.
+**Status:** `syncDtStrszInFile_preserves_valid` (`Encoder.lean`)
+landed.  Three remain:
 
-**What to do:** prove
-- `syncDtStrszInFile_preserves_valid` (content_wf holds because
-  rewriting DT_STRSZ entries' values doesn't change isStringRef
-  tags; dynamic_wf transfers since string-ref tags aren't DT_STRSZ;
-  other clauses via `IsValid.of_sections_and_header_key_eq` modulo
-  one content update).
-- `layoutForEncoding_preserves_valid` (harder: offsets change, shoff
-  changes, PT_INTERP/PT_DYNAMIC phdrs rewrite. All 8 IsValid clauses
-  survive because they don't depend on offsets.  Or prove
-  `IsLoadable` preservation instead since offsets are load-relevant).
+- `growEOFWith_preserves_valid` — offsets change, shoff changes,
+  last PT_LOAD `filesz`/`memsz` extend, PT_INTERP/PT_DYNAMIC track
+  moved sections.  None of the 8 IsValid clauses depend on offsets;
+  the deeper claim — `_preserves_loadable` — is more interesting
+  and the actual point of `growEOF` existing.
+- `syncDtAddrTagsInFile_preserves_valid` — rewrites `.dynamic`'s
+  DT_STRTAB/SYMTAB/HASH/GNU_HASH/VERNEED/VERSYM/JMPREL/REL/RELA
+  entries' `value` to section addresses; `dynamic_wf`'s string-ref
+  predicate isn't an address tag, so it survives by the same
+  argument as `syncDtStrszInFile`.
+- `layoutForEncoding_preserves_valid` — the BSS-collision fallback;
+  same shape as `growEOFWith` but doesn't preserve PT_LOAD coverage.
 
-**Estimated cost:** ~200 LOC each.
+**Estimated cost:** ~200 LOC each.  `growEOFWith_preserves_loadable`
+is the load-bearing one and probably ~500 LOC.
+
+**Supporting infrastructure landed.** `Patchelf/Elf/SectionOps.lean`
+exposes the helpers `growEOFWith` / `syncDtAddrTagsInFile`'s
+preservation proofs will reuse:
+
+- Field projections: `updateSectionContent_{header,phdrs,sections,
+  sections_size,sections,getElem_ne,getElem_self,type,name,offset}`.
+- Structural-index preservation:
+  `updateSectionContent_{findUniqueTypeIdx,dynamicIdx,dynsymIdx,
+  versymIdx,shstrtab,findIdxByName,dynstrIdx,interpIdx}`.
+- Typed-accessor preservation under content-disjoint updates:
+  `updateSectionContent_{contentAt_none,contentAt_some_ne,dynsym_eq,
+  dynstr_eq,interp_eq}`.
+- Generic `firstIdxWhereIn_congr` (drives the index-preservation
+  proofs above) and `firstIdxWhereIn_some_implies` /
+  `findUniqueTypeIdx_section_type` (extract structural facts about a
+  found section).
+- "Different content constructor ⇒ index disjointness":
+  `dynstrIdx_target_ne_of_content_dynamic`,
+  `dynsymIdx_target_ne_of_content_dynamic`,
+  `shstrndx_ne_of_content_dynamic_of_dynstr`.
 
 #### 1.3 Unconditional Tier D — DONE
 
 `ByteRoundtrip.parse_encode_roundtrip` is unconditional under
-`EncodePreconditions` (11 fields; 9 conceptual clauses, with
-`headerFit_*` exploded into 3 separate fields covering
-Nat-wrapper-to-`UInt64`-fit conditions; `phdrFit`, `shdrFit` for
-`wrap_nat` fields).  All 4 witness field theorems proven.  See
-`STATUS.md` §Tier D.
+`EncodePreconditions`.  See `lean/STATUS.md` §Tier D.
 
-#### 1.3a Establish `EncodePreconditions` from realistic inputs — 10 of 11 done
+#### 1.3a `EncodePreconditions` from parser output — 10 of 11 done
 
-`encodePreconditions_of_parser bs shdrs e` derives 10 of 11 fields
-(9 conceptual clauses; the `headerFit_*` row in the table below
-expands into 3 separate fields covering the Nat-wrapper-to-UInt64
-fit conditions) from parser-output structural facts via these
+`encodePreconditions_of_parser bs shdrs e` derives all fields except
+`spliceDisjoint` from parser-output structural facts.  Per-clause
 helpers:
 
 | Clause | Helper | Caller-supplied side condition |
 |---|---|---|
-| `identValid` | `identBytesValid_of_parseHeader_ok` (composes `parseHeader_byte_facts` + `identBytesValid_of_decodeHeader` + `identBytesValid_of_header`) | `parseHeader bs = .ok e.header` |
+| `identValid` | `identBytesValid_of_parseHeader_ok` | `parseHeader bs = .ok e.header` |
 | `typesMatch` | `sectionsFromShdrs_typeContentMatch` | `e.sections = sectionsFromShdrs bs shdrs` |
 | `nullEmpty` | `sectionFromShdr_null_empty` | per SHT_NULL shdr: `sh.size.val = 0` |
 | `sizeFit` | `sectionFromShdr_encodedSize_le` | per shdr: `sh.size.val < UInt64.size` |
 | `syncOk` | `syncDtStrszInFile_eq_id` | `e.dynStrszCoherent` |
-| `headerFit_{entry,phoff,shoff}` | unfold `parseHeader_byte_facts` + `(readU64 _ _).toNat_lt` | `parseHeader bs = .ok e.header` |
-| `phdrFit` | per-element via `Decode.decodePhdrs_getElem` + `(readU64 _ _).toNat_lt` | `e.phdrs = decodePhdrs bs ...` |
-| `shdrFit` | per-element via `Decode.decodeShdrs_getElem` + `(readU64 _ _).toNat_lt` | `shdrs = decodeShdrs bs ...` |
+| `headerFit_{entry,phoff,shoff}` | `parseHeader_byte_facts` + `(readU64 _ _).toNat_lt` | `parseHeader bs = .ok e.header` |
+| `phdrFit` | per-element `Decode.decodePhdrs_getElem` + `toNat_lt` | `e.phdrs = decodePhdrs bs ...` |
+| `shdrFit` | per-element `Decode.decodeShdrs_getElem` + `toNat_lt` | `shdrs = decodeShdrs bs ...` |
 
-Two refactors enabled the bridges: `Parse.parseHeader` rewritten
-from `do` to explicit if-then-else (so the byte-fact bridge could
-navigate via `by_cases + rw [if_neg]`), and `dynamicWellFormed`
-split into `dynamicTerminated` + `dynamicStringRefsValid` (so the
-sync proof doesn't depend on `.dynstr` presence).
-
-**Structural piece DONE.**
-`LayoutEngine.layoutForEncoding_produces_spliceRegionsDisjoint`
-proves `(layoutForEncoding e).spliceRegionsDisjoint` unconditionally
-under two parser-derivable preconditions:
-- `hSection0Null`: `e.sections[0].type = SHT_NULL` (ELF spec; IsValid).
-- `hHeaderPhdr`: `Layout.ehdrSize ≤ e.header.phoff.val` (header
-  doesn't overlap phdr table; phoff = 64 in practice).
-
-Architecture: private `Placement` (per-entry inheritance + offset
-bounds) + `PairDisjoint` (pairwise non-overlap, in `sectionsNonOverlapping`'s
-disjunct order) + bundled `LayoutInv` foldl motive.  ~561 LOC.
-The `subst hSize` trick eliminates the `i` vs `state.1.size` mismatch
-in `placement_step_new`; thereafter `Array.getElem_push_eq` applies
-directly without dependent-getElem motive issues.  Layout-engine
-arithmetic in unbounded `Nat` (the wrappers' representation) was a
-prerequisite.
-
-**Remaining gap (parser-output bridge wiring):** the encoder is
-`encode e = encodeBody (if layoutAlreadyValid e' then e' else
-layoutForEncoding e')` where `e' = syncDtStrszInFile e`.  For
-`parse (encode e) = .ok e` to follow, BOTH branches need
-spliceRegionsDisjoint.  Already-valid branch needs the extra 5
-sub-clauses beyond what `layoutAlreadyValid` checks (header-phdr,
-header-shdr, phdr-shdr, header-section, phdr-section).  Real ELFs
-satisfy all 7, but the parser doesn't enforce pairwise region
-disjointness on output.
-
-The honest theorem for arbitrary parser output is
-`parse (encode e) = .ok ⟨e'', _⟩` where `e''` is the post-pipeline
-file (= `e'` if already valid, else `layoutForEncoding e'`).  This
-is op-level Tier D (item 5.1).
+`spliceDisjoint` is the missing field.  Parser-side: not
+derivable, since overlapping sections are spec-valid and the parser
+shouldn't enforce pairwise region disjointness.  Encoder-output
+side: `LayoutEngine.layoutForEncoding_produces_spliceRegionsDisjoint`
+discharges it for the BSS-collision-fallback branch under
+`section[0].type = SHT_NULL` and `Layout.ehdrSize ≤ phoff.val`.
+The primary `growEOFWith` branch needs an analogue (~200 LOC,
+mirroring the existing `LayoutInv` foldl motive), and the
+already-valid branch needs the 5 sub-clauses beyond
+`layoutAlreadyValid` (header-phdr, header-shdr, phdr-shdr,
+header-section, phdr-section).  This is op-level Tier D (§5.1).
 
 ### Priority 2 — Test coverage + spec strengthening
 
-#### 2.1 Missing / weak observable theorems
+#### 2.1 Weak observable theorems — DONE
 
-- ~~**`renameDynamicSymbols`** has NO observable theorem.~~
-  CLOSED: `renameDynamicSymbols_observable` landed at
-  `Patchelf/Elf/Ops/RenameDynamicSymbols.lean:123` (asserts post-op
-  `.dynsym[i].st_name` points at the appended new name in
-  `.dynstr` for every renamed symbol; companion lemmas
-  `_dynstr`, `_dynsym_isSome`, `_gnuHash` cover supporting state).
-- **`addDebugTag_observable`** is too weak: satisfied by identity on
-  files that already have DT_DEBUG. Should strengthen to: either
-  DT_DEBUG was already present OR the post-op dynamic has one more
-  entry than input.
-- **`removeNeeded_observable`**: similarly weak.
+`addDebugTag_observable_strong` (`Ops/AddDebugTag.lean`) returns the
+disjunction `(DT_DEBUG was present and value preserved) ∨ (DT_DEBUG
+was absent and value = 0)`.  `removeNeeded_needed_size_lt`
+(`Ops/RemoveNeeded.lean`) gives a strict-decrease witness when the
+target lib was present.  Both are adversary-rejecting: identity ops
+fail them.
 
-#### 2.2 Smoke roundtrip test
+#### 2.2 Smoke roundtrip test — DONE
 
-Add a shell test that does `patchelf --print-os-abi fixture >
-/dev/null && cmp fixture fixture.backup` — proves identity byte
-roundtrip via CLI.  Catches regressions where encoder mutates bytes
-gratuitously.
+`tests/cases/00-parse-encode-identity.sh` runs `patchelf roundtrip
+--output OUT IN && cmp IN OUT` against a hand-rolled
+layout-already-valid fixture.
 
 ### Priority 3 — Feature parity with C++ patchelf
 
-#### 3.1 Multi-op canonical ordering
+Closed in earlier passes (kept here as cross-reference targets):
 
-Our CLI applies ops in argv order. C++ patchelf.cc:2445-2500 uses
-a fixed canonical order (prints first, then mutations).  ~30 LOC
-of sorting logic in `Main.runOps`.
+- **§3.1 Multi-op canonical ordering — OBSOLETE.** Subcommand CLI
+  retires single-process multi-op; chain via shell.
+- **§3.2 `shrinkRPath` FS probing — DONE.** `runShrinkRpath` probes
+  with `System.FilePath.pathExists`; `--allowed-prefixes` is a
+  pure-filter override.
+- **§3.6 `--page-size <N>` — DONE.** Threaded `Options.pageSize` →
+  `encodeWith pageSize?` → `growEOFWith`'s `alignStartPage =
+  max pageSize (maxPtLoadAlign e.phdrs)`.
+- **§3.7 `--debug` — DONE.** `Patchelf.Log` (an `IO.Ref Bool` plus
+  a `debug` helper); `runWith` enables it from `Options.debug` and
+  emits trace lines at parse / validate / write / result-rendering
+  points.
 
-#### 3.2 `shrinkRPath` filesystem probing
+Open items:
 
-C++'s `shrinkRPath` checks the filesystem for each rpath directory
-and filters accordingly.  Our `--shrink-rpath` accepts a pure
-prefix whitelist via `--allowed-rpath-prefixes`.  Filesystem
-probing at the Main.lean layer is possible (crosses the pure Ops
-boundary; belongs in Main).
-
-#### 3.3 `.gnu.hash` rebuild in `--rename-dynamic-symbols`
+#### 3.3 `.gnu.hash` rebuild in `rename-dynamic-symbols`
 
 The current op rejects binaries with `.gnu.hash` (op precondition).
 GNU hash is more complex than SysV (bloom filter + bucket offsets +
 chain tail). Adding it: ~150 LOC on top of the existing SysV rebuild.
 
-#### 3.4 `.gnu.version_r` update in `--replace-needed`
+#### 3.4 `.gnu.version_r` update in `replace-needed`
 
-The `--replace-needed` op updates `.dynamic` and grows `.dynstr`
+The `replace-needed` op updates `.dynamic` and grows `.dynstr`
 but doesn't rewrite matching `vn_file` fields in
 `.gnu.version_r`.  Real-world impact minor (dynamic linkers
 resolve versions via Verdef, not vn_file).  Would roughly triple
 the `replaceNeeded_preserves_*` proof size.
 
-#### 3.5 PT_GNU_STACK append when missing
+#### 3.5a Allocate a fresh PT_LOAD when extension is unsafe
 
-`--set-execstack` on a binary without PT_GNU_STACK phdr is currently
-a no-op. C++ patchelf appends the phdr. Adding it requires extending
-`layoutForEncoding` to grow the phdr table.
+`growEOFWith`'s safety gate (`canExtendLastPtLoad`) rejects when
+extending the last PT_LOAD's `filesz`/`memsz` would clobber
+already-allocated BSS or fall outside the existing alignment.  In
+that case, `growEOFWith` falls back to `layoutForEncoding`'s
+unaware repack and the pre-write validator catches the resulting
+non-loadable bytes (exit 5).  C++ patchelf's `rewriteSectionsLibrary`
+allocates a brand-new PT_LOAD by growing the phdr table; that's
+the strictly more general fix and unblocks the BSS-heavy binary
+class (e.g. coreutils `ls`).  Estimated ~600 LOC: phdr-table-grow
+in `growEOFWith` + corresponding splice-pipeline updates +
+preservation argument.
 
+#### 3.5b PT_GNU_STACK append when missing
 
-#### 3.6 `--page-size <N>` actually used
+`set-execstack` on a binary without PT_GNU_STACK phdr is currently
+a no-op (`Ops/Execstack.lean` only maps over existing phdrs);
+C++ appends.  Adding it shares the phdr-table-growth machinery
+with §3.5a and is best done together.
 
-Currently accepted and stored in `Options` but never consumed.
-`layoutForEncoding` aligns by `section.addralign` only, not by page
-size. C++ patchelf aligns PT_LOAD segments to page size; we would
-need to extend the layout pass to do so.
+#### 3.8 Per-clause `ParseError` classification — DONE
 
-#### 3.7 `--debug` verbose trace output
-
-`--debug` is accepted but produces no trace output. The CLI doesn't
-thread a debug flag into per-op diagnostic prints.
-
-#### 3.8 Per-clause `ParseError` classification
-
-`Parser.parse` on IsValid failure throws a generic
-`shdrIdxMismatch`. Per-clause classification would surface specific
-violations (e.g. `dynamicMissingNull`, `dynsymOffsetOutOfBounds`).
-The 8 clauses are each decidable — a match-on-failing-clause could
-produce targeted errors.
+`Parser.parse` now dispatches IsValid failures to per-clause
+variants via the 8 decidable sub-instances.  Six new variants
+(`headerCountsMismatch`, `strtabMalformed`, `dynamicWellFormedFailed`,
+`contentWellFormedFailed`, `typesNotDistinct`, `namesNotUnique`)
+plus reuses of `shdr0NotNull` and `dynsymOffsetOutOfBounds`.
+`shdrIdxMismatch` remains as a totality fall-through.
 
 ### Priority 4 — DSL extensions
 
-#### 4.1 ~~`decode ∘ write = id` emission~~ — DONE
-
-The DSL's forward-direction emission is in place.  All 7
-fixed-layout schemas (`ElfIdent`, `ElfHeader`, `ProgramHeader`,
-`SectionHeader`, `DynEntry`, `Symbol`, `Vernaux`) have
-`X_decode_write : decode (X.write x) 0 = x` theorems generated
-automatically by the `elf_schema` command.  These are consumed by
-`section_decode_encode`'s per-content discharges.
+`§4.1 decode ∘ write = id emission` is DONE — all 7 fixed-layout
+schemas get `X_decode_write` theorems auto-emitted by `elf_schema`,
+consumed by `section_decode_encode`.
 
 #### 4.2 Variable-length trailing-array field kind + Verneed forward
 
@@ -290,20 +288,17 @@ pattern.  Estimated ~150-200 LOC each.
 
 #### 5.1 Op-level byte roundtrip lemmas — UNBLOCKED
 
-Currently each op proves `_preserves_valid` (structural).  A stronger
-version would prove `parse (encode (op e)) = .ok ⟨layoutForEncoding
-(syncDtStrszInFile (op e)), _⟩` — the op-level Tier D.
+A stronger replacement for the existing `_preserves_valid` lemmas:
+prove `parse (encode (op e)) = .ok ⟨prepLayoutForEncode
+(syncDtStrszInFile (op e)), _⟩` for each op.
 
-**1.3a's structural piece is in place.**  Each op gets:
-- `identValid`, `typesMatch`, `nullEmpty`, `sizeFit`, `headerFit_*`,
-  `phdrFit`, `shdrFit` from a fresh `Adapter.toElfFile` traversal (all
-  preserved by op shape; not from `IsValid`).
-- `syncOk` directly because `encode` runs `syncDtStrszInFile`
-  unconditionally as its first step.
-- `spliceDisjoint` from
-  `layoutForEncoding_produces_spliceRegionsDisjoint`.
-
-~14 ops × ~100 LOC each, mostly mechanical.
+Each op gets all `EncodePreconditions` fields except
+`spliceDisjoint` from a fresh `Adapter.toElfFile` traversal
+(preserved by op shape, not via `IsValid`).  `spliceDisjoint`
+needs the missing `growEOFWith_produces_spliceRegionsDisjoint`
+(see §1.3a).  Once that lands, ~14 ops × ~100 LOC each, mostly
+mechanical.  `sizeFit` now reads `s.shdrSize` — covers NOBITS via
+`memSize`.
 
 #### 5.2 Op-level `_observable` completeness
 
@@ -320,91 +315,38 @@ an adversarial identity function fails.  Current status per op:
 | setInterpreter | yes | yes (.interp = encoded path) |
 | addDebugTag | yes | weak (identity on files with DT_DEBUG) |
 | noDefaultLib | yes | ? |
-| addNeeded | yes | yes (new DT_NEEDED exists) |
+| addNeeded | yes | yes (`needed[0]` points at appended dynstr name; matches C++ front-insert) |
 | addRpathEntry | yes | yes |
 | modifyRPath.remove / .set | yes / ? | partial |
 | modifySoname.delete / .set | yes / ? | partial |
 | replaceNeeded / replaceNeededReuse | yes / yes | yes |
-| renameDynamicSymbols | yes | yes (`.st_name` points at appended `.dynstr` entry; landed `Ops/RenameDynamicSymbols.lean:123`) |
+| renameDynamicSymbols | yes | yes (`.st_name` points at appended `.dynstr` entry) |
 
-All ops now have observable theorems; the remaining Priority-2
-gap is observable *strength* (some satisfied by identity on no-op
-inputs — addDebugTag/removeNeeded), not observable existence.
+Strengthening the "weak" rows is tracked in §2.1.
 
 #### 5.3 `SectionOps.lean` flatness — DONE
 
-Resolved by deletion.  An audit found the entire 530-LOC
-preservation infrastructure had zero external callers:
-`updateSectionContent_preserves_structural` plus its 8+ per-clause
-helpers, the four `_of_updateSectionContent_of_ne` content-accessor
-preservations, and the IsValid bundling helper.  The typed-section
-algebra's `Fin ds.size` indexing made the infrastructure obsolete
-by construction.  `SectionOps.lean` is now 51 LOC: just
-`ElfFile.updateSectionContent` def + 3 actively-used `@[simp]`
-projection lemmas.
+The 530-LOC preservation infrastructure had zero external callers
+(the typed-section algebra's `Fin ds.size` indexing made it
+obsolete) and was deleted.  `SectionOps.lean` is now 52 LOC:
+`ElfFile.updateSectionContent` plus 3 `@[simp]` projection lemmas.
 
-#### 5.4 Splice/extract simp set + tactic — DONE (with calibration)
+#### 5.4 Splice/extract simp set + tactic — DONE
 
-**What landed.**
-- `Patchelf/Elf/Tactic/SpliceSimprocAttr.lean` — registers the
-  `[splice_simp]` simp set via `register_simp_attr` (works because
-  the codebase moved to module syntax).
-- `Patchelf/Elf/Tactic/SpliceSimproc.lean` — populates `[splice_simp]`
-  with the 12 read-rewrite lemmas + size-yielding lemmas (`splice_size`,
-  `zeroBytes_size`) + arithmetic cleanups (`Nat.sub_zero`,
-  `Nat.add_sub_cancel`, `Nat.add_sub_cancel_left`).  Provides a
-  `simp_splice` tactic macro that runs `simp (discharger :=
-  splice_disch) only [splice_simp]`, where `splice_disch` first
-  rewrites splice-buffer sizes then runs `omega` so omega can see
-  through nested `(splice X off w).size`.
-- `Patchelf/Elf/Tactic/SpliceSimprocTest.lean` — 7 self-tests covering
-  disjoint/inside variants at all 4 widths plus nested cascades.
+`Patchelf/Elf/Tactic/SpliceSimproc{Attr,,Test}.lean` provide the
+`[splice_simp]` simp set and a `simp_splice` macro
+(`simp (discharger := splice_disch) only [splice_simp]`, where
+`splice_disch` rewrites splice-buffer sizes and then runs `omega`).
+The simp set is extensible via `@[splice_simp]`; new
+`readUN_splice_*` or buffer-size lemmas attach without touching the
+tactic file.
 
-**Approach taken — simp-with-discharger, not a true simproc.**  The
-original §5.4 design called for a procedural `simproc` that
-pattern-matches `readUN (splice ...)` and calls
-`Lean.Elab.Tactic.Omega.omega` programmatically.  Investigation found
-**zero in-tree precedent** for calling omega from a simproc and
-budgeted ~30 LOC for the integration.  We instead used the
-declarative simp-set + custom-discharger form, which has the same
-effect at the call sites (`simp_splice` closes the goal) without the
-first-mover risk.  A true simproc upgrade is still possible if a
-later use case requires it.
-
-**Where it was applied.**  The threading-lemma family in
-`ByteRoundtrip.lean` had a smaller splice-cascade surface than the
-original audit suggested:
-- `readU8_encode_in_{header,phdr,shdr}` — 3 sites with multi-step
-  splice cascades.  All 3 collapsed to single `simp_splice` calls.
-- `readU16/U32/U64_encode_in_{header,phdr,shdr}` (12 sites) — these
-  delegate to the readU8 variant via byte decomposition; never used
-  the splice cascade directly.  Already minimal.
-- `readU8/U16_encode_in_section` (2 sites) — use
-  `readU8_foldl_section_recovers`, not a splice cascade.
-- `getElem_encode_in_*` and `extract_encode_eq_*` (5 sites) — lift
-  from already-collapsed primitives.
-
-**LOC calibration.**  The original §5.4 estimate ("~800 LOC of
-bucket-1 threading lemmas collapse") was overstated.  Actual LOC
-delta: **~25 LOC removed** across the 3 sites that had real splice
-cascades.  The remaining bucket-1 LOC is structural plumbing
-(per-section foldl preservation, disjointness extraction from
-`spliceRegionsDisjoint`, buffer-size aliases) that is not
-splice-cascade-shaped and would not benefit from `simp_splice`.
-
-**What this means for Track 1 / Phase 3.**  The compression-via-
-`simp_splice` route turned out to be a much smaller win than the
-EverParse-style codec algebra (Track 1, partially landed) or Phase 3
-unification.  The §5.4 "coextensive with Track 1" framing in the
-original entry was approximately right in shape but not in
-magnitude.  Don't hold up Phase 3 on further `simp_splice` rollout —
-there is none.
-
-**`[splice_simp]` going forward.**  The simp set is extensible.
-Future contributors who add `readUN_splice_*` or splice-buffer-size
-lemmas can attach `@[splice_simp]` to make them available to
-`simp_splice` callers automatically — no `Tactic/SpliceSimproc.lean`
-edit required.
+Original §5.4 estimate (~800 LOC bucket-1 collapse) was overstated;
+actual delta was ~25 LOC across 3 splice-cascade sites in
+`ByteRoundtrip.lean`.  The remaining bucket-1 LOC is structural
+plumbing (per-section foldl preservation, disjointness extraction
+from `spliceRegionsDisjoint`, buffer-size aliases) that isn't
+splice-cascade-shaped.
 
 ---
 
@@ -415,56 +357,13 @@ edit required.
   architecture-specific dynamic relocation types.
 - **Shared-object creation from relocatable objects.** The port
   operates on existing ELF files; it doesn't link.
+- **Non-Linux/non-glibc loaders.** `Validate.IsLoadableBytes` targets
+  the Linux+glibc loader contract; musl, FreeBSD `rtld-elf`,
+  bionic, Solaris `ld.so.1` are explicitly out of scope (see
+  `REWRITE-PHASE-3-DESIGN.md` §1).  The port may produce binaries
+  those loaders reject and we don't commit to the contrary.
 
 ---
 
-## Architectural appendix
-
-The byte-layer IR (`ElfFile`, `Section`, `SectionContent`), encode
-pipeline, parse pipeline, and section-decoding dispatch are
-documented in `lean/STATUS.md` §Architecture and §Encoder pipeline.
-This appendix covers only the typed-section algebra, which `STATUS.md`
-summarizes but doesn't expand.
-
-### Typed-section algebra
-
-```
-ValidElfFile
-├── header   : ElfHeader
-├── phdrs    : Array ProgramHeader
-├── dynstr   : StringSection
-├── dynsym   : Option (SymbolSection dynstr)  -- indexed by dynstr
-├── dynamic  : Option (DynamicSection dynstr) -- ditto
-├── versym   : Option (Array UInt16)
-├── verneed  : Option VerneedSection
-├── sysvHash : Option SysVHashSection
-├── gnuHash  : Option GnuHashSection
-└── interp   : Option InterpSection
-
-DynamicSection ds
-├── needed  : Array (Fin ds.size)     -- DT_NEEDED offsets
-├── rpath   : Option (Fin ds.size)    -- DT_RPATH
-├── runpath : Option (Fin ds.size)    -- DT_RUNPATH
-├── soname  : Option (Fin ds.size)    -- DT_SONAME
-├── flags1  : Option UInt64           -- DT_FLAGS_1 (not a strref)
-└── debug   : Option UInt64           -- DT_DEBUG
-```
-
-Opaque tags (DT_RELA/REL/JMPREL, DT_INIT/FINI, etc.) are NOT stored
-on `DynamicSection ds` — they live on the byte-layer
-`Array DynEntry` and get preserved verbatim through
-`Adapter.patchDynamicEntries`'s positional remap (the catch-all
-`| _ => push d` arm).
-
-Cross-section bounds invariants (e.g. "every DT_NEEDED value is
-`< dynstr.size`") are type-level: `Fin ds.size` in every
-string-ref field.  `rebase` lifts a `DynamicSection ds` to
-`DynamicSection ds'` when `ds.size ≤ ds'.size` via
-`Array.map Fin.castLE` — a numeric no-op that preserves the
-typed offsets across `.dynstr` growth.
-
-DT_STRTAB / DT_SYMTAB / DT_HASH / DT_GNU_HASH / DT_VERNEED /
-DT_STRSZ are NOT stored.  They're derived at encode time via
-`DynamicSection.assembleEntries` + a `LayoutCtx`.  The byte layer's
-`dynStrszCoherent` and `dynAddressCoherentForTag × 5` clauses
-vanish.
+For the typed-section algebra schema and the byte/typed split, see
+[`lean/ARCHITECTURE.md`](../lean/ARCHITECTURE.md).

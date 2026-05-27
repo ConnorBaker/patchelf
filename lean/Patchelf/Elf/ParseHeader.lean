@@ -47,6 +47,16 @@ inductive ParseError
   | badClass
   | badData
   | badVersion
+  /-- Per-clause `IsValid` failures (raised by `Parser.parse` when the
+      decoded `ElfFile` fails the decidable `IsValid` check).  Each
+      maps to one of the 8 `IsValid` clause definitions in
+      `ElfFile.lean`. -/
+  | headerCountsMismatch
+  | strtabMalformed
+  | dynamicWellFormedFailed
+  | contentWellFormedFailed
+  | typesNotDistinct
+  | namesNotUnique
   deriving Repr
 
 namespace Parse

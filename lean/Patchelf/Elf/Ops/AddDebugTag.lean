@@ -48,4 +48,26 @@ theorem addDebugTag_insert_value
   · unfold addDebugTag mapDynamicOp; simp [hDyn]
   · unfold DynamicSection.addDebugTag; simp [hNone]
 
+/-- Adversary-rejecting observable.  An identity `addDebugTag` would
+    satisfy the basic `_observable` (`debug.isSome = true`) only on
+    files that already had DT_DEBUG; this version rules that out by
+    case-splitting on the input.
+
+    Either DT_DEBUG was already present and the value is preserved,
+    OR it was absent and the post-op value is `some 0` — i.e. the op
+    is observably non-trivial unless its precondition was idempotent. -/
+theorem addDebugTag_observable_strong (e : ValidElfFile) (h : e.dynamic.isSome) :
+    ∃ (dyn : DynamicSection e.dynstr) (dyn' : DynamicSection e.dynstr),
+      e.dynamic = some dyn ∧ (addDebugTag e h).dynamic = some dyn' ∧
+        ((∃ v, dyn.debug = some v ∧ dyn'.debug = some v) ∨
+         (dyn.debug = none ∧ dyn'.debug = some 0)) := by
+  obtain ⟨dyn, hDyn⟩ := Option.isSome_iff_exists.mp h
+  refine ⟨dyn, dyn.addDebugTag, hDyn, ?_, ?_⟩
+  · unfold addDebugTag mapDynamicOp; simp [hDyn]
+  · by_cases hSome : dyn.debug.isSome
+    · obtain ⟨v, hv⟩ := Option.isSome_iff_exists.mp hSome
+      exact .inl ⟨v, hv, by unfold DynamicSection.addDebugTag; simp [hv]⟩
+    · have hNone : dyn.debug = none := Option.not_isSome_iff_eq_none.mp hSome
+      exact .inr ⟨hNone, by unfold DynamicSection.addDebugTag; simp [hNone]⟩
+
 end Patchelf.Elf

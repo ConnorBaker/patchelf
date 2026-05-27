@@ -114,24 +114,31 @@ structure ParsedElf where
     Reuses `Parse.parseHeader` (from `Elf/ParseHeader.lean`) for the
     fixed-layout header validation. Once header and shdrs are in hand,
     builds `sections` via `sectionsFromShdrs` and runs the decidable
-    `IsValid` check; on failure raises a generic `shdrIdxMismatch`
-    error (per-clause error classification is left as future work). -/
+    `IsValid` check; on failure dispatches the failure to the
+    matching per-clause `ParseError` variant via the if-then-else
+    cascade below. -/
 def parse (bs : ByteArray) : Except Patchelf.Elf.ParseError ParsedElf := do
   let h ← Patchelf.Elf.Parse.parseHeader bs
   let phdrs := Patchelf.Elf.Decode.decodePhdrs bs h.phoff.val h.phnum.toNat
   let shdrs := Patchelf.Elf.Decode.decodeShdrs bs h.shoff.val h.shnum.toNat
   let sections := sectionsFromShdrs bs shdrs
   let elf : ElfFile := { header := h, phdrs := phdrs, sections := sections }
-  -- Runtime decidability check of IsValid: the decidable instance
-  -- enumerates clauses; if any fails, we return a generic parse error.
-  -- Proper per-clause error classification is deferred.
   if hVal : elf.IsValid then
     return ⟨elf, hVal⟩
   else
-    -- Best-effort error classification: fall through to a generic
-    -- error for now.  Per-clause classification (so callers see
-    -- the specific IsValid violation) is tracked in
-    -- `research/ROADMAP.md` §3.8.
-    throw .shdrIdxMismatch
+    -- Per-clause classification: probe each decidable clause and
+    -- return the first failing one's specific error.  This must
+    -- exhaust all 8 `IsValid` clauses; if every clause holds, the
+    -- decidable instance would have given `IsValid` and the else
+    -- branch would not have fired, so the fall-through is dead.
+    if ¬ elf.headerCountsConsistent then throw .headerCountsMismatch
+    else if ¬ elf.sectionsWellFormed then throw .shdr0NotNull
+    else if ¬ elf.strtabsWellFormed then throw .strtabMalformed
+    else if ¬ elf.dynamicWellFormed then throw .dynamicWellFormedFailed
+    else if ¬ elf.dynsymNamesInBounds then throw .dynsymOffsetOutOfBounds
+    else if ¬ elf.sectionsContentWellFormed then throw .contentWellFormedFailed
+    else if ¬ elf.sectionsAtDistinctTypes then throw .typesNotDistinct
+    else if ¬ elf.namedSectionsUnique then throw .namesNotUnique
+    else throw .shdrIdxMismatch  -- unreachable; kept for totality.
 
 end Patchelf.Elf
