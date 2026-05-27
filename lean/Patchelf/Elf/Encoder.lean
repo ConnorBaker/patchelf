@@ -523,6 +523,60 @@ theorem encode_eq (e : ElfFile) :
   unfold prepLayoutForEncode prepLayoutForEncodeWith
   simp [hLay]
 
+/-- The encoder's layout pre-pass produces a layout where all 7 splice
+    regions are pairwise disjoint, given the structural input invariants.
+
+    Composition of `growEOFWith_produces_spliceRegionsDisjoint` and
+    `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint` for the
+    non-trivial branch; for the fast-path branch, derives the missing
+    `sectionsNonOverlapping ∧ shdrSectionDisjoint` from
+    `layoutAlreadyValid`.  This is the form downstream callers (op-level
+    Tier D) want to consume. -/
+theorem prepLayoutForEncodeWith_produces_spliceRegionsDisjoint
+    (pageSize? : Option Nat) (e : ElfFile)
+    (hSection0Null : ∀ (h : 0 < e.sections.size),
+      (e.sections[0]'h).type = ShType.SHT_NULL)
+    (hHeaderPhdr : e.headerPhdrDisjoint)
+    (hHeaderShdr : e.headerShdrDisjoint)
+    (hPhdrShdr   : e.phdrShdrDisjoint)
+    (hHeaderSec  : e.headerSectionDisjoint)
+    (hPhdrSec    : e.phdrSectionDisjoint) :
+    (prepLayoutForEncodeWith pageSize? e).spliceRegionsDisjoint := by
+  unfold prepLayoutForEncodeWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · -- Fast path: output = e.  layoutAlreadyValid gives the 2 missing clauses.
+    simp only [hLay, ↓reduceIte]
+    obtain ⟨hSec, hShdrSec⟩ := (layoutAlreadyValid_iff e).mp hLay
+    exact
+      { sections_disjoint := hSec
+        hdr_phdr_disjoint := hHeaderPhdr
+        hdr_shdr_disjoint := hHeaderShdr
+        phdr_shdr_disjoint := hPhdrShdr
+        hdr_sec_disjoint := hHeaderSec
+        phdr_sec_disjoint := hPhdrSec
+        shdr_sec_disjoint := hShdrSec }
+  · -- Non-trivial path: compose growEOFWith + syncDtAddrTagsInFile.
+    simp only [hLay, ↓reduceIte]
+    have hGrow := growEOFWith_produces_spliceRegionsDisjoint pageSize? e
+      hSection0Null hHeaderPhdr hHeaderShdr hPhdrShdr hHeaderSec hPhdrSec
+    exact syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint _ hGrow
+
+/-- `prepLayoutForEncode` (auto-detected page size) produces a layout
+    where all 7 splice regions are pairwise disjoint.  Specialization of
+    `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` with
+    `pageSize? = none`. -/
+theorem prepLayoutForEncode_produces_spliceRegionsDisjoint (e : ElfFile)
+    (hSection0Null : ∀ (h : 0 < e.sections.size),
+      (e.sections[0]'h).type = ShType.SHT_NULL)
+    (hHeaderPhdr : e.headerPhdrDisjoint)
+    (hHeaderShdr : e.headerShdrDisjoint)
+    (hPhdrShdr   : e.phdrShdrDisjoint)
+    (hHeaderSec  : e.headerSectionDisjoint)
+    (hPhdrSec    : e.phdrSectionDisjoint) :
+    (prepLayoutForEncode e).spliceRegionsDisjoint :=
+  prepLayoutForEncodeWith_produces_spliceRegionsDisjoint none e
+    hSection0Null hHeaderPhdr hHeaderShdr hPhdrShdr hHeaderSec hPhdrSec
+
 /-! ## Sizes match: writeContent.size = encodedSize.
 
     The encoder's per-section splice writes `s.writeContent` at offset

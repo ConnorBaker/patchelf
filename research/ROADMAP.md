@@ -29,15 +29,19 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 
 **Recommended pickup order:**
 
-- **`growEOFWith_produces_spliceRegionsDisjoint` — DONE.**
-  `GrowEOF.lean` now discharges all 3 branches (fast path / fallback /
-  main) using a unified `PlaceFold.{placeStep, placeFold, Placement,
-  PairDisjoint, FoldInv}` scaffolding parameterized over `verbatim`,
-  `transform`, and `baseOffset` — both `layoutForEncoding` and
-  `appendStaleSections` are specializations.  The bridge consumes a
-  `VerbatimWitness` (NULL/NOBITS-or-bound + pairwise-disjoint for
-  verbatim entries) supplied by the client; `growEOFWith` derives it
-  from `currentFileEnd_ge_section_end` + `sectionOverlapsAny_false_pair_disjoint`.
+- **`prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` — DONE.**
+  `Encoder.lean` exposes the composed theorem the op-level Tier D
+  proofs consume: under the 5 structural input invariants
+  (`headerPhdrDisjoint` / `headerShdrDisjoint` / `phdrShdrDisjoint` /
+  `headerSectionDisjoint` / `phdrSectionDisjoint`) plus
+  `hSection0Null`, the encoder's full layout pre-pass
+  (`prepLayoutForEncodeWith pageSize? e`) outputs `spliceRegionsDisjoint`.
+  Composes `growEOFWith_produces_spliceRegionsDisjoint` (`GrowEOF.lean`,
+  discharges all 3 branches via the unified `PlaceFold.{placeStep,
+  placeFold, Placement, PairDisjoint, FoldInv}` scaffolding —
+  `layoutForEncoding` and `appendStaleSections` are specializations
+  parameterized on `verbatim`, `transform`, `baseOffset`) and
+  `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`.
   Item 5.1 (op-level Tier D) is now unblocked.
 - **Items 1.1 and 1.2** can land independently and unlock op-level
   preservation theorems.  1.1's decidable predicate already exists in

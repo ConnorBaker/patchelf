@@ -596,6 +596,197 @@ def syncDtAddrTagsInFile (e : ElfFile) : ElfFile :=
       else e
   | _, _ => e
 
+/-! ## `syncDtAddrTagsInFile` field preservation
+
+    `syncDtAddrTagsInFile` either returns `e` unchanged or replaces
+    `e.sections[iDyn]`'s content with a `.dynamic`-mapped version.  In
+    both cases, all fields except section content at index `iDyn` are
+    preserved; `Array.map` preserves array `.size`, so even the
+    modified section's `encodedSize` is unchanged.
+
+    Strategy: case-split on whether `syncDtAddrTagsInFile e = e` (the
+    "no-op" case — covers `e.dynamic = none`, `e.dynamicIdx = none`,
+    or the bounds-check failure) or
+    `e.updateSectionContent iDyn (.dynamic (dyn.map _))` (the active
+    case — derive content equality from the active branch). -/
+
+theorem syncDtAddrTagsInFile_cases (e : ElfFile) :
+    syncDtAddrTagsInFile e = e ∨
+    ∃ (iDyn : Nat) (h : iDyn < e.sections.size) (dyn : Array DynEntry),
+      (e.sections[iDyn]'h).content = .dynamic dyn ∧
+      syncDtAddrTagsInFile e =
+        e.updateSectionContent iDyn (.dynamic (dyn.map (syncDtAddrEntry e))) := by
+  unfold syncDtAddrTagsInFile
+  cases hI : e.dynamicIdx with
+  | none =>
+    -- The match on (none, _) returns e.
+    cases e.dynamic <;> exact Or.inl rfl
+  | some iDyn =>
+    cases hD : e.dynamic with
+    | none => exact Or.inl rfl
+    | some dyn =>
+      by_cases hLt : iDyn < e.sections.size
+      · refine Or.inr ⟨iDyn, hLt, dyn, ?_, ?_⟩
+        · -- e.dynamic = some dyn ⇒ e.sections[iDyn].content = .dynamic dyn.
+          unfold ElfFile.dynamic at hD
+          rw [hI] at hD
+          unfold ElfFile.contentAt at hD
+          simp only [Option.bind_some] at hD
+          rw [dif_pos hLt] at hD
+          generalize hC : (e.sections[iDyn]'hLt).content = c at hD
+          cases c with
+          | dynamic dyn' => simp at hD; rw [hD]
+          | raw _ => simp at hD
+          | strtab _ => simp at hD
+          | dynsym _ => simp at hD
+          | versym _ => simp at hD
+          | nobits _ => simp at hD
+        · -- After cases, the goal is `match some iDyn, some dyn with ... = ...`.
+          simp only [dif_pos hLt]
+      · refine Or.inl ?_; simp only [dif_neg hLt]
+
+@[simp] theorem syncDtAddrTagsInFile_header (e : ElfFile) :
+    (syncDtAddrTagsInFile e).header = e.header := by
+  rcases syncDtAddrTagsInFile_cases e with hEq | ⟨iDyn, hLt, dyn, hContent, hEq⟩
+  · rw [hEq]
+  · rw [hEq]; simp
+
+@[simp] theorem syncDtAddrTagsInFile_phdrs (e : ElfFile) :
+    (syncDtAddrTagsInFile e).phdrs = e.phdrs := by
+  rcases syncDtAddrTagsInFile_cases e with hEq | ⟨iDyn, hLt, dyn, hContent, hEq⟩
+  · rw [hEq]
+  · rw [hEq]; simp
+
+@[simp] theorem syncDtAddrTagsInFile_sections_size (e : ElfFile) :
+    (syncDtAddrTagsInFile e).sections.size = e.sections.size := by
+  rcases syncDtAddrTagsInFile_cases e with hEq | ⟨iDyn, hLt, dyn, hContent, hEq⟩
+  · rw [hEq]
+  · rw [hEq]; simp
+
+/-- Field preservation under `e.updateSectionContent iDyn (.dynamic _)`
+    when the original section had `.dynamic dyn` content with same size:
+    `encodedSize` is preserved at every index. -/
+theorem updateSectionContent_dynamic_map_encodedSize_eq
+    (e : ElfFile) (iDyn : Nat) (hLt : iDyn < e.sections.size)
+    (dyn : Array DynEntry)
+    (hContent : (e.sections[iDyn]'hLt).content = .dynamic dyn)
+    (f : DynEntry → DynEntry)
+    (j : Nat) (hj : j < e.sections.size)
+    (hj' : j < (e.updateSectionContent iDyn (.dynamic (dyn.map f))).sections.size) :
+    ((e.updateSectionContent iDyn (.dynamic (dyn.map f))).sections[j]'hj').encodedSize
+      = (e.sections[j]'hj).encodedSize := by
+  by_cases hje : j = iDyn
+  · subst hje
+    rw [ElfFile.updateSectionContent_getElem_self e j _ hLt hj']
+    unfold Section.encodedSize
+    rw [hContent]
+    simp [Array.size_map]
+  · rw [ElfFile.updateSectionContent_getElem_ne _ _ _ _ hj hje hj']
+
+/-! ## `syncDtAddrTagsInFile` preserves `spliceRegionsDisjoint`
+
+    `syncDtAddrTagsInFile` either is a no-op (returning `e` unchanged) or
+    applies `updateSectionContent` at the `.dynamic` section's index with
+    a same-size content.  All 7 `spliceRegionsDisjoint` clauses depend
+    only on `header.{phoff, shoff}`, `phdrs.size`, `sections.size`, and
+    per-section `(type, offset, encodedSize)`.  The first three are
+    preserved by `updateSectionContent`; per-section fields are preserved
+    everywhere except possibly the modified index, where `(type, offset)`
+    are preserved by the `{ s with content := ... }` pattern and
+    `encodedSize` is preserved by `Array.size_map`. -/
+theorem syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint
+    (e : ElfFile) (h : e.spliceRegionsDisjoint) :
+    (syncDtAddrTagsInFile e).spliceRegionsDisjoint := by
+  rcases syncDtAddrTagsInFile_cases e with hEq | ⟨iDyn, hLt, dyn, hContent, hEq⟩
+  · -- No-op case: result is e, inherit invariants directly.
+    rw [hEq]; exact h
+  · -- Active case: result = e.updateSectionContent iDyn (.dynamic (dyn.map _)).
+    rw [hEq]
+    -- Local abbreviations for readability.
+    let e' := e.updateSectionContent iDyn (.dynamic (dyn.map (syncDtAddrEntry e)))
+    show e'.spliceRegionsDisjoint
+    have hSizeEq : e'.sections.size = e.sections.size :=
+      ElfFile.updateSectionContent_sections_size _ _ _
+    have hHdrEq : e'.header = e.header :=
+      ElfFile.updateSectionContent_header _ _ _
+    have hPhdrsEq : e'.phdrs = e.phdrs :=
+      ElfFile.updateSectionContent_phdrs _ _ _
+    have hPhoffEq : e'.header.phoff = e.header.phoff := by rw [hHdrEq]
+    have hShoffEq : e'.header.shoff = e.header.shoff := by rw [hHdrEq]
+    have hPhdrSizeEq : e'.phdrs.size = e.phdrs.size := by rw [hPhdrsEq]
+    -- Per-section: type, offset, encodedSize preserved at every j.
+    have hType : ∀ (j : Nat) (hj : j < e.sections.size)
+        (hj' : j < e'.sections.size),
+        (e'.sections[j]'hj').type = (e.sections[j]'hj).type := by
+      intros j hj hj'
+      exact ElfFile.updateSectionContent_type _ _ _ _ hj hj'
+    have hOffset : ∀ (j : Nat) (hj : j < e.sections.size)
+        (hj' : j < e'.sections.size),
+        (e'.sections[j]'hj').offset = (e.sections[j]'hj).offset := by
+      intros j hj hj'
+      exact ElfFile.updateSectionContent_offset _ _ _ _ hj hj'
+    have hSize : ∀ (j : Nat) (hj : j < e.sections.size)
+        (hj' : j < e'.sections.size),
+        (e'.sections[j]'hj').encodedSize = (e.sections[j]'hj).encodedSize := by
+      intros j hj hj'
+      exact updateSectionContent_dynamic_map_encodedSize_eq e iDyn hLt dyn hContent _ j hj hj'
+    -- Build the 7 clauses.
+    refine
+      { sections_disjoint := ?_
+        hdr_phdr_disjoint := ?_
+        hdr_shdr_disjoint := ?_
+        phdr_shdr_disjoint := ?_
+        hdr_sec_disjoint := ?_
+        phdr_sec_disjoint := ?_
+        shdr_sec_disjoint := ?_ }
+    · -- sections_disjoint
+      intros j hj j' hj' hNe
+      have hjE : j < e.sections.size := hSizeEq ▸ hj
+      have hj'E : j' < e.sections.size := hSizeEq ▸ hj'
+      have hSectionsOrig := h.sections_disjoint j hjE j' hj'E hNe
+      show (e'.sections[j]'hj).type = _ ∨ (e'.sections[j']'hj').type = _ ∨
+           (e'.sections[j]'hj).type = _ ∨ (e'.sections[j']'hj').type = _ ∨
+           IntervalDisjoint _ _ _ _
+      rw [hType _ hjE hj, hType _ hj'E hj', hOffset _ hjE hj, hOffset _ hj'E hj',
+          hSize _ hjE hj, hSize _ hj'E hj']
+      exact hSectionsOrig
+    · -- hdr_phdr_disjoint
+      show IntervalDisjoint 0 _ e'.header.phoff.val (_ + e'.phdrs.size * _)
+      rw [hPhoffEq, hPhdrSizeEq]
+      exact h.hdr_phdr_disjoint
+    · -- hdr_shdr_disjoint
+      show IntervalDisjoint 0 _ e'.header.shoff.val (_ + e'.sections.size * _)
+      rw [hShoffEq, hSizeEq]
+      exact h.hdr_shdr_disjoint
+    · -- phdr_shdr_disjoint
+      show IntervalDisjoint e'.header.phoff.val (_ + e'.phdrs.size * _) e'.header.shoff.val (_ + e'.sections.size * _)
+      rw [hPhoffEq, hShoffEq, hPhdrSizeEq, hSizeEq]
+      exact h.phdr_shdr_disjoint
+    · -- hdr_sec_disjoint
+      intros j hj
+      have hjE : j < e.sections.size := hSizeEq ▸ hj
+      have hOrig := h.hdr_sec_disjoint j hjE
+      show (e'.sections[j]'hj).type = _ ∨ (e'.sections[j]'hj).type = _ ∨
+           IntervalDisjoint _ _ _ _
+      rw [hType _ hjE hj, hOffset _ hjE hj, hSize _ hjE hj]
+      exact hOrig
+    · -- phdr_sec_disjoint
+      intros j hj
+      have hjE : j < e.sections.size := hSizeEq ▸ hj
+      have hOrig := h.phdr_sec_disjoint j hjE
+      show ((e'.sections[j]'hj).type = _ ∨ _)
+      rw [hPhoffEq, hPhdrSizeEq]
+      rw [hType _ hjE hj, hOffset _ hjE hj, hSize _ hjE hj]
+      exact hOrig
+    · -- shdr_sec_disjoint
+      intros j hj
+      have hjE : j < e.sections.size := hSizeEq ▸ hj
+      have hOrig := h.shdr_sec_disjoint j hjE
+      show ((e'.sections[j]'hj).type = _ ∨ _)
+      rw [hShoffEq, hSizeEq]
+      rw [hType _ hjE hj, hOffset _ hjE hj, hSize _ hjE hj]
+      exact hOrig
+
 /-! ## `growEOFWith` produces `spliceRegionsDisjoint` -/
 
 /-- Sanity lemma: the `stale` array built inside `growEOFWith` indexes

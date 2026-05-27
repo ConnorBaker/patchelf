@@ -346,18 +346,28 @@ fully-general fix — is left for a follow-up (see ROADMAP §3.5b).
   landed (`Encoder.lean`); the other three pre-encode pure functions
   still have no preservation theorems.
 - **`spliceDisjoint` from realistic inputs — DONE.**
-  `growEOFWith_produces_spliceRegionsDisjoint` (`GrowEOF.lean`)
-  discharges all 3 branches (fast path / fallback / main path) under
-  the structural input invariants `headerPhdrDisjoint` /
-  `headerShdrDisjoint` / `phdrShdrDisjoint` / `headerSectionDisjoint` /
-  `phdrSectionDisjoint` plus `hSection0Null`.  The unified
-  `PlaceFold.{placeStep, placeFold, Placement, PairDisjoint, FoldInv}`
-  scaffolding (`LayoutEngine.lean`) is parameterized over `verbatim`,
-  `transform`, and `baseOffset`; both `layoutForEncoding` (with
-  `Section.withOffset`, `baseOffset = 0`) and `growEOFWith`'s
-  `appendStaleSections` (with addr-shifting transform,
-  `baseOffset = startOffset`) are specializations.  Op-level Tier D
-  (ROADMAP §5.1) is now unblocked.
+  `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
+  (`Encoder.lean`) is the single API the op-level Tier D theorems
+  consume: given the 5 structural input invariants
+  (`headerPhdrDisjoint` / `headerShdrDisjoint` / `phdrShdrDisjoint` /
+  `headerSectionDisjoint` / `phdrSectionDisjoint`) plus `hSection0Null`,
+  `prepLayoutForEncodeWith pageSize? e` outputs `spliceRegionsDisjoint`.
+  Composes:
+  * `growEOFWith_produces_spliceRegionsDisjoint` (`GrowEOF.lean`) —
+    discharges all 3 branches (fast path / fallback / main path).
+  * `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`
+    (`GrowEOF.lean`) — the second pre-encode pass preserves the
+    predicate (it only rewrites `.dynamic` content via `Array.map`,
+    preserving array `.size` hence `encodedSize`).
+
+  The unified `PlaceFold.{placeStep, placeFold, Placement,
+  PairDisjoint, FoldInv}` scaffolding (`LayoutEngine.lean`) is
+  parameterized over `verbatim`, `transform`, and `baseOffset`; both
+  `layoutForEncoding` (with `Section.withOffset`, `baseOffset = 0`)
+  and `growEOFWith`'s `appendStaleSections` (with addr-shifting
+  transform, `baseOffset = startOffset`) are specializations.
+
+  Op-level Tier D (ROADMAP §5.1) is now unblocked.
 
 ### Priority 2 gaps (test / spec coverage)
 
