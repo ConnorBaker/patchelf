@@ -13,8 +13,18 @@ forward-looking view.
 > the CLI runs before every write.  CLI also migrated to lean4-cli
 > subcommands.  This closes ROADMAP §3.6 and §3.7 outright; renders
 > §3.1 obsolete; reduces §3.5 to "PT_GNU_STACK append" (a different
-> phdr-table-growth subset).  Items §1.1, §1.2, §5.1 remain open
-> under the design doc's broader unification arc.
+> phdr-table-growth subset).
+>
+> **Encoder-output `spliceDisjoint` landed.**
+> `Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
+> closes §1.3a's encoder-output side via the unified `PlaceFold`
+> scaffolding (one fold-induction skeleton specialized to both
+> `layoutForEncoding` and `growEOFWith`'s `appendStaleSections`).
+> §5.1 (op-level Tier D) was supposed to be unblocked by this
+> work, but a non-trivial dependent-type obstacle in `Adapter.toElfFile`
+> was discovered during the worked example — see §5.1 for details.
+>
+> Items §1.1, §1.2, §3.5a, §5.1 remain open.
 
 ---
 
@@ -29,29 +39,26 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 
 **Recommended pickup order:**
 
-- **`prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` — DONE.**
-  `Encoder.lean` exposes the composed theorem the op-level Tier D
-  proofs consume: under the 5 structural input invariants
-  (`headerPhdrDisjoint` / `headerShdrDisjoint` / `phdrShdrDisjoint` /
-  `headerSectionDisjoint` / `phdrSectionDisjoint`) plus
-  `hSection0Null`, the encoder's full layout pre-pass
-  (`prepLayoutForEncodeWith pageSize? e`) outputs `spliceRegionsDisjoint`.
-  Composes `growEOFWith_produces_spliceRegionsDisjoint` (`GrowEOF.lean`,
-  discharges all 3 branches via the unified `PlaceFold.{placeStep,
-  placeFold, Placement, PairDisjoint, FoldInv}` scaffolding —
-  `layoutForEncoding` and `appendStaleSections` are specializations
-  parameterized on `verbatim`, `transform`, `baseOffset`) and
-  `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`.
-  Item 5.1 (op-level Tier D) is now unblocked.
-- **Items 1.1 and 1.2** can land independently and unlock op-level
-  preservation theorems.  1.1's decidable predicate already exists in
-  `Validate.lean`; the unfinished work is parser-side threading.  1.2's
-  `syncDtStrszInFile_preserves_valid` is the worked example — the three
-  remaining preservations should reuse the same SectionOps helpers.
-- **Item 3.5a (allocate fresh PT_LOAD)** unblocks the BSS-heavy binary
+- **§1.3a `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` — DONE.**
+  `Encoder.lean` exposes the composed theorem.  See §1.3a for details.
+  This was intended to unblock §5.1 (op-level Tier D), but a
+  dependent-type obstacle in `Adapter.toElfFile` was discovered when
+  attempting the worked example — see §5.1 for details and three
+  workaround paths.
+- **§1.1 (Parser establishes `IsLoadable`)** is the most natural
+  next pickup.  Independent of §5.1's obstacle.  Threads the structural
+  input invariants through the parser → `ParsedElf` bridge; the
+  decidable predicate already exists in `Validate.lean`.  Recommended
+  before revisiting §5.1 — clarifies the input-invariant chain.
+- **§1.2 (pre-encode `_preserves_valid` theorems)** — three
+  preservation theorems remain.  `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`
+  landed (different from `_preserves_valid`); the byte-layer `IsValid`
+  preservations for `growEOFWith`, `syncDtAddrTagsInFile`, and
+  `layoutForEncoding` are still open.  Reuse `SectionOps` helpers.
+- **§3.5a (allocate fresh PT_LOAD)** unblocks the BSS-heavy binary
   class that `growEOFWith` currently bails on.  Estimated ~600 LOC
   including the validator-passing proof.
-- **Item 4.2** is an independent typed-side completeness item;
+- **§4.2** is an independent typed-side completeness item;
   `.verneed` is stored as `.raw` at the byte layer, so the
   byte-roundtrip doesn't depend on it.
 
@@ -112,7 +119,7 @@ classification).  The decidable predicate is already in
 #### 1.2 Pre-encode passes: `_preserves_valid` theorems
 
 **Status:** `syncDtStrszInFile_preserves_valid` (`Encoder.lean`)
-landed.  Three remain:
+landed.  Three byte-layer `IsValid` preservations remain:
 
 - `growEOFWith_preserves_valid` — offsets change, shoff changes,
   last PT_LOAD `filesz`/`memsz` extend, PT_INTERP/PT_DYNAMIC track
@@ -124,6 +131,11 @@ landed.  Three remain:
   entries' `value` to section addresses; `dynamic_wf`'s string-ref
   predicate isn't an address tag, so it survives by the same
   argument as `syncDtStrszInFile`.
+  (Note: a related but distinct theorem,
+  `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`
+  (`GrowEOF.lean`), already landed as part of §1.3a.  The 7-clause
+  `spliceRegionsDisjoint` and the 8-clause `IsValid` are independent
+  predicates — neither implies the other.)
 - `layoutForEncoding_preserves_valid` — the BSS-collision fallback;
   same shape as `growEOFWith` but doesn't preserve PT_LOAD coverage.
 
@@ -131,7 +143,7 @@ landed.  Three remain:
 is the load-bearing one and probably ~500 LOC.
 
 **Supporting infrastructure landed.** `Patchelf/Elf/SectionOps.lean`
-exposes the helpers `growEOFWith` / `syncDtAddrTagsInFile`'s
+(~420 LOC) exposes the helpers `growEOFWith` / `syncDtAddrTagsInFile`'s
 preservation proofs will reuse:
 
 - Field projections: `updateSectionContent_{header,phdrs,sections,
@@ -177,22 +189,28 @@ helpers:
 derivable, since overlapping sections are spec-valid and the parser
 shouldn't enforce pairwise region disjointness.
 
-Encoder-output side: **DONE.**
-`GrowEOF.growEOFWith_produces_spliceRegionsDisjoint` discharges all 3
-branches (fast path / fallback / main) under structural input
-invariants `headerPhdrDisjoint` / `headerShdrDisjoint` /
-`phdrShdrDisjoint` / `headerSectionDisjoint` / `phdrSectionDisjoint`
-plus `hSection0Null`.  The unified `PlaceFold` scaffolding in
-`LayoutEngine.lean` is parameterized over `verbatim`, `transform`,
-and `baseOffset`, so `layoutForEncoding`'s and `growEOFWith`'s
-splice-disjointness proofs share one fold-induction skeleton; client
-specializations exhibit a `TransformSpec` (field-preservation
-contract) and a `VerbatimWitness` (NULL/NOBITS-or-bound + pairwise
-disjoint for verbatim entries).  The remaining gap to *unconditional*
-Tier D is op-level: each op must establish the 5 input invariants on
-its output (parser-derivable for any op that doesn't widen the file
-or move sections; the layout-touching ops route through `growEOFWith`
-which preserves them).
+Encoder-output side: **DONE.**  The composed API
+`Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
+takes the 5 structural input invariants
+(`headerPhdrDisjoint` / `headerShdrDisjoint` / `phdrShdrDisjoint` /
+`headerSectionDisjoint` / `phdrSectionDisjoint`) plus
+`hSection0Null` and returns `spliceRegionsDisjoint` on the
+encoder's full layout pre-pass output.  Composes:
+
+* `GrowEOF.growEOFWith_produces_spliceRegionsDisjoint` — discharges
+  all 3 branches (fast path / fallback / main path) via the unified
+  `LayoutEngine.PlaceFold` scaffolding parameterized over
+  `verbatim`, `transform`, and `baseOffset`; both `layoutForEncoding`
+  and `growEOFWith`'s `appendStaleSections` are specializations.
+  Client specializations exhibit a `TransformSpec`
+  (field-preservation contract) and a `VerbatimWitness`
+  (NULL/NOBITS-or-bound + pairwise disjoint for verbatim entries).
+* `GrowEOF.syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint` —
+  the second pre-encode pass preserves the predicate.
+
+The remaining gap to *unconditional* Tier D is op-level: each op must
+establish the 5 input invariants on its output.  This is item §5.1,
+which has a non-trivial dependent-type obstacle (see §5.1).
 
 ### Priority 2 — Test coverage + spec strengthening
 
@@ -382,12 +400,35 @@ an adversarial identity function fails.  Current status per op:
 
 Strengthening the "weak" rows is tracked in §2.1.
 
-#### 5.3 `SectionOps.lean` flatness — DONE
+#### 5.3 `SectionOps.lean` flatness — REOPENED
 
-The 530-LOC preservation infrastructure had zero external callers
-(the typed-section algebra's `Fin ds.size` indexing made it
-obsolete) and was deleted.  `SectionOps.lean` is now 52 LOC:
-`ElfFile.updateSectionContent` plus 3 `@[simp]` projection lemmas.
+Originally marked DONE: the 530-LOC preservation infrastructure had
+zero external callers and was deleted, leaving `SectionOps.lean` at
+52 LOC.
+
+It was re-grown to ~420 LOC in a later commit
+(`7798b5d Lean port: close 5 ROADMAP items + SectionOps preservation
+helpers`) when the §1.2 work made the helpers load-bearing again.
+
+The current `SectionOps.lean` carries:
+
+* Field projections: `updateSectionContent_{header, phdrs,
+  sections_size, sections, getElem_ne, getElem_self, type, name,
+  offset}`.
+* Structural-index preservation: `updateSectionContent_{
+  findUniqueTypeIdx, dynamicIdx, dynsymIdx, versymIdx, shstrtab,
+  findIdxByName, dynstrIdx, interpIdx}`.
+* Typed-accessor preservation under content-disjoint updates:
+  `updateSectionContent_{contentAt_none, contentAt_some_ne,
+  dynsym_eq, dynstr_eq, interp_eq}`.
+* Index-disjointness: `dynstrIdx_target_ne_of_content_dynamic`,
+  `dynsymIdx_target_ne_of_content_dynamic`,
+  `shstrndx_ne_of_content_dynamic_of_dynstr`.
+
+These are the helpers §1.2's `_preserves_valid` proofs will reuse;
+`syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint` already
+exercises a subset of them.  No further action needed unless the
+§1.2 proofs need additional infrastructure.
 
 #### 5.4 Splice/extract simp set + tactic — DONE
 

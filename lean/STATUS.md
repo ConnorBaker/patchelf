@@ -95,23 +95,24 @@ For the file-by-file architecture, see
 exhaustive declaration inventory, see
 [`INVENTORY.md`](INVENTORY.md).
 
-Total Lean source: ~15,600 LOC. Distribution by category:
+Total Lean source: ~16,650 LOC. Distribution by category:
 
 | Category | LOC | What it is |
 |---|---|---|
-| Verification (`ByteRoundtrip` + `ByteLevel` + `LayoutEngine` + `Basic` + `AdapterRoundtrip`) | ~5,900 | Tier D `parse_encode_roundtrip` infrastructure |
-| DSL + op-layer infra (`SchemaDSL` + `Schemas` + `Adapter` + `ObservableCombinators`) | ~2,300 | `elf_schema` elaborator + 7 invocations + bridge |
-| Wire codec + types (Splice, Layout, Decode, Parser, ParseHeader, Reader, Writer, Serialize, DynamicParse/Encode) | ~1,700 | Reader/Writer + Splice + parsing primitives + per-clause ParseError |
+| Verification (`ByteRoundtrip` + `ByteLevel` + `LayoutEngine` + `Basic` + `AdapterRoundtrip`) | ~6,090 | Tier D `parse_encode_roundtrip` infrastructure + unified `PlaceFold` scaffolding |
+| DSL + op-layer infra (`SchemaDSL` + `Schemas` + `Adapter` + `ObservableCombinators`) | ~2,340 | `elf_schema` elaborator + 7 invocations + bridge |
+| Wire codec + types (Splice, Layout, Decode, Parser, ParseHeader, Reader, Writer, Serialize, DynamicParse/Encode) | ~1,670 | Reader/Writer + Splice + parsing primitives + per-clause ParseError |
 | Typed-section types (DynamicSection, StringSection, SymbolSection, ValidElfFile, InterpSection, AuxSections) | ~630 | Typed algebra + StringSection lookup roundtrip |
-| Layout pipeline + validator (`Encoder` + `GrowEOF` + `Validate`) | ~1,500 | growEOF + syncDtAddrTagsInFile + pre-write validator + `syncDtStrszInFile_preserves_valid` |
+| Layout pipeline + validator (`Encoder` + `GrowEOF` + `Validate`) | ~2,320 | growEOF + syncDtAddrTagsInFile + pre-write validator + `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` chain |
 | `SectionOps` | ~420 | `updateSectionContent` + projection / index-preservation / typed-accessor preservation helpers |
-| 14 ops (`Elf/Ops/*.lean`) | ~1,000 | mutating operations |
+| 14 ops (`Elf/Ops/*.lean`) | ~1,080 | mutating operations |
 | CLI + Main + Log | ~990 | lean4-cli subcommand tree + stderr trace logger |
 | Tactic (`SpliceSimproc*`) | ~200 | `simp_splice` macro + `[splice_simp]` simp set |
-| Misc (root, ElfFile, DynamicLemmas) | ~960 | structural |
+| Misc (root, ElfFile, DynamicLemmas) | ~980 | structural |
 
-`ByteRoundtrip.lean` (~3,000 LOC) and `SchemaDSL.lean` (~1,200 LOC) are
-the two largest files.  Every file builds; zero `sorry`.
+`ByteRoundtrip.lean` (~3,000 LOC), `SchemaDSL.lean` (~1,200 LOC), and
+`LayoutEngine.lean` (~1,000 LOC after the `PlaceFold` unification) are
+the largest files.  Every file builds; zero `sorry`.
 
 ---
 
@@ -194,11 +195,28 @@ enforce pairwise region disjointness (and shouldn't; overlapping
 sections are spec-valid).  See ROADMAP item 1.3a for the per-clause
 helper inventory.
 
-`LayoutEngine.layoutForEncoding_produces_spliceRegionsDisjoint`
-discharges `spliceDisjoint` for the BSS-collision-fallback branch
-under `section[0].type = SHT_NULL` and `ehdrSize ≤ phoff.val`.  An
-analog for the primary `growEOFWith` branch is the unblocker for
-op-level Tier D (ROADMAP §5.1).
+**Encoder-output `spliceDisjoint`** is discharged by
+`Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`:
+given the 5 structural input invariants (`headerPhdrDisjoint` /
+`headerShdrDisjoint` / `phdrShdrDisjoint` / `headerSectionDisjoint` /
+`phdrSectionDisjoint`) plus `hSection0Null`, the encoder's full
+layout pre-pass outputs `spliceRegionsDisjoint`.  Composes:
+
+* `GrowEOF.growEOFWith_produces_spliceRegionsDisjoint` — discharges
+  all 3 branches (fast path / fallback / main path) via the unified
+  `LayoutEngine.PlaceFold.{placeStep, placeFold, Placement,
+  PairDisjoint, FoldInv}` scaffolding.  `layoutForEncoding` and
+  `growEOFWith`'s `appendStaleSections` are specializations of the
+  same fold parameterized over `verbatim`, `transform`, `baseOffset`.
+* `GrowEOF.syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint` —
+  the second pre-encode pass preserves the predicate (it only
+  rewrites `.dynamic` content via `Array.map`, preserving array
+  `.size` hence `encodedSize`).
+
+This is the primitive for op-level Tier D (ROADMAP §5.1) but is not
+sufficient on its own — see ROADMAP §5.1 for the dependent-type
+obstacle that surfaces when threading typed-side ops through
+`Adapter.toElfFile`.
 
 **Per-content forward roundtrips**: 5 of 6 `SectionContent` cases
 (`raw`, `strtab`, `versym`, `dynsym`, `dynamic`) have explicit
@@ -316,13 +334,15 @@ See `research/ROADMAP.md` for the full prioritized list.  Highlights:
 ### PT_LOAD layout — closed for the common case
 
 The previous `layoutForEncoding` repack stomped on PT_LOAD coverage
-when sections moved.  `growEOF` (`GrowEOF.lean`, ~410 LOC) replaces
-it as the primary layout strategy: stale sections are appended at
-file end, the last PT_LOAD's `filesz`/`memsz` are extended to cover
-them, and `(offset, addr)` deltas are kept equal so segment
-congruence survives.  `syncDtAddrTagsInFile` rewrites the matching
-DT_* address tags.  `set-rpath` on real ET_DYN binaries (e.g.
-`/usr/bin/hello`) now produces output that runs.
+when sections moved.  `growEOF` (`GrowEOF.lean`, ~1,160 LOC including
+the `_produces_spliceRegionsDisjoint` proof + the
+`syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint` lemma)
+replaces it as the primary layout strategy: stale sections are
+appended at file end, the last PT_LOAD's `filesz`/`memsz` are
+extended to cover them, and `(offset, addr)` deltas are kept equal
+so segment congruence survives.  `syncDtAddrTagsInFile` rewrites the
+matching DT_* address tags.  `set-rpath` on real ET_DYN binaries
+(e.g. `/usr/bin/hello`) now produces output that runs.
 
 **Residual gap: large-BSS binaries.**  When the last PT_LOAD has
 significant BSS (e.g. coreutils `ls` with ~0x97000 bytes of BSS),
@@ -341,33 +361,30 @@ fully-general fix — is left for a follow-up (see ROADMAP §3.5b).
   encoder output at write time, but no op-level
   `_preserves_loadable` theorem exists, and there's no static link
   between parser output and validator success.
-- **`growEOFWith`, `syncDtAddrTagsInFile`, `layoutForEncoding`
-  preservation unproved.** `syncDtStrszInFile_preserves_valid`
-  landed (`Encoder.lean`); the other three pre-encode pure functions
-  still have no preservation theorems.
-- **`spliceDisjoint` from realistic inputs — DONE.**
-  `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
-  (`Encoder.lean`) is the single API the op-level Tier D theorems
-  consume: given the 5 structural input invariants
-  (`headerPhdrDisjoint` / `headerShdrDisjoint` / `phdrShdrDisjoint` /
-  `headerSectionDisjoint` / `phdrSectionDisjoint`) plus `hSection0Null`,
-  `prepLayoutForEncodeWith pageSize? e` outputs `spliceRegionsDisjoint`.
-  Composes:
-  * `growEOFWith_produces_spliceRegionsDisjoint` (`GrowEOF.lean`) —
-    discharges all 3 branches (fast path / fallback / main path).
-  * `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`
-    (`GrowEOF.lean`) — the second pre-encode pass preserves the
-    predicate (it only rewrites `.dynamic` content via `Array.map`,
-    preserving array `.size` hence `encodedSize`).
-
-  The unified `PlaceFold.{placeStep, placeFold, Placement,
-  PairDisjoint, FoldInv}` scaffolding (`LayoutEngine.lean`) is
-  parameterized over `verbatim`, `transform`, and `baseOffset`; both
-  `layoutForEncoding` (with `Section.withOffset`, `baseOffset = 0`)
-  and `growEOFWith`'s `appendStaleSections` (with addr-shifting
-  transform, `baseOffset = startOffset`) are specializations.
-
-  Op-level Tier D (ROADMAP §5.1) is now unblocked.
+- **Pre-encode passes — `_preserves_valid` partially landed.**
+  `syncDtStrszInFile_preserves_valid` (`Encoder.lean`) and
+  `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`
+  (`GrowEOF.lean`) landed.  `growEOFWith_preserves_valid` /
+  `_preserves_loadable` and `layoutForEncoding_preserves_valid` are
+  still open (the load-bearing `growEOFWith_preserves_loadable` is
+  the most interesting — it's the actual point of `growEOF` over the
+  older `layoutForEncoding`).
+- **`spliceDisjoint` for encoder output — DONE.**
+  `Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
+  is the composed API the op-level Tier D proofs consume.  See
+  §"Tier D" above for the supporting chain.
+- **Op-level Tier D — UNBLOCKED, with non-trivial obstacle.**
+  Attempted `setOsAbi` as the worked example (a sections-trivial op:
+  changes only `header.ident.osAbi`) and discovered that
+  `Adapter.toElfFile` threads `typed : ValidElfFile` through
+  dependent-type-bearing matches in `applyDynamic` (matching on
+  `typed.dynamic : Option (DynamicSection typed.dynstr)`).  When
+  `op = setOsAbi`, the record-update form `{ typed with header := ... }`
+  doesn't reduce inside the dependent matches even though
+  `(setOsAbi abi).dynstr = typed.dynstr` is `rfl`-provable — so
+  `Adapter.toElfFile template (typed.setOsAbi abi)` is *not*
+  `rfl`-equal to `Adapter.toElfFile template typed`.  See ROADMAP
+  §5.1 for three documented workaround paths.
 
 ### Priority 2 gaps (test / spec coverage)
 
