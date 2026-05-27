@@ -94,6 +94,84 @@ def currentFileEnd (e : ElfFile) : Nat :=
     else max acc (s.offset.val + s.encodedSize)
   max (max ehdrEnd phdrEnd) (max shdrEnd secEnd)
 
+/-! ## `currentFileEnd` structural lemmas
+
+    `currentFileEnd e` upper-bounds every non-NULL/NOBITS section's file
+    range, plus the ehdr / phdr / shdr table ends.  These bounds feed
+    the `growEOFWith` `VerbatimWitness` proof: a non-stale section's
+    range falls under `currentFileEnd ≤ startOffset`, which is exactly
+    the third disjunct of `PlaceFold.VerbatimWitness.bound`. -/
+
+theorem currentFileEnd_ge_ehdr (e : ElfFile) :
+    Layout.ehdrSize ≤ currentFileEnd e := by
+  unfold currentFileEnd
+  exact Nat.le_trans (Nat.le_max_left _ _) (Nat.le_max_left _ _)
+
+theorem currentFileEnd_ge_phdrEnd (e : ElfFile) :
+    e.header.phoff.val + e.phdrs.size * Layout.phdrSize ≤ currentFileEnd e := by
+  unfold currentFileEnd
+  exact Nat.le_trans (Nat.le_max_right _ _) (Nat.le_max_left _ _)
+
+theorem currentFileEnd_ge_shdrEnd (e : ElfFile) :
+    e.header.shoff.val + e.sections.size * Layout.shdrSize ≤ currentFileEnd e := by
+  unfold currentFileEnd
+  exact Nat.le_trans (Nat.le_max_left _ _) (Nat.le_max_right _ _)
+
+/-- For any non-NOBITS, non-NULL section, the section's file range
+    `[offset, offset + encodedSize)` ends at or before `currentFileEnd`.
+
+    Foldl induction on the `secEnd` accumulator: at each step the
+    accumulator is the running max, and each new section either
+    contributes its file range or skips (NOBITS/NULL). -/
+theorem currentFileEnd_ge_section_end (e : ElfFile) (j : Nat) (hj : j < e.sections.size) :
+    (e.sections[j]'hj).type = ShType.SHT_NOBITS ∨
+    (e.sections[j]'hj).type = ShType.SHT_NULL ∨
+    (e.sections[j]'hj).offset.val + (e.sections[j]'hj).encodedSize ≤ currentFileEnd e := by
+  -- Foldl-induction motive: every j' < k satisfies the disjunction relative
+  -- to the running secEnd accumulator.
+  have hAux := @Array.foldl_induction Section Nat e.sections
+    (motive := fun k acc =>
+      ∀ j' (hj' : j' < e.sections.size), j' < k →
+        (e.sections[j']'hj').type = ShType.SHT_NOBITS ∨
+        (e.sections[j']'hj').type = ShType.SHT_NULL ∨
+        (e.sections[j']'hj').offset.val + (e.sections[j']'hj').encodedSize ≤ acc)
+    (init := 0)
+    (h0 := by intros j' _ hjLt; exact absurd hjLt (Nat.not_lt_zero _))
+    (f := fun acc s =>
+      if s.type = ShType.SHT_NOBITS ∨ s.type = ShType.SHT_NULL then acc
+      else max acc (s.offset.val + s.encodedSize))
+    (hf := by
+      intros i acc ih j' hj' hjLtSucc
+      by_cases hjLtI : j' < i.val
+      · -- Old j': use ih, then monotonicity through the step.
+        rcases ih j' hj' hjLtI with hN | hNB | hLe
+        · exact Or.inl hN
+        · exact Or.inr (Or.inl hNB)
+        · refine Or.inr (Or.inr ?_)
+          by_cases hAlt : (e.sections[i.val]'i.isLt).type = ShType.SHT_NOBITS ∨
+                          (e.sections[i.val]'i.isLt).type = ShType.SHT_NULL
+          · simp [hAlt]; exact hLe
+          · simp [hAlt]; exact Nat.le_trans hLe (Nat.le_max_left _ _)
+      · -- New j' = i.val.
+        have hjEq : j' = i.val := by omega
+        subst hjEq
+        by_cases hAlt : (e.sections[i.val]'hj').type = ShType.SHT_NOBITS ∨
+                        (e.sections[i.val]'hj').type = ShType.SHT_NULL
+        · rcases hAlt with hNB | hN
+          · exact Or.inl hNB
+          · exact Or.inr (Or.inl hN)
+        · simp [hAlt]
+          refine Or.inr (Or.inr ?_)
+          exact Nat.le_max_right _ _)
+  -- Apply at j = j, hj = hj, and j < e.sections.size.
+  rcases hAux j hj hj with hN | hNB | hLe
+  · exact Or.inl hN
+  · exact Or.inr (Or.inl hNB)
+  · refine Or.inr (Or.inr ?_)
+    unfold currentFileEnd
+    show _ ≤ max (max _ _) (max _ _)
+    exact Nat.le_trans hLe (Nat.le_trans (Nat.le_max_right _ _) (Nat.le_max_right _ _))
+
 /-! ## Stale-section detection
 
     A section is "stale" when its current `[offset, offset + encodedSize)`
@@ -113,8 +191,8 @@ def sectionOverlapsAny (e : ElfFile) (i : Nat) (h : i < e.sections.size) : Bool 
   let s := e.sections[i]'h
   let sEnd := s.offset.val + s.encodedSize
   Nat.fold e.sections.size (init := false) fun j hj acc =>
-    if j = i then acc
-    else acc || rangeOverlapsSection s.offset.val sEnd (e.sections[j]'hj)
+    acc || (if j = i then false
+            else rangeOverlapsSection s.offset.val sEnd (e.sections[j]'hj))
 
 /-- Does section `i` (at `e.sections[i]`) overlap any other non-NOBITS,
     non-NULL section, or the shdr table?  This identifies sections
@@ -135,44 +213,149 @@ def sectionStale (e : ElfFile) (i : Nat) (h : i < e.sections.size) : Bool :=
     offset = startOffset + cumulativeBytes (where cumulativeBytes
     accumulates aligned section sizes), and a new addr = startPage +
     cumulativeBytes.  Equal deltas guarantee `p_offset ≡ p_vaddr
-    (mod align)` is preserved. -/
+    (mod align)` is preserved.
 
-/-- One step of the append-at-end fold.  Threads
-    `(acc, cursor) : (Array Section × Nat)` where `cursor` is the
-    cumulative offset *within* the appended region (so the new file
-    offset is `startOffset + cursor`).
+    Implemented as a specialization of `PlaceFold.placeStep` /
+    `PlaceFold.placeFold` (defined in `LayoutEngine.lean`), with
+    verbatim = `¬ stale[i]` and transform shifting `offset` by
+    `startOffset` and `addr` by `startPage`.  This lets us reuse the
+    `Placement` / `PairDisjoint` / `placeFold_inv` machinery. -/
 
-    For non-stale sections, push the section verbatim (no offset change).
-    For stale sections, place at `startOffset + roundUp cursor addralign`,
-    new addr = `startPage + roundUp cursor addralign`, and advance
-    cursor by `roundUp cursor align + encodedSize`.
+/-- Verbatim predicate for `growEOFWith`'s placement: an entry passes
+    through unchanged when its index is not in the `stale` array. -/
+def appendVerbatim (stale : Array Bool) (i : Nat) (_s : Section) : Bool :=
+  !(stale[i]?.getD false)
 
-    The "cursor" reflects bytes in the appended region — it lets us
-    compute next-section placement without revisiting prior state. -/
-def appendStep (startOffset startPage : Nat)
-    (acc : Array Section × Nat)
-    (idxAndStaleAndSec : Nat × Bool × Section) : Array Section × Nat :=
-  let (_, isStale, s) := idxAndStaleAndSec
-  let (sectionsAcc, cursor) := acc
-  if isStale then
-    let off := roundUp cursor s.addralign.val
-    let newOffset := startOffset + off
-    let newAddr := startPage + off
-    let s' : Section :=
-      { s with offset := ⟨newOffset⟩, addr := ⟨newAddr⟩ }
-    (sectionsAcc.push s', off + s.encodedSize)
-  else
-    (sectionsAcc.push s, cursor)
+/-- Per-section transform for `growEOFWith`: shifts `offset` by
+    `startOffset` and `addr` by `startPage` (so the offset/addr delta
+    is constant — preserving `p_offset ≡ p_vaddr (mod align)`). -/
+def appendTransform (startOffset startPage : Nat) (s : Section) (off : Nat) : Section :=
+  { s with offset := ⟨startOffset + off⟩, addr := ⟨startPage + off⟩ }
 
 /-- Stale-aware section placement.  Walks `sections`, threading
     `(acc, cursor)`; non-stale sections are kept at their original
     offset, stale sections are placed in the appended region. -/
 def appendStaleSections (sections : Array Section) (stale : Array Bool)
     (startOffset startPage : Nat) : Array Section × Nat :=
-  let indexed := sections.mapIdx (fun i s =>
-    (i, (stale[i]?.getD false), s))
-  indexed.foldl (init := (Array.emptyWithCapacity sections.size, 0))
-    (appendStep startOffset startPage)
+  placeFold (appendVerbatim stale) (appendTransform startOffset startPage)
+    sections 0
+
+/-- `appendTransform startOffset startPage` is a `TransformSpec` with
+    `baseOffset = startOffset`. -/
+theorem appendTransform_transformSpec (startOffset startPage : Nat) :
+    PlaceFold.TransformSpec (appendTransform startOffset startPage) startOffset :=
+  { type_eq := fun s o => by show ({s with offset := _, addr := _ }).type = s.type; rfl
+    encodedSize_eq := fun s o => by
+      unfold appendTransform Section.encodedSize; rfl
+    offset_eq := fun s o => by
+      show (appendTransform startOffset startPage s o).offset.val = startOffset + o
+      rfl }
+
+/-! ## Stale ⇒ disjointness extraction
+
+    Two structural facts on `sectionStale = false`:
+
+    * Non-stale, non-NULL/NOBITS sections have file ranges disjoint from
+      the shdr table.
+    * Non-stale section `i`'s file range is disjoint from every other
+      section's file range (or the other section is NULL/NOBITS).
+
+    Both fall out of unfolding `sectionStale`. -/
+
+/-- Unfolding helper: when `rangeOverlapsSection lo hi s = false`, either
+    `s.type = NULL`, `s.type = NOBITS`, or the byte ranges are disjoint. -/
+theorem rangeOverlapsSection_false_disjoint
+    (lo hi : Nat) (s : Section) (h : rangeOverlapsSection lo hi s = false) :
+    s.type = ShType.SHT_NULL ∨ s.type = ShType.SHT_NOBITS ∨
+    IntervalDisjoint lo hi s.offset.val (s.offset.val + s.encodedSize) := by
+  unfold rangeOverlapsSection at h
+  by_cases hAlt : s.type = ShType.SHT_NOBITS ∨ s.type = ShType.SHT_NULL
+  · rcases hAlt with hNB | hN
+    · exact Or.inr (Or.inl hNB)
+    · exact Or.inl hN
+  · simp only [hAlt, ↓reduceIte] at h
+    -- h : !decide (hi ≤ s.offset.val ∨ s.offset.val + s.encodedSize ≤ lo) = false
+    refine Or.inr (Or.inr ?_)
+    show IntervalDisjoint lo hi s.offset.val (s.offset.val + s.encodedSize)
+    unfold IntervalDisjoint
+    -- `!x = false ↔ x = true`; then `decide P = true ↔ P`.
+    have h' : decide (hi ≤ s.offset.val ∨ s.offset.val + s.encodedSize ≤ lo) = true := by
+      cases hd : decide (hi ≤ s.offset.val ∨ s.offset.val + s.encodedSize ≤ lo)
+      · rw [hd] at h; simp at h
+      · rfl
+    exact decide_eq_true_iff.mp h'
+
+/-- Helper: `Nat.fold` of a `||`-step is monotone — once true, the
+    accumulator stays true.  Equivalently: if the final fold is false,
+    then every iteration's "contribution" `g i hi` was false. -/
+theorem nat_fold_or_false_iff
+    (n : Nat) (g : (i : Nat) → i < n → Bool) :
+    Nat.fold n (init := false)
+      (fun i hi acc => acc || g i hi) = false ↔
+    ∀ (i : Nat) (hi : i < n), g i hi = false := by
+  induction n with
+  | zero =>
+    rw [Nat.fold_zero]
+    constructor
+    · intros _ i hi; exact absurd hi (Nat.not_lt_zero _)
+    · intros _; rfl
+  | succ k ih =>
+    rw [Nat.fold_succ]
+    -- Goal: (g k _ || (Nat.fold k ... false)) = false ↔ ∀ i < k+1, g i _ = false.
+    -- Note: order of `||` is `acc || g`; `Nat.fold_succ` puts the new step
+    -- on the outside.  Here it's `f k hk inner = inner || g k hk`.
+    -- Wait, `f i hi acc = acc || g i hi`, so `f k hk inner = inner || g k hk`.
+    show (Nat.fold k _ false || g k (Nat.lt_succ_self _)) = false ↔ _
+    rw [Bool.or_eq_false_iff]
+    constructor
+    · rintro ⟨hInner, hG⟩
+      intros i hi
+      by_cases hiK : i < k
+      · -- Sub-fold's contribution: use ih.
+        have ihLeft := (ih (fun i hi => g i (Nat.lt_succ_of_lt hi))).mp hInner
+        exact ihLeft i hiK
+      · have hiEq : i = k := by omega
+        subst hiEq
+        exact hG
+    · intros hAll
+      refine ⟨?_, hAll k (Nat.lt_succ_self _)⟩
+      apply (ih (fun i hi => g i (Nat.lt_succ_of_lt hi))).mpr
+      intros i hi
+      exact hAll i (Nat.lt_succ_of_lt hi)
+
+/-- When `sectionOverlapsAny e i h = false`, every other section
+    has a disjointness witness with section `i`. -/
+theorem sectionOverlapsAny_false_pair_disjoint (e : ElfFile)
+    (i : Nat) (hi : i < e.sections.size)
+    (hOA : sectionOverlapsAny e i hi = false)
+    (j : Nat) (hj : j < e.sections.size) (hNe : j ≠ i) :
+    (e.sections[j]'hj).type = ShType.SHT_NULL ∨
+    (e.sections[j]'hj).type = ShType.SHT_NOBITS ∨
+    IntervalDisjoint
+      (e.sections[i]'hi).offset.val
+      ((e.sections[i]'hi).offset.val + (e.sections[i]'hi).encodedSize)
+      (e.sections[j]'hj).offset.val
+      ((e.sections[j]'hj).offset.val + (e.sections[j]'hj).encodedSize) := by
+  -- Reshape the fold to the `acc || g i hi` form so we can apply
+  -- nat_fold_or_false_iff.  The original fold has `if jIdx = i then acc
+  -- else acc || R`; this equals `acc || (if jIdx = i then false else R)`.
+  let s := e.sections[i]'hi
+  let sEnd := s.offset.val + s.encodedSize
+  let g : (jIdx : Nat) → jIdx < e.sections.size → Bool := fun jIdx hjIdx =>
+    if jIdx = i then false
+    else rangeOverlapsSection s.offset.val sEnd (e.sections[jIdx]'hjIdx)
+  have hReshape : sectionOverlapsAny e i hi =
+      Nat.fold e.sections.size (init := false) (fun jIdx hjIdx acc => acc || g jIdx hjIdx) :=
+    rfl
+  rw [hReshape] at hOA
+  have hPer := (nat_fold_or_false_iff e.sections.size g).mp hOA
+  -- hPer: ∀ jIdx hjIdx, g jIdx hjIdx = false.
+  -- For j ≠ i: g j hj = rangeOverlapsSection ... = false.
+  have hRange : rangeOverlapsSection s.offset.val sEnd (e.sections[j]'hj) = false := by
+    have := hPer j hj
+    simp [g, hNe] at this
+    exact this
+  exact rangeOverlapsSection_false_disjoint _ _ _ hRange
 
 /-! ## PT_LOAD update
 
@@ -412,5 +595,375 @@ def syncDtAddrTagsInFile (e : ElfFile) : ElfFile :=
         e.updateSectionContent iDyn (.dynamic newDyn)
       else e
   | _, _ => e
+
+/-! ## `growEOFWith` produces `spliceRegionsDisjoint` -/
+
+/-- Sanity lemma: the `stale` array built inside `growEOFWith` indexes
+    correctly to `sectionStale e i hi` for every valid `i`.  Used by the
+    `appendVerbatim_witness` invocation in the main theorem. -/
+theorem stale_ofFn_eq_sectionStale (e : ElfFile) (i : Nat) (hi : i < e.sections.size) :
+    (Array.ofFn (n := e.sections.size) (fun (i : Fin e.sections.size) =>
+        sectionStale e i.val i.isLt))[i]?.getD false = sectionStale e i hi := by
+  have hLt : i < (Array.ofFn (n := e.sections.size) (fun (i : Fin e.sections.size) =>
+      sectionStale e i.val i.isLt)).size := by
+    rw [Array.size_ofFn]; exact hi
+  rw [Array.getElem?_eq_getElem hLt]
+  simp only [Option.getD_some]
+  rw [Array.getElem_ofFn]
+
+theorem stale_ofFn_size (e : ElfFile) :
+    (Array.ofFn (n := e.sections.size) (fun (i : Fin e.sections.size) =>
+        sectionStale e i.val i.isLt)).size = e.sections.size := Array.size_ofFn
+
+/-- Verbatim-witness for `growEOFWith`'s placement at `baseOffset = startOffset`.
+
+    The two fields fall out directly from `sectionStale = false`:
+
+    * `bound`: a non-stale section is either NULL/NOBITS, or its file
+      range ≤ `currentFileEnd e ≤ startOffset` (provided we know
+      `currentFileEnd e ≤ startOffset`, which holds when `startOffset =
+      roundUp (currentFileEnd e) align`).
+    * `pair_disj`: two non-stale sections are pairwise disjoint by
+      `sectionOverlapsAny_false_pair_disjoint`.
+
+    The hypothesis `hStartOffset` captures the file-end alignment relation. -/
+theorem appendVerbatim_witness (e : ElfFile)
+    (startOffset : Nat)
+    (hStartOffset : currentFileEnd e ≤ startOffset)
+    (stale : Array Bool)
+    (hStaleEq : ∀ (i : Nat) (hi : i < e.sections.size),
+      stale[i]?.getD false = sectionStale e i hi) :
+    PlaceFold.VerbatimWitness (appendVerbatim stale) startOffset e.sections := by
+  refine ⟨?_, ?_⟩
+  · -- bound: verbatim entry ⇒ NULL ∨ NOBITS ∨ file-range ≤ startOffset.
+    intros j hjS hVerb
+    -- hVerb : appendVerbatim stale j (e.sections[j]) = true
+    --       = !(stale[j]?.getD false) = true ⇔ stale[j]?.getD false = false
+    have hStaleFalse : stale[j]?.getD false = false := by
+      unfold appendVerbatim at hVerb
+      cases h : stale[j]?.getD false
+      · rfl
+      · rw [h] at hVerb; simp at hVerb
+    -- By hStaleEq, sectionStale e j hjS = false.
+    have hStaleE : sectionStale e j hjS = false := by
+      rw [← hStaleEq j hjS]; exact hStaleFalse
+    -- sectionStale = false: section is NULL/NOBITS, or its range doesn't
+    -- overlap shdr table or any other section.  We extract NULL/NOBITS
+    -- from the if-branch, and the file-range bound from currentFileEnd.
+    rcases currentFileEnd_ge_section_end e j hjS with hNB | hN | hLe
+    · exact Or.inr (Or.inl hNB)
+    · exact Or.inl hN
+    · exact Or.inr (Or.inr (Nat.le_trans hLe hStartOffset))
+  · -- pair_disj: two non-stale entries are pairwise disjoint.
+    intros j j' hj hj' hNe hVerbJ hVerbJ'
+    -- Get sectionStale e j hj = false from hVerbJ.
+    have hStaleJ : sectionStale e j hj = false := by
+      have : stale[j]?.getD false = false := by
+        unfold appendVerbatim at hVerbJ
+        cases h : stale[j]?.getD false
+        · rfl
+        · rw [h] at hVerbJ; simp at hVerbJ
+      rw [← hStaleEq j hj]; exact this
+    -- Unfold sectionStale to get sectionOverlapsAny e j hj = false (when
+    -- not NULL/NOBITS).
+    unfold sectionStale at hStaleJ
+    by_cases hAlt : (e.sections[j]'hj).type = ShType.SHT_NOBITS ∨
+                    (e.sections[j]'hj).type = ShType.SHT_NULL
+    · -- j is NULL or NOBITS: short-circuit pair_disj.
+      rcases hAlt with hNB | hN
+      · exact Or.inl hNB
+      · exact Or.inr (Or.inr (Or.inl hN))
+    · simp only [hAlt, ↓reduceIte] at hStaleJ
+      -- hStaleJ : (overlapShdr || sectionOverlapsAny ...) = false
+      -- The right disjunct gives us sectionOverlapsAny = false.
+      have hOA : sectionOverlapsAny e j hj = false := by
+        rcases Bool.or_eq_false_iff.mp hStaleJ with ⟨_, h⟩
+        exact h
+      -- Apply sectionOverlapsAny_false_pair_disjoint at j' ≠ j.
+      rcases sectionOverlapsAny_false_pair_disjoint e j hj hOA j' hj' hNe.symm with h | h | h
+      · exact Or.inr (Or.inr (Or.inr (Or.inl h)))
+      · exact Or.inr (Or.inl h)
+      · -- IntervalDisjoint with arguments in (j, j') order.
+        refine Or.inr (Or.inr (Or.inr (Or.inr ?_)))
+        -- h : IntervalDisjoint sj.range sj'.range — same as goal.
+        exact h
+
+/-- `growEOFWith` main-body construction: explicitly named so we can prove
+    its splice-disjointness independently of the surrounding branches.
+    Equals the body of `growEOFWith` when the main path is taken (i.e.,
+    when `layoutAlreadyValid e = false`, `lastPtLoadIdx e.phdrs = some
+    lastIdx`, and `canExtendLastPtLoad ... = true`). -/
+def growEOFWithMainBody (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) : ElfFile :=
+  let detectedAlign := maxPtLoadAlign e.phdrs
+  let alignStartPage :=
+    match pageSize? with
+    | some n => max n detectedAlign
+    | none   => detectedAlign
+  let startPage := roundUp (maxPtLoadVaddrEnd e.phdrs) alignStartPage
+  let startOffset := roundUp (currentFileEnd e) alignStartPage
+  let stale : Array Bool := Array.ofFn (n := e.sections.size) fun i =>
+    sectionStale e i.val i.isLt
+  let placed := appendStaleSections e.sections stale startOffset startPage
+  let newSections := placed.1
+  let appendedBytes := placed.2
+  let newShoff := roundUp (startOffset + appendedBytes) 8
+  let newLastFilesz : Nat :=
+    if h : lastIdx < e.phdrs.size then
+      let ph := e.phdrs[lastIdx]'h
+      (startOffset + appendedBytes) - ph.offset.val
+    else 0
+  let newLastMemsz : Nat :=
+    if h : lastIdx < e.phdrs.size then
+      let ph := e.phdrs[lastIdx]'h
+      (startPage + appendedBytes) - ph.vaddr.val
+    else 0
+  let newPhdrs := updatePhdrsAfterMove e.phdrs (some lastIdx)
+                  newLastFilesz newLastMemsz
+                  e.interpIdx e.dynamicIdx newSections
+  let newHeader : Patchelf.Elf.ElfHeader :=
+    { e.header with shoff := ⟨newShoff⟩ }
+  { header := newHeader, phdrs := newPhdrs, sections := newSections }
+
+/-- The main-body construction satisfies `spliceRegionsDisjoint` provided
+    the input file's header / phdr-table / per-section disjointness
+    invariants hold.  Shdr-table preconditions aren't needed because the
+    output's `shoff` is freshly computed (and bounded by `currentFileEnd`
+    via `roundUp`); `hSection0Null` isn't needed because non-stale
+    sections inherit NULL/NOBITS from the file-range bound through
+    `currentFileEnd_ge_section_end`. -/
+theorem growEOFWithMainBody_produces_spliceRegionsDisjoint
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat)
+    (hHeaderPhdr : e.headerPhdrDisjoint)
+    (hHeaderSec  : e.headerSectionDisjoint)
+    (hPhdrSec    : e.phdrSectionDisjoint) :
+    (growEOFWithMainBody pageSize? e lastIdx).spliceRegionsDisjoint := by
+  unfold growEOFWithMainBody
+  let detectedAlign := maxPtLoadAlign e.phdrs
+  let alignStartPage :=
+    match pageSize? with
+    | some n => max n detectedAlign
+    | none   => detectedAlign
+  let startPage := roundUp (maxPtLoadVaddrEnd e.phdrs) alignStartPage
+  let startOffset := roundUp (currentFileEnd e) alignStartPage
+  let stale : Array Bool := Array.ofFn (n := e.sections.size) fun i =>
+    sectionStale e i.val i.isLt
+  let placed := appendStaleSections e.sections stale startOffset startPage
+  let newSections := placed.1
+  let appendedBytes := placed.2
+  let newShoff := roundUp (startOffset + appendedBytes) 8
+  -- Witnesses.
+  have hSpec : PlaceFold.TransformSpec (appendTransform startOffset startPage) startOffset :=
+    appendTransform_transformSpec _ _
+  have hCurrLeStart : currentFileEnd e ≤ startOffset := le_roundUp _ _
+  have hStaleEq : ∀ (i : Nat) (hi : i < e.sections.size),
+      stale[i]?.getD false = sectionStale e i hi :=
+    fun i hi => stale_ofFn_eq_sectionStale e i hi
+  have hVerb : PlaceFold.VerbatimWitness (appendVerbatim stale) startOffset e.sections :=
+    appendVerbatim_witness e startOffset hCurrLeStart stale hStaleEq
+  -- placeFold output facts.
+  have hSizeEq : newSections.size = e.sections.size :=
+    PlaceFold.size_eq _ _
+  have hCursorFloor : (0 : Nat) ≤ appendedBytes := PlaceFold.cursor_floor _ _
+  -- newShoff bounds.
+  have hStartLeShoff : startOffset ≤ newShoff :=
+    Nat.le_trans (Nat.le_add_right _ _) (le_roundUp _ _)
+  have hEndLeShoff : startOffset + appendedBytes ≤ newShoff := le_roundUp _ _
+  -- currentFileEnd bounds.
+  have hEhdrLe : Layout.ehdrSize ≤ startOffset :=
+    Nat.le_trans (currentFileEnd_ge_ehdr e) hCurrLeStart
+  have hPhEndLe : e.header.phoff.val + e.phdrs.size * Layout.phdrSize ≤ startOffset :=
+    Nat.le_trans (currentFileEnd_ge_phdrEnd e) hCurrLeStart
+  -- per-entry placement.
+  have hPlacement : ∀ (j : Nat) (hj : j < newSections.size),
+      PlaceFold.Placement (appendVerbatim stale) startOffset e.sections 0 placed j := by
+    intros j hj
+    have hjS : j < e.sections.size := hSizeEq ▸ hj
+    exact PlaceFold.placeFold_placement hSpec e.sections 0 hVerb j hjS
+  -- pairwise non-overlap.
+  have hPair : ∀ (j j' : Nat) (hj : j < newSections.size) (hj' : j' < newSections.size),
+      j ≠ j' → PlaceFold.PairDisjoint placed j j' := by
+    intros j j' hj hj' hNe
+    have hjS : j < e.sections.size := hSizeEq ▸ hj
+    have hj'S : j' < e.sections.size := hSizeEq ▸ hj'
+    exact PlaceFold.placeFold_pairDisjoint hSpec e.sections 0 hVerb j j' hjS hj'S hNe
+  -- The output's structural fields.
+  -- (Note: the main-body's `phdrs` field is the result of `updatePhdrsAfterMove`,
+  --  whose size equals `e.phdrs.size` via `Array.size_mapIdx`.)
+  have hOutPhdrsSize : (updatePhdrsAfterMove e.phdrs (some lastIdx)
+        ((if h : lastIdx < e.phdrs.size then
+            (startOffset + appendedBytes) - (e.phdrs[lastIdx]'h).offset.val else 0))
+        ((if h : lastIdx < e.phdrs.size then
+            (startPage + appendedBytes) - (e.phdrs[lastIdx]'h).vaddr.val else 0))
+        e.interpIdx e.dynamicIdx newSections).size = e.phdrs.size := by
+    unfold updatePhdrsAfterMove
+    exact Array.size_mapIdx
+  -- For each verbatim entry: derive type-preservation and offset-preservation
+  -- from the Placement; combined with input invariants, yields bounds.
+  -- For each placed entry: hPlacement gives baseOffset + 0 ≤ offset ≤ baseOffset + placed.2,
+  -- i.e. startOffset ≤ offset ≤ startOffset + appendedBytes.
+  -- Build all 7 clauses.
+  refine
+    { sections_disjoint := ?_
+      hdr_phdr_disjoint := ?_
+      hdr_shdr_disjoint := ?_
+      phdr_shdr_disjoint := ?_
+      hdr_sec_disjoint := ?_
+      phdr_sec_disjoint := ?_
+      shdr_sec_disjoint := ?_ }
+  · -- sections_disjoint: from hPair.
+    intros j hj j' hj' hNe
+    have hjN : j < newSections.size := hj
+    have hj'N : j' < newSections.size := hj'
+    exact hPair j j' hjN hj'N hNe hjN hj'N
+  · -- hdr_phdr_disjoint: phoff and phdrs.size unchanged from input.
+    show IntervalDisjoint 0 Layout.ehdrSize _ _
+    -- Output's phoff = e.header.phoff (we don't change it); output's phdrs.size = e.phdrs.size.
+    -- Reduce: (growEOFWithMainBody _).header.phoff = e.header.phoff (since we only set shoff).
+    -- and updatePhdrsAfterMove preserves size.
+    show IntervalDisjoint 0 Layout.ehdrSize e.header.phoff.val
+      (e.header.phoff.val + _ * Layout.phdrSize)
+    rw [hOutPhdrsSize]
+    exact hHeaderPhdr
+  · -- hdr_shdr_disjoint: newShoff ≥ Layout.ehdrSize (via currentFileEnd_ge_ehdr).
+    show IntervalDisjoint 0 Layout.ehdrSize _ _
+    refine Or.inl ?_
+    show Layout.ehdrSize ≤ newShoff
+    exact Nat.le_trans hEhdrLe hStartLeShoff
+  · -- phdr_shdr_disjoint: newShoff ≥ phEnd.
+    show IntervalDisjoint e.header.phoff.val _ _ _
+    rw [hOutPhdrsSize]
+    refine Or.inl ?_
+    show e.header.phoff.val + e.phdrs.size * Layout.phdrSize ≤ newShoff
+    exact Nat.le_trans hPhEndLe hStartLeShoff
+  · -- hdr_sec_disjoint
+    intros j hj
+    have hjN : j < newSections.size := hj
+    have hPl := hPlacement j hjN
+    rcases hPl.offset_or with hVerbJ | hPlace
+    · -- Verbatim: derive from input's hHeaderSec at e.sections[j].
+      have hjS : j < e.sections.size := hSizeEq ▸ hjN
+      rcases hHeaderSec j hjS with h | h | hID
+      · -- e.sections[j] is NOBITS: state[j].type = NOBITS via hPl.type_eq.
+        exact Or.inl (hPl.type_eq.trans h)
+      · exact Or.inr (Or.inl (hPl.type_eq.trans h))
+      · -- IntervalDisjoint 0 ehdrSize sj.range; state[j] preserves offset/encodedSize.
+        refine Or.inr (Or.inr ?_)
+        have hOffJ : (newSections[j]'hjN).offset.val = (e.sections[j]'hjS).offset.val := by
+          rw [hVerbJ.2]
+        have hSzJ : (newSections[j]'hjN).encodedSize = (e.sections[j]'hjS).encodedSize :=
+          hPl.size_eq
+        unfold IntervalDisjoint
+        unfold IntervalDisjoint at hID
+        rw [hOffJ, hSzJ]
+        exact hID
+    · -- Placed: state[j].offset ≥ baseOffset + 0 = startOffset ≥ ehdrSize.
+      refine Or.inr (Or.inr (Or.inl ?_))
+      show Layout.ehdrSize ≤ (newSections[j]'hjN).offset.val
+      have : startOffset + 0 ≤ (newSections[j]'hjN).offset.val := hPlace.2.1
+      omega
+  · -- phdr_sec_disjoint
+    intros j hj
+    have hjN : j < newSections.size := hj
+    have hPl := hPlacement j hjN
+    show ((newSections[j]'hjN).type = _ ∨ _)
+    rw [hOutPhdrsSize]
+    rcases hPl.offset_or with hVerbJ | hPlace
+    · have hjS : j < e.sections.size := hSizeEq ▸ hjN
+      rcases hPhdrSec j hjS with h | h | hID
+      · exact Or.inl (hPl.type_eq.trans h)
+      · exact Or.inr (Or.inl (hPl.type_eq.trans h))
+      · refine Or.inr (Or.inr ?_)
+        have hOffJ : (newSections[j]'hjN).offset.val = (e.sections[j]'hjS).offset.val := by
+          rw [hVerbJ.2]
+        have hSzJ : (newSections[j]'hjN).encodedSize = (e.sections[j]'hjS).encodedSize :=
+          hPl.size_eq
+        unfold IntervalDisjoint
+        unfold IntervalDisjoint at hID
+        rw [hOffJ, hSzJ]
+        exact hID
+    · refine Or.inr (Or.inr (Or.inl ?_))
+      show e.header.phoff.val + e.phdrs.size * Layout.phdrSize ≤ (newSections[j]'hjN).offset.val
+      have : startOffset + 0 ≤ (newSections[j]'hjN).offset.val := hPlace.2.1
+      omega
+  · -- shdr_sec_disjoint
+    intros j hj
+    have hjN : j < newSections.size := hj
+    have hPl := hPlacement j hjN
+    rcases hPl.offset_or with hVerbJ | hPlace
+    · -- Verbatim: section's range ≤ currentFileEnd ≤ startOffset ≤ newShoff.
+      have hjS : j < e.sections.size := hSizeEq ▸ hjN
+      rcases currentFileEnd_ge_section_end e j hjS with h | h | hLe
+      · exact Or.inl (hPl.type_eq.trans h)
+      · exact Or.inr (Or.inl (hPl.type_eq.trans h))
+      · refine Or.inr (Or.inr (Or.inr ?_))
+        show (newSections[j]'hjN).offset.val + (newSections[j]'hjN).encodedSize ≤ newShoff
+        have hOffJ : (newSections[j]'hjN).offset.val = (e.sections[j]'hjS).offset.val := by
+          rw [hVerbJ.2]
+        have hSzJ : (newSections[j]'hjN).encodedSize = (e.sections[j]'hjS).encodedSize :=
+          hPl.size_eq
+        rw [hOffJ, hSzJ]
+        exact Nat.le_trans hLe (Nat.le_trans hCurrLeStart hStartLeShoff)
+    · -- Placed: state[j].range ≤ baseOffset + state.2 = startOffset + appendedBytes ≤ newShoff.
+      refine Or.inr (Or.inr (Or.inr ?_))
+      show (newSections[j]'hjN).offset.val + (newSections[j]'hjN).encodedSize ≤ newShoff
+      have : (newSections[j]'hjN).offset.val + (newSections[j]'hjN).encodedSize
+            ≤ startOffset + appendedBytes := hPlace.2.2
+      omega
+
+/-- `growEOFWith` produces a layout where all 7 splice regions are
+    pairwise disjoint.  The output is suitable as the input to `encode`'s
+    splice cascade.
+
+    Preconditions (input-driven, all parser-derivable):
+    * `hSection0Null`: shdr[0] is SHT_NULL (ELF spec invariant).
+    * `hHeaderPhdr`/`hHeaderShdr`/`hPhdrShdr`/`hHeaderSec`/`hPhdrSec`:
+      the input file's header / phdr-table / shdr-table / per-section
+      disjointness invariants — all hold for any parser-produced ELF
+      (they're part of the structural invariants real ELFs satisfy). -/
+theorem growEOFWith_produces_spliceRegionsDisjoint (pageSize? : Option Nat) (e : ElfFile)
+    (hSection0Null : ∀ (h : 0 < e.sections.size),
+      (e.sections[0]'h).type = ShType.SHT_NULL)
+    (hHeaderPhdr : e.headerPhdrDisjoint)
+    (hHeaderShdr : e.headerShdrDisjoint)
+    (hPhdrShdr   : e.phdrShdrDisjoint)
+    (hHeaderSec  : e.headerSectionDisjoint)
+    (hPhdrSec    : e.phdrSectionDisjoint) :
+    (growEOFWith pageSize? e).spliceRegionsDisjoint := by
+  unfold growEOFWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · -- Fast path: output = e.
+    simp only [hLay, ↓reduceIte]
+    obtain ⟨hSec, hShdr⟩ := (layoutAlreadyValid_iff e).mp hLay
+    exact
+      { sections_disjoint := hSec
+        hdr_phdr_disjoint := hHeaderPhdr
+        hdr_shdr_disjoint := hHeaderShdr
+        phdr_shdr_disjoint := hPhdrShdr
+        hdr_sec_disjoint := hHeaderSec
+        phdr_sec_disjoint := hPhdrSec
+        shdr_sec_disjoint := hShdr }
+  · simp only [hLay]
+    -- Branch on lastPtLoadIdx.
+    cases hLast : lastPtLoadIdx e.phdrs with
+    | none =>
+      simp
+      exact layoutForEncoding_produces_spliceRegionsDisjoint e hSection0Null hHeaderPhdr
+    | some lastIdx =>
+      simp only []
+      -- canExtendLastPtLoad branch.
+      by_cases hExt : (canExtendLastPtLoad e
+        (roundUp (currentFileEnd e)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (roundUp (maxPtLoadVaddrEnd e.phdrs)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs)
+        lastIdx) = true
+      · simp only [hExt, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+        -- The output equals growEOFWithMainBody pageSize? e lastIdx.
+        show (growEOFWithMainBody pageSize? e lastIdx).spliceRegionsDisjoint
+        exact growEOFWithMainBody_produces_spliceRegionsDisjoint pageSize? e lastIdx
+          hHeaderPhdr hHeaderSec hPhdrSec
+      · simp only [hExt, Bool.not_false, ↓reduceIte]
+        exact layoutForEncoding_produces_spliceRegionsDisjoint e hSection0Null hHeaderPhdr
 
 end Patchelf.Elf

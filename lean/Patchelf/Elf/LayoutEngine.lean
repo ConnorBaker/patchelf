@@ -59,19 +59,70 @@ theorem layoutAlreadyValid_of_spliceRegionsDisjoint (e : ElfFile)
     (h : e.spliceRegionsDisjoint) : layoutAlreadyValid e = true :=
   (layoutAlreadyValid_iff e).mpr ⟨h.sections_disjoint, h.shdr_sec_disjoint⟩
 
-/-- One step of the layout fold.  Indexed step (i carries the section's
-    original index in the input array — needed because section 0 is
-    treated specially even when its type isn't SHT_NULL).  Threads
-    `(acc, cursor)` (placed sections so far, current file offset). -/
-def layoutStep (acc : Array Section × Nat) (idxAndSec : Nat × Section) :
+/-! ## Generic placement fold
+
+    `placeStep` is the shared kernel of two layout strategies in the
+    encoder pipeline:
+
+    * `layoutForEncoding` (this module) — verbatim = `i = 0 ∨ NULL ∨
+      NOBITS`, transform = `Section.withOffset`, baseOffset = 0.
+    * `growEOFWith` (`GrowEOF.lean`) — verbatim = `¬ stale[i]`,
+      transform updates both `offset` and `addr`, baseOffset =
+      `startOffset` (the page-aligned end-of-file).
+
+    Both feed the same `Placement` / `PairDisjoint` machinery and the
+    same bridge to `spliceRegionsDisjoint`; only the verbatim predicate,
+    transform, and baseOffset change.  See `placeFold_inv` for the
+    master fold-induction theorem, and the `Section.withOffset`
+    instantiation for `layoutForEncoding`. -/
+
+/-- One step of the placement fold, parameterized by:
+    * `verbatim` — predicate selecting which entries pass through
+      unchanged (no cursor advance, original offset preserved).
+    * `transform` — `(s, off) ↦ s'` placement function applied when
+      verbatim is false.  Callers must supply `transform_*` lemmas
+      stating how `s'`'s `type` / `encodedSize` / `offset.val` relate
+      to the inputs.  See `placeStep_offset` and the master fold
+      theorems for the contract.
+
+    Threads `(acc, cursor)` (placed sections so far, current cumulative
+    cursor — measured *relative* to `baseOffset` in the placed branch). -/
+def placeStep
+    (verbatim : Nat → Section → Bool)
+    (transform : Section → Nat → Section)
+    (acc : Array Section × Nat) (idxAndSec : Nat × Section) :
     Array Section × Nat :=
   let (i, s) := idxAndSec
   let (sectionsAcc, cursor) := acc
-  if i = 0 ∨ s.type = ShType.SHT_NULL ∨ s.type = ShType.SHT_NOBITS then
+  if verbatim i s then
     (sectionsAcc.push s, cursor)
   else
     let off := roundUp cursor s.addralign.val
-    (sectionsAcc.push (s.withOffset off), off + s.encodedSize)
+    (sectionsAcc.push (transform s off), off + s.encodedSize)
+
+/-- The placement fold: walks sections, threading `(acc, cursor)`.
+    See `placeStep` for the per-entry semantics.
+
+    Foldl form (vs. tail-recursion) so proofs can use
+    `Array.foldl_induction` directly. -/
+def placeFold
+    (verbatim : Nat → Section → Bool)
+    (transform : Section → Nat → Section)
+    (sections : Array Section) (cursor0 : Nat) :
+    Array Section × Nat :=
+  let indexed := sections.mapIdx (fun i s => (i, s))
+  indexed.foldl (init := (Array.emptyWithCapacity sections.size, cursor0))
+    (placeStep verbatim transform)
+
+/-- One step of the layout fold (specialization of `placeStep` for
+    `layoutForEncoding`).  Indexed step (i carries the section's
+    original index in the input array — needed because section 0 is
+    treated specially even when its type isn't SHT_NULL).  Threads
+    `(acc, cursor)` (placed sections so far, current file offset). -/
+def layoutVerbatim (i : Nat) (s : Section) : Bool :=
+  decide (i = 0 ∨ s.type = ShType.SHT_NULL ∨ s.type = ShType.SHT_NOBITS)
+
+@[inline] def layoutStep := placeStep layoutVerbatim Section.withOffset
 
 /-- Layout fold helper: walks sections, threading `(acc, cursor)`
     (placed sections so far, current file offset).
@@ -80,14 +131,8 @@ def layoutStep (acc : Array Section × Nat) (idxAndSec : Nat × Section) :
     unchanged offset; consume no cursor).  SHT_NOBITS sections are
     also pushed verbatim (no file bytes).  Every other section is
     given a fresh `offset = roundUp cursor addralign` and `cursor`
-    advances by `s.encodedSize`.
-
-    Foldl form (vs. tail-recursion) so proofs can use
-    `Array.foldl_induction` directly. -/
-def layoutSectionsFold (sections : Array Section) (cursor0 : Nat) :
-    Array Section × Nat :=
-  let indexed := sections.mapIdx (fun i s => (i, s))
-  indexed.foldl (init := (Array.emptyWithCapacity sections.size, cursor0)) layoutStep
+    advances by `s.encodedSize`. -/
+@[inline] def layoutSectionsFold := placeFold layoutVerbatim Section.withOffset
 
 /-- Rebuild a single phdr entry against the freshly-laid-out section
     array.  PT_INTERP / PT_DYNAMIC pick up their target section's new
@@ -202,25 +247,44 @@ theorem le_roundUp (n align : Nat) : n ≤ roundUp n align := by
     rw [hMul]
     omega
 
-/-! ## `layoutSectionsFold` structural facts -/
+/-! ## `placeFold` structural facts (shared kernel)
 
-namespace LayoutSectionsFold
+    The fold-induction infrastructure is parameterized over `verbatim`
+    (predicate selecting which entries pass through unchanged), `transform`
+    (placement function for non-verbatim entries), and `baseOffset` (the
+    constant absolute base, e.g. `0` for `layoutForEncoding` or
+    `startOffset` for `growEOFWith`).  Callers supply the `transform_*`
+    hypotheses bundled below; the master theorem `placeFold_inv` produces
+    `Placement` and `PairDisjoint` facts for every output index. -/
 
-/-- One step of the layout fold advances `acc.size` by 1. -/
+namespace PlaceFold
+
+/-- Bundles the field-preservation contract that any concrete `transform`
+    must satisfy.  The `Placement` invariant is stated *abstractly* in
+    these fields, so each client just exhibits its own `Spec` instance. -/
+structure TransformSpec (transform : Section → Nat → Section) (baseOffset : Nat) : Prop where
+  type_eq        : ∀ (s : Section) (o : Nat), (transform s o).type = s.type
+  encodedSize_eq : ∀ (s : Section) (o : Nat), (transform s o).encodedSize = s.encodedSize
+  offset_eq      : ∀ (s : Section) (o : Nat), (transform s o).offset.val = baseOffset + o
+
+variable {verbatim : Nat → Section → Bool}
+variable {transform : Section → Nat → Section} {baseOffset : Nat}
+
+/-- One step of the placement fold advances `acc.size` by 1. -/
 theorem step_size_eq (acc : Array Section × Nat)
     (idx : Nat) (s : Section) :
-    (layoutStep acc (idx, s)).1.size = acc.1.size + 1 := by
-  unfold layoutStep
-  by_cases hAlt : idx = 0 ∨ s.type = ShType.SHT_NULL ∨ s.type = ShType.SHT_NOBITS
+    (placeStep verbatim transform acc (idx, s)).1.size = acc.1.size + 1 := by
+  unfold placeStep
+  by_cases hAlt : verbatim idx s
   · simp [hAlt, Array.size_push]
   · simp [hAlt, Array.size_push]
 
-/-- One step of the layout fold's cursor is monotone. -/
+/-- One step of the placement fold's cursor is monotone. -/
 theorem step_cursor_mono (acc : Array Section × Nat)
     (idx : Nat) (s : Section) :
-    acc.2 ≤ (layoutStep acc (idx, s)).2 := by
-  unfold layoutStep
-  by_cases hAlt : idx = 0 ∨ s.type = ShType.SHT_NULL ∨ s.type = ShType.SHT_NOBITS
+    acc.2 ≤ (placeStep verbatim transform acc (idx, s)).2 := by
+  unfold placeStep
+  by_cases hAlt : verbatim idx s
   · simp [hAlt]
   · simp [hAlt]
     have := le_roundUp acc.2 s.addralign.val
@@ -228,49 +292,50 @@ theorem step_cursor_mono (acc : Array Section × Nat)
 
 /-- For any index `j < state.1.size` (i.e. valid in the pre-step state),
     the post-step `getElem` agrees with the pre-step `getElem`.  Both
-    branches of `layoutStep` push exactly one element, so existing
-    indices read through to the original.  Used to discharge the four
-    "preserved by step" subgoals in the placement / pair-disjoint
-    stability proofs. -/
-theorem layoutStep_getElem_lt (state : Array Section × Nat)
+    branches of `placeStep` push exactly one element, so existing
+    indices read through to the original. -/
+theorem step_getElem_lt (state : Array Section × Nat)
     (idx : Nat) (s : Section) (j : Nat) (hjLt : j < state.1.size) :
-    (layoutStep state (idx, s)).1[j]'(by rw [step_size_eq]; omega)
+    (placeStep verbatim transform state (idx, s)).1[j]'(by rw [step_size_eq]; omega)
       = state.1[j]'hjLt := by
-  unfold layoutStep
-  by_cases hAlt : idx = 0 ∨ s.type = ShType.SHT_NULL ∨ s.type = ShType.SHT_NOBITS
+  unfold placeStep
+  by_cases hAlt : verbatim idx s
   · simp [hAlt]; rw [Array.getElem_push_lt hjLt]
   · simp [hAlt]; rw [Array.getElem_push_lt hjLt]
 
 /-! Size + cursor floor invariants. -/
 
 theorem size_eq (sections : Array Section) (cursor0 : Nat) :
-    (layoutSectionsFold sections cursor0).1.size = sections.size := by
-  unfold layoutSectionsFold
+    (placeFold verbatim transform sections cursor0).1.size = sections.size := by
+  unfold placeFold
   let indexed := sections.mapIdx (fun i s => (i, s))
   have hIndexedSize : indexed.size = sections.size := Array.size_mapIdx
-  show (Array.foldl layoutStep (Array.emptyWithCapacity sections.size, cursor0) indexed).1.size
+  show (Array.foldl (placeStep verbatim transform)
+        (Array.emptyWithCapacity sections.size, cursor0) indexed).1.size
         = sections.size
   rw [show sections.size = indexed.size from hIndexedSize.symm] at *
   have h := @Array.foldl_induction (Nat × Section) (Array Section × Nat) indexed
     (motive := fun k state => state.1.size = k)
     (init := (Array.emptyWithCapacity indexed.size, cursor0))
     (h0 := by simp)
-    (f := layoutStep)
+    (f := placeStep verbatim transform)
     (hf := by
       intros i state ih
       rw [step_size_eq, ih])
   exact h
 
 theorem cursor_floor (sections : Array Section) (cursor0 : Nat) :
-    cursor0 ≤ (layoutSectionsFold sections cursor0).2 := by
-  unfold layoutSectionsFold
+    cursor0 ≤ (placeFold verbatim transform sections cursor0).2 := by
+  unfold placeFold
   let indexed := sections.mapIdx (fun i s => (i, s))
-  show cursor0 ≤ (Array.foldl layoutStep (Array.emptyWithCapacity sections.size, cursor0) indexed).2
+  show cursor0 ≤
+      (Array.foldl (placeStep verbatim transform)
+        (Array.emptyWithCapacity sections.size, cursor0) indexed).2
   have h := @Array.foldl_induction (Nat × Section) (Array Section × Nat) indexed
     (motive := fun _ state => cursor0 ≤ state.2)
     (init := (Array.emptyWithCapacity sections.size, cursor0))
     (h0 := Nat.le_refl _)
-    (f := layoutStep)
+    (f := placeStep verbatim transform)
     (hf := by
       intros i state ih
       exact Nat.le_trans ih (step_cursor_mono state _ _))
@@ -282,37 +347,45 @@ theorem cursor_floor (sections : Array Section) (cursor0 : Nat) :
     `j < state.1.size`:
 
     * `.type` and `.encodedSize` are inherited from `sections[j]`,
-    * either the entry is "exempt" (j = 0 ∨ original type ∈ {NULL, NOBITS}),
-      with offset preserved from the original,
-    * or it has fresh offset `o` with `cursor0 ≤ o` and
-      `o + encodedSize ≤ state.2`. -/
-structure Placement (sections : Array Section) (cursor0 : Nat)
+    * either the entry is verbatim, with `offset = sections[j].offset`,
+    * or it has fresh offset `o` with
+      `baseOffset + cursor0 ≤ o` and `o + encodedSize ≤ baseOffset + state.2`.
+
+    Note: the placed-branch bound uses `baseOffset + cursor0` (an
+    *absolute* lower bound) rather than `cursor0` (the relative one).
+    This matches both clients: `layoutForEncoding` has `baseOffset = 0`
+    and `cursor0 = max ehdrSize phEnd`, while `growEOFWith` has
+    `baseOffset = startOffset` and `cursor0 = 0`. -/
+structure Placement
+    (verbatim : Nat → Section → Bool) (baseOffset : Nat)
+    (sections : Array Section) (cursor0 : Nat)
     (state : Array Section × Nat) (j : Nat) : Prop where
   hjA : j < state.1.size
   hjS : j < sections.size
   type_eq : (state.1[j]'hjA).type = (sections[j]'hjS).type
   size_eq : (state.1[j]'hjA).encodedSize = (sections[j]'hjS).encodedSize
   offset_or :
-    (((j = 0 ∨ (sections[j]'hjS).type = ShType.SHT_NULL ∨
-        (sections[j]'hjS).type = ShType.SHT_NOBITS) ∧
+    (verbatim j (sections[j]'hjS) = true ∧
         (state.1[j]'hjA).offset = (sections[j]'hjS).offset)
-     ∨ ((¬ (j = 0 ∨ (sections[j]'hjS).type = ShType.SHT_NULL ∨
-            (sections[j]'hjS).type = ShType.SHT_NOBITS)) ∧
-        cursor0 ≤ (state.1[j]'hjA).offset.val ∧
-        (state.1[j]'hjA).offset.val + (state.1[j]'hjA).encodedSize ≤ state.2))
+     ∨ (verbatim j (sections[j]'hjS) = false ∧
+        baseOffset + cursor0 ≤ (state.1[j]'hjA).offset.val ∧
+        (state.1[j]'hjA).offset.val + (state.1[j]'hjA).encodedSize
+          ≤ baseOffset + state.2)
 
-/-- Stability of `Placement` under a layout step: existing entries
+/-- Stability of `Placement` under a placement step: existing entries
     survive the push + cursor advance unchanged. -/
 theorem placement_step_existing (sections : Array Section) (cursor0 : Nat)
     (state : Array Section × Nat) (idx : Nat) (s : Section) (j : Nat)
-    (hPl : Placement sections cursor0 state j) :
-    Placement sections cursor0 (layoutStep state (idx, s)) j := by
-  have hCurLe : state.2 ≤ (layoutStep state (idx, s)).2 :=
+    (hPl : Placement verbatim baseOffset sections cursor0 state j) :
+    Placement verbatim baseOffset sections cursor0
+      (placeStep verbatim transform state (idx, s)) j := by
+  have hCurLe : state.2 ≤ (placeStep verbatim transform state (idx, s)).2 :=
     step_cursor_mono state idx s
-  have hjA' : j < (layoutStep state (idx, s)).1.size := by
+  have hjA' : j < (placeStep verbatim transform state (idx, s)).1.size := by
     rw [step_size_eq]; have := hPl.hjA; omega
-  have hPushEq : (layoutStep state (idx, s)).1[j]'hjA' = state.1[j]'hPl.hjA :=
-    layoutStep_getElem_lt state idx s j hPl.hjA
+  have hPushEq : (placeStep verbatim transform state (idx, s)).1[j]'hjA'
+                  = state.1[j]'hPl.hjA :=
+    step_getElem_lt state idx s j hPl.hjA
   refine
     { hjA := hjA'
       hjS := hPl.hjS
@@ -321,29 +394,31 @@ theorem placement_step_existing (sections : Array Section) (cursor0 : Nat)
       offset_or := ?_ }
   · rw [hPushEq]; exact hPl.type_eq
   · rw [hPushEq]; exact hPl.size_eq
-  · rcases hPl.offset_or with hExempt | hPlace
-    · refine Or.inl ⟨hExempt.1, ?_⟩
-      rw [hPushEq]; exact hExempt.2
+  · rcases hPl.offset_or with hVerb | hPlace
+    · refine Or.inl ⟨hVerb.1, ?_⟩
+      rw [hPushEq]; exact hVerb.2
     · refine Or.inr ⟨hPlace.1, ?_, ?_⟩
       · rw [hPushEq]; exact hPlace.2.1
-      · rw [hPushEq]; exact Nat.le_trans hPlace.2.2 hCurLe
+      · rw [hPushEq]; exact Nat.le_trans hPlace.2.2 (Nat.add_le_add_left hCurLe _)
 
 /-- The freshly-pushed entry has `Placement`. -/
-theorem placement_step_new (sections : Array Section) (cursor0 : Nat)
+theorem placement_step_new (hSpec : TransformSpec transform baseOffset)
+    (sections : Array Section) (cursor0 : Nat)
     (state : Array Section × Nat) (i : Nat) (s : Section)
     (hSize : state.1.size = i)
     (hCur : cursor0 ≤ state.2)
     (hiBound : i < sections.size)
     (hSeq : sections[i]'hiBound = s) :
-    Placement sections cursor0 (layoutStep state (i, s)) i := by
+    Placement verbatim baseOffset sections cursor0
+      (placeStep verbatim transform state (i, s)) i := by
   subst hSize
-  have hjA : state.1.size < (layoutStep state (state.1.size, s)).1.size := by
+  have hjA : state.1.size < (placeStep verbatim transform state (state.1.size, s)).1.size := by
     rw [step_size_eq]; omega
-  by_cases hAlt :
-      state.1.size = 0 ∨ s.type = ShType.SHT_NULL ∨ s.type = ShType.SHT_NOBITS
-  · have hValEq : (layoutStep state (state.1.size, s)).1[state.1.size]'hjA = s := by
-      unfold layoutStep
-      simp only [hAlt, ↓reduceIte]
+  by_cases hAlt : verbatim state.1.size s = true
+  · -- Verbatim: pushed `s` unchanged.
+    have hValEq : (placeStep verbatim transform state (state.1.size, s)).1[state.1.size]'hjA = s := by
+      unfold placeStep
+      simp only [hAlt]
       exact Array.getElem_push_eq
     refine
       { hjA := hjA, hjS := hiBound,
@@ -351,70 +426,47 @@ theorem placement_step_new (sections : Array Section) (cursor0 : Nat)
     · rw [hValEq, hSeq]
     · rw [hValEq, hSeq]
     · refine Or.inl ⟨?_, ?_⟩
-      · rcases hAlt with h0 | hN | hNB
-        · exact Or.inl h0
-        · rw [hSeq]; exact Or.inr (Or.inl hN)
-        · rw [hSeq]; exact Or.inr (Or.inr hNB)
+      · rw [hSeq]; exact hAlt
       · rw [hValEq, hSeq]
-  · let off := roundUp state.2 s.addralign.val
-    have hValEq : (layoutStep state (state.1.size, s)).1[state.1.size]'hjA
-                 = s.withOffset off := by
-      unfold layoutStep
-      simp only [hAlt, ↓reduceIte]
+  · -- Placed: pushed `transform s off`, where `off = roundUp state.2 ...`.
+    have hAltFalse : verbatim state.1.size s = false := by
+      cases h : verbatim state.1.size s
+      · rfl
+      · exact absurd h hAlt
+    let off := roundUp state.2 s.addralign.val
+    have hValEq : (placeStep verbatim transform state (state.1.size, s)).1[state.1.size]'hjA
+                 = transform s off := by
+      unfold placeStep
+      simp only [hAlt]
       exact Array.getElem_push_eq
-    have hCurEq : (layoutStep state (state.1.size, s)).2 = off + s.encodedSize := by
-      unfold layoutStep
-      simp only [hAlt, ↓reduceIte]
+    have hCurEq : (placeStep verbatim transform state (state.1.size, s)).2
+                 = off + s.encodedSize := by
+      unfold placeStep
+      simp only [hAlt]
       rfl
     refine
       { hjA := hjA, hjS := hiBound,
         type_eq := ?_, size_eq := ?_, offset_or := ?_ }
-    · rw [hValEq, withOffset_type, hSeq]
-    · rw [hValEq, withOffset_encodedSize, hSeq]
+    · rw [hValEq, hSpec.type_eq, hSeq]
+    · rw [hValEq, hSpec.encodedSize_eq, hSeq]
     · refine Or.inr ⟨?_, ?_, ?_⟩
-      · rw [hSeq]; exact hAlt
-      · rw [hValEq]
-        show cursor0 ≤ (s.withOffset off).offset.val
-        have : (s.withOffset off).offset.val = off := rfl
-        rw [this]
-        exact Nat.le_trans hCur (le_roundUp _ _)
-      · rw [hValEq, hCurEq]
-        show (s.withOffset off).offset.val + (s.withOffset off).encodedSize
-            ≤ off + s.encodedSize
-        have hOffVal : (s.withOffset off).offset.val = off := rfl
-        rw [hOffVal, withOffset_encodedSize]
-        exact Nat.le_refl _
-
-/-- Convenience: from a `Placement` plus `hSection0Null`, derive the
-    output entry's NOBITS-or-NULL fact when the input was exempt.
-    Returns `Or.inl hNOBITS` or `Or.inr hNULL`.  Used to collapse
-    the 3-arm `rcases hExempt.1 with hj0 | hN | hNB` cascade — the
-    j = 0 case is discharged by hSection0Null. -/
-theorem Placement.exempt_to_NOBITS_or_NULL
-    {sections : Array Section} {cursor0 : Nat}
-    {state : Array Section × Nat} {j : Nat}
-    (hPl : Placement sections cursor0 state j)
-    (hSection0Null : ∀ (h : 0 < sections.size),
-      (sections[0]'h).type = ShType.SHT_NULL)
-    (hExempt : (j = 0 ∨ (sections[j]'hPl.hjS).type = ShType.SHT_NULL ∨
-                (sections[j]'hPl.hjS).type = ShType.SHT_NOBITS) ∧
-               (state.1[j]'hPl.hjA).offset = (sections[j]'hPl.hjS).offset) :
-    (state.1[j]'hPl.hjA).type = ShType.SHT_NOBITS ∨
-    (state.1[j]'hPl.hjA).type = ShType.SHT_NULL := by
-  rcases hExempt.1 with hj0 | hN | hNB
-  · subst hj0
-    exact Or.inr (hPl.type_eq.trans (hSection0Null hPl.hjS))
-  · exact Or.inr (hPl.type_eq.trans hN)
-  · exact Or.inl (hPl.type_eq.trans hNB)
+      · rw [hSeq]; exact hAltFalse
+      · rw [hValEq, hSpec.offset_eq]
+        -- baseOffset + cursor0 ≤ baseOffset + off, since cursor0 ≤ state.2 ≤ off.
+        have hRoundUpGe : state.2 ≤ roundUp state.2 s.addralign.val := le_roundUp _ _
+        have hCurOff : cursor0 ≤ off := Nat.le_trans hCur hRoundUpGe
+        exact Nat.add_le_add_left hCurOff _
+      · rw [hValEq, hSpec.offset_eq, hSpec.encodedSize_eq, hCurEq]
+        -- baseOffset + off + s.encodedSize ≤ baseOffset + (off + s.encodedSize).
+        omega
 
 /-- Pairwise non-overlap claim for two output entries `j ≠ j'`:
     either at least one is NOBITS / NULL, or their byte ranges
     `[offset, offset+encodedSize)` are interval-disjoint.
 
     Disjunct order matches `ElfFile.sectionsNonOverlapping`'s
-    NOBITS-NOBITS-NULL-NULL-IntervalDisjoint shape so the bridge from
-    layoutForEncoding output to spliceRegionsDisjoint composes by
-    `exact`. -/
+    NOBITS-NOBITS-NULL-NULL-IntervalDisjoint shape so the bridge to
+    `spliceRegionsDisjoint` composes by `exact`. -/
 def PairDisjoint (state : Array Section × Nat) (j j' : Nat) : Prop :=
   ∀ (hjA : j < state.1.size) (hjA' : j' < state.1.size),
     let s  := state.1[j]'hjA
@@ -431,7 +483,6 @@ theorem pairDisjoint_symm (state : Array Section × Nat) (j j' : Nat)
   unfold PairDisjoint
   intros hjA hjA'
   have h := hPD hjA' hjA
-  -- New disjunct order: s.NOBITS ∨ s'.NOBITS ∨ s.NULL ∨ s'.NULL ∨ ID
   rcases h with h | h | h | h | h
   · exact Or.inr (Or.inl h)
   · exact Or.inl h
@@ -442,93 +493,189 @@ theorem pairDisjoint_symm (state : Array Section × Nat) (j j' : Nat)
     · exact Or.inr hL
     · exact Or.inl hR
 
-/-- Stability of `PairDisjoint` under a layout step: indices `< state.1.size`
-    survive the push (getElem unchanged). -/
+/-- Stability of `PairDisjoint` under a placement step: indices
+    `< state.1.size` survive the push (getElem unchanged). -/
 theorem pairDisjoint_step_existing
     (state : Array Section × Nat) (idx : Nat) (s : Section)
     (j j' : Nat) (hjLt : j < state.1.size) (hjLt' : j' < state.1.size)
     (hPD : PairDisjoint state j j') :
-    PairDisjoint (layoutStep state (idx, s)) j j' := by
+    PairDisjoint (placeStep verbatim transform state (idx, s)) j j' := by
   unfold PairDisjoint
   intros _ _
-  rw [layoutStep_getElem_lt state idx s j hjLt,
-      layoutStep_getElem_lt state idx s j' hjLt']
+  rw [step_getElem_lt state idx s j hjLt,
+      step_getElem_lt state idx s j' hjLt']
   exact hPD hjLt hjLt'
+
+/-- Client-supplied "structural" witnesses for verbatim entries.  Bundles
+    two facts that fall out of the input invariants:
+
+    * `bound` — every verbatim entry is NULL, NOBITS, or its file range
+      ends at or before `baseOffset`.  The third disjunct lets `growEOFWith`
+      handle non-stale non-NULL non-NOBITS entries (they sit inside the
+      original file region, which ends below the appended region's start).
+    * `pair_disj` — any two distinct verbatim entries are pairwise
+      disjoint (NULL/NOBITS short-circuit, or their file ranges
+      `[offset, offset + encodedSize)` are interval-disjoint).
+
+    For `layoutForEncoding` (`baseOffset = 0`), `bound` is satisfied
+    via NULL/NOBITS only (combined with `hSection0Null`); `pair_disj`
+    is vacuous in non-NULL/NOBITS shape since both entries fall under
+    NULL/NOBITS.
+
+    For `growEOFWith` (`baseOffset = startOffset`), both come from
+    `sectionStale = false` for non-stale entries: the file range is
+    bounded by `currentFileEnd ≤ startOffset`, and `sectionOverlapsAny
+    = false` directly gives pairwise disjointness. -/
+structure VerbatimWitness
+    (verbatim : Nat → Section → Bool) (baseOffset : Nat)
+    (sections : Array Section) : Prop where
+  bound : ∀ (j : Nat) (hjS : j < sections.size),
+    verbatim j (sections[j]'hjS) = true →
+    (sections[j]'hjS).type = ShType.SHT_NULL ∨
+    (sections[j]'hjS).type = ShType.SHT_NOBITS ∨
+    (sections[j]'hjS).offset.val + (sections[j]'hjS).encodedSize ≤ baseOffset
+  pair_disj : ∀ (j j' : Nat) (hj : j < sections.size) (hj' : j' < sections.size),
+    j ≠ j' →
+    verbatim j (sections[j]'hj) = true →
+    verbatim j' (sections[j']'hj') = true →
+    (sections[j]'hj).type = ShType.SHT_NOBITS ∨
+    (sections[j']'hj').type = ShType.SHT_NOBITS ∨
+    (sections[j]'hj).type = ShType.SHT_NULL ∨
+    (sections[j']'hj').type = ShType.SHT_NULL ∨
+    IntervalDisjoint
+      (sections[j]'hj).offset.val
+      ((sections[j]'hj).offset.val + (sections[j]'hj).encodedSize)
+      (sections[j']'hj').offset.val
+      ((sections[j']'hj').offset.val + (sections[j']'hj').encodedSize)
 
 /-- New-entry vs. existing-entry disjointness: at the step that places
     a new entry at `state.1.size = i`, its byte range is interval-disjoint
-    from any existing non-exempt entry's range, because the new entry's
-    offset (= roundUp state.2 _) is ≥ state.2, which already dominates
-    every prior non-exempt entry's end-offset.
+    from any existing entry's range.
 
-    `hSection0Null` requires `sections[0].type = SHT_NULL` (an ELF-spec
-    invariant the parser's IsValid enforces).  Used in the j = 0 case
-    of an existing-exempt entry's discharge: by the type_eq from
-    Placement, the output entry at index 0 also has type SHT_NULL,
-    which satisfies the disjointness disjunction. -/
-theorem pairDisjoint_step_new_vs_old
+    Three cases by how the new entry and existing entry j are pushed:
+
+    - Both verbatim: `hVerb.pair_disj` applies directly (file ranges
+      preserved on both sides).
+    - One verbatim, one placed: the placed side is bounded by
+      `baseOffset + cursor0`-ish, the verbatim side by the bound disjunct
+      of `hVerb.bound`.  Combine for a separator at `baseOffset`.
+    - Both placed: cursor monotonicity gives the clean separator.
+
+    NOTE: `_hCur` is part of the master-fold contract (the cursor floor
+    invariant passed by `placeFold_inv`); not directly used here, kept
+    for API symmetry with `placement_step_new`. -/
+theorem pairDisjoint_step_new_vs_old (hSpec : TransformSpec transform baseOffset)
     (sections : Array Section) (cursor0 : Nat)
     (state : Array Section × Nat) (i : Nat) (s : Section) (j : Nat)
     (hSize : state.1.size = i)
-    (hCur : cursor0 ≤ state.2)
+    (_hCur : cursor0 ≤ state.2)
     (hiBound : i < sections.size)
     (hSeq : sections[i]'hiBound = s)
     (hjLt : j < state.1.size)
-    (hPlj : Placement sections cursor0 state j)
-    (hSection0Null : ∀ (h : 0 < sections.size),
-      (sections[0]'h).type = ShType.SHT_NULL) :
-    PairDisjoint (layoutStep state (i, s)) j i := by
+    (hjNe : j ≠ i)
+    (hPlj : Placement verbatim baseOffset sections cursor0 state j)
+    (hVerb : VerbatimWitness verbatim baseOffset sections) :
+    PairDisjoint (placeStep verbatim transform state (i, s)) j i := by
   unfold PairDisjoint
   intros _ hjA'
   -- For the j (existing) entry: getElem is preserved by the push.
-  have hPushEqJ : (layoutStep state (i, s)).1[j]'_ = state.1[j]'hjLt :=
-    layoutStep_getElem_lt state i s j hjLt
-  -- For the new i entry: its value depends on the exempt branch.
-  by_cases hAlt : i = 0 ∨ s.type = ShType.SHT_NULL ∨ s.type = ShType.SHT_NOBITS
-  · -- New entry exempt: pushed `s` verbatim.
-    have hPushEqI : (layoutStep state (i, s)).1[i]'hjA' = s := by
+  have hPushEqJ : (placeStep verbatim transform state (i, s)).1[j]'_ = state.1[j]'hjLt :=
+    step_getElem_lt state i s j hjLt
+  by_cases hAlt : verbatim i s = true
+  · -- New entry verbatim: pushed `s` unchanged.
+    have hPushEqI : (placeStep verbatim transform state (i, s)).1[i]'hjA' = s := by
       subst hSize
-      unfold layoutStep
-      simp only [hAlt, ↓reduceIte]
-      exact Array.getElem_push_eq
-    rw [hPushEqI]
-    rcases hAlt with h0 | hN | hNB
-    · exfalso; rw [hSize, h0] at hjLt; exact absurd hjLt (Nat.not_lt_zero _)
-    · -- s.type = NULL: s' (= new entry value) is NULL.  Disjunct 4: s'.NULL.
-      refine Or.inr (Or.inr (Or.inr (Or.inl hN)))
-    · -- s.type = NOBITS: s'.NOBITS.  Disjunct 2.
-      refine Or.inr (Or.inl hNB)
-  · -- New entry non-exempt: pushed `s.withOffset off`, where off ≥ state.2.
-    let off := roundUp state.2 s.addralign.val
-    have hPushEqI : (layoutStep state (i, s)).1[i]'hjA' = s.withOffset off := by
-      subst hSize
-      unfold layoutStep
-      simp only [hAlt, ↓reduceIte]
+      unfold placeStep
+      simp only [hAlt]
       exact Array.getElem_push_eq
     rw [hPushEqI, hPushEqJ]
-    rcases hPlj.offset_or with hExj | hPlacej
-    · -- j exempt: derive s.NOBITS or s.NULL via the helper.  PairDisjoint's
-      -- disjunct order is s.NOBITS ∨ s'.NOBITS ∨ s.NULL ∨ s'.NULL ∨ ID.
-      rcases hPlj.exempt_to_NOBITS_or_NULL hSection0Null hExj with h | h
-      · exact Or.inl h
-      · exact Or.inr (Or.inr (Or.inl h))
-    · -- j non-exempt.
+    have hVerbI : verbatim i (sections[i]'hiBound) = true := by rw [hSeq]; exact hAlt
+    rcases hPlj.offset_or with hVerbJ | hPlacej
+    · -- Both verbatim: apply hVerb.pair_disj directly, then rewrite to state.
+      have hVerbJ' : verbatim j (sections[j]'hPlj.hjS) = true := hVerbJ.1
+      have hPair := hVerb.pair_disj j i hPlj.hjS hiBound hjNe hVerbJ' hVerbI
+      have hOffJ : (state.1[j]'hjLt).offset.val = (sections[j]'hPlj.hjS).offset.val := by
+        rw [hVerbJ.2]
+      have hSzJ : (state.1[j]'hjLt).encodedSize = (sections[j]'hPlj.hjS).encodedSize :=
+        hPlj.size_eq
+      have hTyJ : (state.1[j]'hjLt).type = (sections[j]'hPlj.hjS).type := hPlj.type_eq
+      rcases hPair with hN | hN | hN | hN | hID
+      · exact Or.inl (hTyJ.trans hN)
+      · exact Or.inr (Or.inl (by rw [← hSeq]; exact hN))
+      · exact Or.inr (Or.inr (Or.inl (hTyJ.trans hN)))
+      · exact Or.inr (Or.inr (Or.inr (Or.inl (by rw [← hSeq]; exact hN))))
+      · refine Or.inr (Or.inr (Or.inr (Or.inr ?_)))
+        rw [hOffJ, hSzJ, ← hSeq]; exact hID
+    · -- j placed, new entry verbatim: bound on new entry ⇒ disjoint left.
+      rcases hVerb.bound i hiBound hVerbI with hN | hNB | hBnd
+      · -- s = sections[i] is NULL.
+        refine Or.inr (Or.inr (Or.inr (Or.inl ?_)))
+        rw [← hSeq]; exact hN
+      · -- s = sections[i] is NOBITS.
+        refine Or.inr (Or.inl ?_)
+        rw [← hSeq]; exact hNB
+      · -- File-range bound: sections[i].range ≤ baseOffset ≤ baseOffset + cursor0 ≤ j.offset.
+        refine Or.inr (Or.inr (Or.inr (Or.inr ?_)))
+        right
+        show s.offset.val + s.encodedSize ≤ (state.1[j]'hjLt).offset.val
+        rw [← hSeq]
+        have hLeBase : (sections[i]'hiBound).offset.val + (sections[i]'hiBound).encodedSize
+                      ≤ baseOffset := hBnd
+        have hBaseLeJ : baseOffset ≤ (state.1[j]'hjLt).offset.val := by
+          have := hPlacej.2.1
+          omega
+        omega
+  · -- New entry placed: pushed `transform s off`, where off ≥ state.2.
+    have hAltFalse : verbatim i s = false := by
+      cases h : verbatim i s
+      · rfl
+      · exact absurd h hAlt
+    let off := roundUp state.2 s.addralign.val
+    have hPushEqI : (placeStep verbatim transform state (i, s)).1[i]'hjA' = transform s off := by
+      subst hSize
+      unfold placeStep
+      simp only [hAlt]
+      exact Array.getElem_push_eq
+    rw [hPushEqI, hPushEqJ]
+    rcases hPlj.offset_or with hVerbJ | hPlacej
+    · -- j verbatim, new entry placed.
+      have hVerbJ' : verbatim j (sections[j]'hPlj.hjS) = true := hVerbJ.1
+      rcases hVerb.bound j hPlj.hjS hVerbJ' with hN | hNB | hBndJ
+      · refine Or.inr (Or.inr (Or.inl ?_)); exact hPlj.type_eq.trans hN
+      · exact Or.inl (hPlj.type_eq.trans hNB)
+      · refine Or.inr (Or.inr (Or.inr (Or.inr ?_)))
+        left
+        show (state.1[j]'hjLt).offset.val + (state.1[j]'hjLt).encodedSize
+            ≤ (transform s off).offset.val
+        rw [hSpec.offset_eq]
+        have hOffJ : (state.1[j]'hjLt).offset.val = (sections[j]'hPlj.hjS).offset.val := by
+          rw [hVerbJ.2]
+        have hSzJ : (state.1[j]'hjLt).encodedSize = (sections[j]'hPlj.hjS).encodedSize :=
+          hPlj.size_eq
+        rw [hOffJ, hSzJ]
+        -- state[j].range ≤ baseOffset; new entry at baseOffset + off ≥ baseOffset.
+        omega
+    · -- Both placed: cursor-monotone separator.
       refine Or.inr (Or.inr (Or.inr (Or.inr ?_)))
       left
       show (state.1[j]'hjLt).offset.val + (state.1[j]'hjLt).encodedSize
-          ≤ (s.withOffset off).offset.val
-      have hValEq : (s.withOffset off).offset.val = off := rfl
-      rw [hValEq]
-      have hRoundUpGe : state.2 ≤ roundUp state.2 s.addralign.val := le_roundUp _ _
-      exact Nat.le_trans hPlacej.2.2 hRoundUpGe
+          ≤ (transform s off).offset.val
+      rw [hSpec.offset_eq]
+      have hRoundUpGe : state.2 ≤ off := le_roundUp _ _
+      have hLe : (state.1[j]'hjLt).offset.val + (state.1[j]'hjLt).encodedSize
+                ≤ baseOffset + state.2 := hPlacej.2.2
+      omega
 
-/-- Strengthened motive for the layout fold: size, cursor floor,
+/-- Strengthened motive for the placement fold: size, cursor floor,
     per-entry placement, and pairwise non-overlap. -/
-structure LayoutInv (sections : Array Section) (cursor0 : Nat)
+structure FoldInv
+    (verbatim : Nat → Section → Bool) (baseOffset : Nat)
+    (sections : Array Section) (cursor0 : Nat)
     (k : Nat) (state : Array Section × Nat) : Prop where
   size_eq : state.1.size = k
   cursor_floor : cursor0 ≤ state.2
-  per_entry : ∀ (j : Nat), j < k → Placement sections cursor0 state j
+  per_entry : ∀ (j : Nat), j < k →
+    Placement verbatim baseOffset sections cursor0 state j
   pair_disj : ∀ (j j' : Nat), j < k → j' < k → j ≠ j' →
     PairDisjoint state j j'
 
@@ -536,31 +683,28 @@ structure LayoutInv (sections : Array Section) (cursor0 : Nat)
     per-entry placement, and pairwise non-overlap.
 
     Closed at `k = sections.size`, this gives every output entry's
-    `Placement` and `PairDisjoint` for any pair of distinct indices.
-
-    Requires `hSection0Null` — the ELF-spec invariant that
-    `sections[0].type = SHT_NULL` (parser's IsValid enforces it).
-    Used to discharge the j = 0 case in pairwise non-overlap. -/
-theorem layoutSectionsFold_inv (sections : Array Section) (cursor0 : Nat)
-    (hSection0Null : ∀ (h : 0 < sections.size),
-      (sections[0]'h).type = ShType.SHT_NULL) :
-    LayoutInv sections cursor0 sections.size
-      (layoutSectionsFold sections cursor0) := by
-  unfold layoutSectionsFold
+    `Placement` and `PairDisjoint` for any pair of distinct indices. -/
+theorem placeFold_inv (hSpec : TransformSpec transform baseOffset)
+    (sections : Array Section) (cursor0 : Nat)
+    (hVerb : VerbatimWitness verbatim baseOffset sections) :
+    FoldInv verbatim baseOffset sections cursor0 sections.size
+      (placeFold verbatim transform sections cursor0) := by
+  unfold placeFold
   let indexed := sections.mapIdx (fun i s => (i, s))
   have hIndexedSize : indexed.size = sections.size := Array.size_mapIdx
-  show LayoutInv sections cursor0 sections.size
-    (Array.foldl layoutStep (Array.emptyWithCapacity sections.size, cursor0) indexed)
+  show FoldInv verbatim baseOffset sections cursor0 sections.size
+    (Array.foldl (placeStep verbatim transform)
+      (Array.emptyWithCapacity sections.size, cursor0) indexed)
   rw [show sections.size = indexed.size from hIndexedSize.symm]
   apply @Array.foldl_induction (Nat × Section) (Array Section × Nat) indexed
-    (motive := LayoutInv sections cursor0)
+    (motive := FoldInv verbatim baseOffset sections cursor0)
     (init := (Array.emptyWithCapacity sections.size, cursor0))
     (h0 := by
       refine ⟨?_, Nat.le_refl _, ?_, ?_⟩
       · simp
       · intros j hj; exact absurd hj (Nat.not_lt_zero _)
       · intros j j' hj _ _; exact absurd hj (Nat.not_lt_zero _))
-    (f := layoutStep)
+    (f := placeStep verbatim transform)
     (hf := by
       intros i state ih
       have hiBound : i.val < sections.size := hIndexedSize ▸ i.isLt
@@ -580,7 +724,7 @@ theorem layoutSectionsFold_inv (sections : Array Section) (cursor0 : Nat)
           have hjEq : i.val = j := by
             rw [ih.size_eq] at hjGe; omega
           subst hjEq
-          exact placement_step_new sections cursor0 state i.val
+          exact placement_step_new hSpec sections cursor0 state i.val
                   (sections[i.val]'hiBound) ih.size_eq ih.cursor_floor hiBound rfl
       · -- pair_disj
         intros j j' hjLt hjLt' hjNe
@@ -598,9 +742,9 @@ theorem layoutSectionsFold_inv (sections : Array Section) (cursor0 : Nat)
           have hj'Eq : i.val = j' := by
             rw [ih.size_eq] at hjGe'; omega
           subst hj'Eq
-          exact pairDisjoint_step_new_vs_old sections cursor0 state i.val
+          exact pairDisjoint_step_new_vs_old hSpec sections cursor0 state i.val
                   (sections[i.val]'hiBound) j ih.size_eq ih.cursor_floor
-                  hiBound rfl hjOld (ih.per_entry j hjOldK) hSection0Null
+                  hiBound rfl hjOld hjNe (ih.per_entry j hjOldK) hVerb
         · -- j new, j' old: symmetric to above.
           have hjOldK' : j' < i.val := by rw [ih.size_eq] at hjOld'; exact hjOld'
           have hjGe : state.1.size ≤ j := Nat.le_of_not_lt hjOld
@@ -608,12 +752,10 @@ theorem layoutSectionsFold_inv (sections : Array Section) (cursor0 : Nat)
             rw [ih.size_eq] at hjGe; omega
           subst hjEq
           exact pairDisjoint_symm _ _ _
-            (pairDisjoint_step_new_vs_old sections cursor0 state i.val
+            (pairDisjoint_step_new_vs_old hSpec sections cursor0 state i.val
               (sections[i.val]'hiBound) j' ih.size_eq ih.cursor_floor
-              hiBound rfl hjOld' (ih.per_entry j' hjOldK') hSection0Null)
+              hiBound rfl hjOld' hjNe.symm (ih.per_entry j' hjOldK') hVerb)
         · -- both new: contradicts hjNe (both equal state.1.size = i.val).
-          -- Both hjLt and hjLt' assert `< i.val + 1` (= state.1.size + 1).
-          -- Combined with j ≥ state.1.size and j' ≥ state.1.size, both equal i.val.
           exfalso
           have hjGe : state.1.size ≤ j := Nat.le_of_not_lt hjOld
           have hjGe' : state.1.size ≤ j' := Nat.le_of_not_lt hjOld'
@@ -621,29 +763,75 @@ theorem layoutSectionsFold_inv (sections : Array Section) (cursor0 : Nat)
           exact hjNe (by omega))
 
 /-- Master per-entry invariant: every `j < sections.size` placed by
-    `layoutSectionsFold` satisfies `Placement`.
-
-    Note: `Placement` itself doesn't depend on `hSection0Null`, but the
-    invariant proof bundles it into the foldl induction.  We supply
-    `hSection0Null` here since the bundled motive requires it. -/
-theorem layoutSectionsFold_placement (sections : Array Section) (cursor0 : Nat)
-    (hSection0Null : ∀ (h : 0 < sections.size),
-      (sections[0]'h).type = ShType.SHT_NULL)
+    `placeFold` satisfies `Placement`. -/
+theorem placeFold_placement (hSpec : TransformSpec transform baseOffset)
+    (sections : Array Section) (cursor0 : Nat)
+    (hVerb : VerbatimWitness verbatim baseOffset sections)
     (j : Nat) (hj : j < sections.size) :
-    Placement sections cursor0 (layoutSectionsFold sections cursor0) j :=
-  (layoutSectionsFold_inv sections cursor0 hSection0Null).per_entry j hj
+    Placement verbatim baseOffset sections cursor0
+      (placeFold verbatim transform sections cursor0) j :=
+  (placeFold_inv hSpec sections cursor0 hVerb).per_entry j hj
 
 /-- Pairwise non-overlap: every pair of distinct output entries from
-    `layoutSectionsFold` satisfies `PairDisjoint`. -/
-theorem layoutSectionsFold_pairDisjoint (sections : Array Section) (cursor0 : Nat)
-    (hSection0Null : ∀ (h : 0 < sections.size),
-      (sections[0]'h).type = ShType.SHT_NULL)
+    `placeFold` satisfies `PairDisjoint`. -/
+theorem placeFold_pairDisjoint (hSpec : TransformSpec transform baseOffset)
+    (sections : Array Section) (cursor0 : Nat)
+    (hVerb : VerbatimWitness verbatim baseOffset sections)
     (j j' : Nat) (hj : j < sections.size) (hj' : j' < sections.size)
     (hNe : j ≠ j') :
-    PairDisjoint (layoutSectionsFold sections cursor0) j j' :=
-  (layoutSectionsFold_inv sections cursor0 hSection0Null).pair_disj j j' hj hj' hNe
+    PairDisjoint (placeFold verbatim transform sections cursor0) j j' :=
+  (placeFold_inv hSpec sections cursor0 hVerb).pair_disj j j' hj hj' hNe
 
-end LayoutSectionsFold
+end PlaceFold
+
+/-! ## `Section.withOffset` instantiation for `layoutForEncoding`
+
+    `withOffset` only rewrites `offset`; it preserves type, content
+    (hence `encodedSize`), and `addralign`.  The `TransformSpec` for
+    `Section.withOffset` with `baseOffset = 0` is direct. -/
+
+/-- `Section.withOffset` is a `TransformSpec` with `baseOffset = 0`. -/
+theorem withOffset_transformSpec :
+    PlaceFold.TransformSpec Section.withOffset 0 :=
+  { type_eq        := fun _ _ => rfl
+    encodedSize_eq := fun _ _ => withOffset_encodedSize _ _
+    offset_eq      := fun s o => by
+      show (Section.withOffset s o).offset.val = 0 + o
+      have h : (Section.withOffset s o).offset.val = o := rfl
+      omega }
+
+/-- Verbatim-witness for `layoutForEncoding`'s verbatim predicate
+    (`i = 0 ∨ NULL ∨ NOBITS`).  Combined with `hSection0Null`, every
+    verbatim entry is NULL or NOBITS, so the `bound` and `pair_disj`
+    fields are trivially satisfied (NULL/NOBITS short-circuits both). -/
+theorem layoutVerbatimWitness {sections : Array Section}
+    (hSection0Null : ∀ (h : 0 < sections.size),
+      (sections[0]'h).type = ShType.SHT_NULL) :
+    PlaceFold.VerbatimWitness layoutVerbatim 0 sections := by
+  refine ⟨?_, ?_⟩
+  · intros j hjS hVerb
+    -- verbatim → j=0 ∨ NULL ∨ NOBITS
+    have : j = 0 ∨ (sections[j]'hjS).type = ShType.SHT_NULL ∨
+           (sections[j]'hjS).type = ShType.SHT_NOBITS := by
+      have h := decide_eq_true_iff.mp hVerb
+      exact h
+    rcases this with h0 | hN | hNB
+    · subst h0; exact Or.inl (hSection0Null hjS)
+    · exact Or.inl hN
+    · exact Or.inr (Or.inl hNB)
+  · intros j j' hj hj' _ hVerbJ hVerbJ'
+    -- Both verbatim → both NULL/NOBITS (modulo the j=0 case via hSection0Null).
+    have hJ : j = 0 ∨ (sections[j]'hj).type = ShType.SHT_NULL ∨
+              (sections[j]'hj).type = ShType.SHT_NOBITS :=
+      decide_eq_true_iff.mp hVerbJ
+    have hJ' : j' = 0 ∨ (sections[j']'hj').type = ShType.SHT_NULL ∨
+               (sections[j']'hj').type = ShType.SHT_NOBITS :=
+      decide_eq_true_iff.mp hVerbJ'
+    rcases hJ with h0 | hN | hNB
+    · subst h0
+      exact Or.inr (Or.inr (Or.inl (hSection0Null hj)))
+    · exact Or.inr (Or.inr (Or.inl hN))
+    · exact Or.inl hNB
 
 /-! ## `layoutForEncoding` produces `spliceRegionsDisjoint`
 
@@ -669,13 +857,14 @@ end LayoutSectionsFold
     Preconditions:
     * `hSection0Null`: shdr[0] is SHT_NULL (ELF spec invariant; parser's
       IsValid enforces it).
-    * `hHeaderPhdr`: `Layout.ehdrSize ≤ e.header.phoff.val` — the
-      header doesn't overlap the phdr table.  In practice every
-      well-formed ELF has phoff = 64 (right after the 64-byte header). -/
+    * `hHeaderPhdr`: header byte range and phdr table don't overlap.
+      The clause `IntervalDisjoint 0 ehdrSize phoff (phoff + phnum * phdrSize)`,
+      satisfied by every well-formed ELF (phoff = 64 right after the 64-byte
+      header) and also by degenerate inputs with `phdrs.size = 0`. -/
 theorem layoutForEncoding_produces_spliceRegionsDisjoint (e : ElfFile)
     (hSection0Null : ∀ (h : 0 < e.sections.size),
       (e.sections[0]'h).type = ShType.SHT_NULL)
-    (hHeaderPhdr : Layout.ehdrSize ≤ e.header.phoff.val) :
+    (hHeaderPhdr : e.headerPhdrDisjoint) :
     (layoutForEncoding e).spliceRegionsDisjoint := by
   -- Local vocabulary.
   let phEnd := e.header.phoff.val + e.phdrs.size * Layout.phdrSize
@@ -684,13 +873,13 @@ theorem layoutForEncoding_produces_spliceRegionsDisjoint (e : ElfFile)
   let newSections := foldRes.1
   let finalCursor := foldRes.2
   let shoff := roundUp finalCursor 8
-  -- Structural facts about layoutForEncoding e.
-  -- The transformed file's `.sections` = newSections, `.header.shoff` = shoff,
-  -- `.header.phoff` = e.header.phoff (unchanged), `.phdrs.size` = e.phdrs.size.
+  have hSpec := withOffset_transformSpec
+  have hVerb := layoutVerbatimWitness hSection0Null
+  -- Structural facts.
   have hSizeEq : newSections.size = e.sections.size :=
-    LayoutSectionsFold.size_eq _ _
+    PlaceFold.size_eq _ _
   have hCursorFloor : initialCursor ≤ finalCursor :=
-    LayoutSectionsFold.cursor_floor _ _
+    PlaceFold.cursor_floor _ _
   have hEhdrLeInit : Layout.ehdrSize ≤ initialCursor := Nat.le_max_left _ _
   have hPhEndLeInit : phEnd ≤ initialCursor := Nat.le_max_right _ _
   have hInitLeShoff : initialCursor ≤ shoff :=
@@ -699,30 +888,50 @@ theorem layoutForEncoding_produces_spliceRegionsDisjoint (e : ElfFile)
     Nat.le_trans hEhdrLeInit hInitLeShoff
   have hPhEndLeShoff : phEnd ≤ shoff :=
     Nat.le_trans hPhEndLeInit hInitLeShoff
-  -- Per-entry placement for layoutSectionsFold.
+  -- Per-entry placement.
   have hPlacement : ∀ (j : Nat) (hj : j < newSections.size),
-      LayoutSectionsFold.Placement e.sections initialCursor foldRes j := by
+      PlaceFold.Placement layoutVerbatim 0 e.sections initialCursor foldRes j := by
     intros j hj
     have hjS : j < e.sections.size := hSizeEq ▸ hj
-    exact LayoutSectionsFold.layoutSectionsFold_placement
-      e.sections initialCursor hSection0Null j hjS
+    exact PlaceFold.placeFold_placement hSpec e.sections initialCursor hVerb j hjS
   -- Pairwise non-overlap.
   have hPair : ∀ (j j' : Nat) (hj : j < newSections.size)
                  (hj' : j' < newSections.size),
-      j ≠ j' → LayoutSectionsFold.PairDisjoint foldRes j j' := by
+      j ≠ j' → PlaceFold.PairDisjoint foldRes j j' := by
     intros j j' hj hj' hNe
     have hjS : j < e.sections.size := hSizeEq ▸ hj
     have hj'S : j' < e.sections.size := hSizeEq ▸ hj'
-    exact LayoutSectionsFold.layoutSectionsFold_pairDisjoint
-      e.sections initialCursor hSection0Null j j' hjS hj'S hNe
-  -- The transformed file's sections / shoff / phoff are these values.
-  -- Verify by `rfl`-style reduction on layoutForEncoding's body.
+    exact PlaceFold.placeFold_pairDisjoint hSpec e.sections initialCursor hVerb
+      j j' hjS hj'S hNe
+  -- The transformed file's sections / shoff / phoff.
   have hLfeSections : (layoutForEncoding e).sections = newSections := rfl
   have hLfeShoff : (layoutForEncoding e).header.shoff = ⟨shoff⟩ := rfl
   have hLfePhoff : (layoutForEncoding e).header.phoff = e.header.phoff := rfl
   have hLfePhdrsSize : (layoutForEncoding e).phdrs.size = e.phdrs.size := by
     show (e.phdrs.map _).size = _
     exact Array.size_map
+  -- A `Placement` placed-branch entry has offset ≥ initialCursor (since
+  -- baseOffset = 0 and cursor0 = initialCursor); its end ≤ finalCursor ≤ shoff.
+  -- A verbatim entry is NULL or NOBITS via hVerb.bound (the file-range bound
+  -- disjunct collapses since baseOffset = 0; for non-zero-size sections, the
+  -- verbatim predicate itself implies NULL/NOBITS via hSection0Null).
+  -- Helper: from a Placement whose offset_or branched verbatim, derive
+  -- NOBITS/NULL on the output entry.
+  have place_verb_to_null_nobits :
+      ∀ (j : Nat) (hjN : j < newSections.size)
+        (hPl : PlaceFold.Placement layoutVerbatim 0 e.sections initialCursor foldRes j)
+        (hVerbAt : layoutVerbatim j (e.sections[j]'hPl.hjS) = true),
+        (newSections[j]'hjN).type = ShType.SHT_NOBITS ∨
+        (newSections[j]'hjN).type = ShType.SHT_NULL := by
+    intros j hjN hPl hVerbAt
+    have hVerbAlt : j = 0 ∨ (e.sections[j]'hPl.hjS).type = ShType.SHT_NULL ∨
+                    (e.sections[j]'hPl.hjS).type = ShType.SHT_NOBITS :=
+      decide_eq_true_iff.mp hVerbAt
+    rcases hVerbAlt with h0 | hN | hNB
+    · subst h0
+      exact Or.inr (hPl.type_eq.trans (hSection0Null hPl.hjS))
+    · exact Or.inr (hPl.type_eq.trans hN)
+    · exact Or.inl (hPl.type_eq.trans hNB)
   -- Build all 7 clauses.
   refine
     { sections_disjoint := ?_
@@ -734,9 +943,6 @@ theorem layoutForEncoding_produces_spliceRegionsDisjoint (e : ElfFile)
       shdr_sec_disjoint := ?_ }
   · -- sections_disjoint
     intros j hj j' hj' hNe
-    -- (layoutForEncoding e).sections = newSections by rfl, so the
-    -- `hj : j < (layoutForEncoding e).sections.size` is the same as
-    -- `j < newSections.size` definitionally.
     have hjN : j < newSections.size := hj
     have hj'N : j' < newSections.size := hj'
     exact hPair j j' hjN hj'N hNe hjN hj'N
@@ -746,7 +952,7 @@ theorem layoutForEncoding_produces_spliceRegionsDisjoint (e : ElfFile)
       ((layoutForEncoding e).header.phoff.val
         + (layoutForEncoding e).phdrs.size * Layout.phdrSize)
     rw [hLfePhoff, hLfePhdrsSize]
-    exact Or.inl hHeaderPhdr
+    exact hHeaderPhdr
   · -- hdr_shdr_disjoint
     show IntervalDisjoint 0 Layout.ehdrSize
       (layoutForEncoding e).header.shoff.val
@@ -771,14 +977,14 @@ theorem layoutForEncoding_produces_spliceRegionsDisjoint (e : ElfFile)
     intros j hj
     have hjN : j < newSections.size := hj
     have hPl := hPlacement j hjN
-    rcases hPl.offset_or with hExempt | hPlace
-    · -- Exempt: derive NOBITS or NULL via the helper.
-      rcases hPl.exempt_to_NOBITS_or_NULL hSection0Null hExempt with h | h
+    rcases hPl.offset_or with hVerbJ | hPlace
+    · rcases place_verb_to_null_nobits j hjN hPl hVerbJ.1 with h | h
       · exact Or.inl h
       · exact Or.inr (Or.inl h)
     · refine Or.inr (Or.inr (Or.inl ?_))
       show Layout.ehdrSize ≤ (newSections[j]'hjN).offset.val
-      exact Nat.le_trans hEhdrLeInit hPlace.2.1
+      have : 0 + initialCursor ≤ (newSections[j]'hjN).offset.val := hPlace.2.1
+      omega
   · -- phdr_sec_disjoint
     intros j hj
     have hjN : j < newSections.size := hj
@@ -794,13 +1000,14 @@ theorem layoutForEncoding_produces_spliceRegionsDisjoint (e : ElfFile)
         (((layoutForEncoding e).sections[j]'hj).offset.val
           + ((layoutForEncoding e).sections[j]'hj).encodedSize)
     rw [hLfePhoff, hLfePhdrsSize]
-    rcases hPl.offset_or with hExempt | hPlace
-    · rcases hPl.exempt_to_NOBITS_or_NULL hSection0Null hExempt with h | h
+    rcases hPl.offset_or with hVerbJ | hPlace
+    · rcases place_verb_to_null_nobits j hjN hPl hVerbJ.1 with h | h
       · exact Or.inl h
       · exact Or.inr (Or.inl h)
     · refine Or.inr (Or.inr (Or.inl ?_))
       show phEnd ≤ (newSections[j]'hjN).offset.val
-      exact Nat.le_trans hPhEndLeInit hPlace.2.1
+      have : 0 + initialCursor ≤ (newSections[j]'hjN).offset.val := hPlace.2.1
+      omega
   · -- shdr_sec_disjoint
     intros j hj
     have hjN : j < newSections.size := hj
@@ -816,13 +1023,15 @@ theorem layoutForEncoding_produces_spliceRegionsDisjoint (e : ElfFile)
         (((layoutForEncoding e).sections[j]'hj).offset.val
           + ((layoutForEncoding e).sections[j]'hj).encodedSize)
     rw [hLfeShoff]
-    rcases hPl.offset_or with hExempt | hPlace
-    · rcases hPl.exempt_to_NOBITS_or_NULL hSection0Null hExempt with h | h
+    rcases hPl.offset_or with hVerbJ | hPlace
+    · rcases place_verb_to_null_nobits j hjN hPl hVerbJ.1 with h | h
       · exact Or.inl h
       · exact Or.inr (Or.inl h)
     · refine Or.inr (Or.inr (Or.inr ?_))
       show (newSections[j]'hjN).offset.val + (newSections[j]'hjN).encodedSize ≤ shoff
       have hFinLeShoff : finalCursor ≤ shoff := le_roundUp _ _
-      exact Nat.le_trans hPlace.2.2 hFinLeShoff
+      have hFinAdd : (newSections[j]'hjN).offset.val + (newSections[j]'hjN).encodedSize
+                    ≤ 0 + finalCursor := hPlace.2.2
+      omega
 
 end Patchelf.Elf

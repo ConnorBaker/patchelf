@@ -29,12 +29,16 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 
 **Recommended pickup order:**
 
-- **`growEOFWith_produces_spliceRegionsDisjoint`** is the unblocker
-  for Item 5.1.  `layoutForEncoding_produces_spliceRegionsDisjoint`
-  exists for the fallback branch only; the primary `growEOFWith`
-  branch needs an analogous proof before per-op Tier D is mechanical.
-  ~200 LOC, mirroring the existing `LayoutInv` foldl-motive
-  argument in `LayoutEngine.lean`.
+- **`growEOFWith_produces_spliceRegionsDisjoint` — DONE.**
+  `GrowEOF.lean` now discharges all 3 branches (fast path / fallback /
+  main) using a unified `PlaceFold.{placeStep, placeFold, Placement,
+  PairDisjoint, FoldInv}` scaffolding parameterized over `verbatim`,
+  `transform`, and `baseOffset` — both `layoutForEncoding` and
+  `appendStaleSections` are specializations.  The bridge consumes a
+  `VerbatimWitness` (NULL/NOBITS-or-bound + pairwise-disjoint for
+  verbatim entries) supplied by the client; `growEOFWith` derives it
+  from `currentFileEnd_ge_section_end` + `sectionOverlapsAny_false_pair_disjoint`.
+  Item 5.1 (op-level Tier D) is now unblocked.
 - **Items 1.1 and 1.2** can land independently and unlock op-level
   preservation theorems.  1.1's decidable predicate already exists in
   `Validate.lean`; the unfinished work is parser-side threading.  1.2's
@@ -167,15 +171,24 @@ helpers:
 
 `spliceDisjoint` is the missing field.  Parser-side: not
 derivable, since overlapping sections are spec-valid and the parser
-shouldn't enforce pairwise region disjointness.  Encoder-output
-side: `LayoutEngine.layoutForEncoding_produces_spliceRegionsDisjoint`
-discharges it for the BSS-collision-fallback branch under
-`section[0].type = SHT_NULL` and `Layout.ehdrSize ≤ phoff.val`.
-The primary `growEOFWith` branch needs an analogue (~200 LOC,
-mirroring the existing `LayoutInv` foldl motive), and the
-already-valid branch needs the 5 sub-clauses beyond
-`layoutAlreadyValid` (header-phdr, header-shdr, phdr-shdr,
-header-section, phdr-section).  This is op-level Tier D (§5.1).
+shouldn't enforce pairwise region disjointness.
+
+Encoder-output side: **DONE.**
+`GrowEOF.growEOFWith_produces_spliceRegionsDisjoint` discharges all 3
+branches (fast path / fallback / main) under structural input
+invariants `headerPhdrDisjoint` / `headerShdrDisjoint` /
+`phdrShdrDisjoint` / `headerSectionDisjoint` / `phdrSectionDisjoint`
+plus `hSection0Null`.  The unified `PlaceFold` scaffolding in
+`LayoutEngine.lean` is parameterized over `verbatim`, `transform`,
+and `baseOffset`, so `layoutForEncoding`'s and `growEOFWith`'s
+splice-disjointness proofs share one fold-induction skeleton; client
+specializations exhibit a `TransformSpec` (field-preservation
+contract) and a `VerbatimWitness` (NULL/NOBITS-or-bound + pairwise
+disjoint for verbatim entries).  The remaining gap to *unconditional*
+Tier D is op-level: each op must establish the 5 input invariants on
+its output (parser-derivable for any op that doesn't widen the file
+or move sections; the layout-touching ops route through `growEOFWith`
+which preserves them).
 
 ### Priority 2 — Test coverage + spec strengthening
 
@@ -294,11 +307,13 @@ prove `parse (encode (op e)) = .ok ⟨prepLayoutForEncode
 
 Each op gets all `EncodePreconditions` fields except
 `spliceDisjoint` from a fresh `Adapter.toElfFile` traversal
-(preserved by op shape, not via `IsValid`).  `spliceDisjoint`
-needs the missing `growEOFWith_produces_spliceRegionsDisjoint`
-(see §1.3a).  Once that lands, ~14 ops × ~100 LOC each, mostly
-mechanical.  `sizeFit` now reads `s.shdrSize` — covers NOBITS via
-`memSize`.
+(preserved by op shape, not via `IsValid`).  `spliceDisjoint` is
+discharged by `GrowEOF.growEOFWith_produces_spliceRegionsDisjoint`
+(landed; see §1.3a) — each op needs to establish the 5 structural
+input invariants on its own output (`headerPhdrDisjoint` etc.),
+which are parser-derivable for any op that doesn't widen the file.
+~14 ops × ~100 LOC each, mostly mechanical.  `sizeFit` now reads
+`s.shdrSize` — covers NOBITS via `memSize`.
 
 #### 5.2 Op-level `_observable` completeness
 
