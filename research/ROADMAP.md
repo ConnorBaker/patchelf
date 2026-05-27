@@ -303,21 +303,60 @@ pattern.  Estimated ~150-200 LOC each.
 
 ### Priority 5 — Code quality
 
-#### 5.1 Op-level byte roundtrip lemmas — UNBLOCKED
+#### 5.1 Op-level byte roundtrip lemmas — UNBLOCKED, NON-TRIVIAL
 
 A stronger replacement for the existing `_preserves_valid` lemmas:
 prove `parse (encode (op e)) = .ok ⟨prepLayoutForEncode
 (syncDtStrszInFile (op e)), _⟩` for each op.
 
-Each op gets all `EncodePreconditions` fields except
-`spliceDisjoint` from a fresh `Adapter.toElfFile` traversal
-(preserved by op shape, not via `IsValid`).  `spliceDisjoint` is
-discharged by `GrowEOF.growEOFWith_produces_spliceRegionsDisjoint`
+`spliceDisjoint` is discharged by
+`Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
 (landed; see §1.3a) — each op needs to establish the 5 structural
 input invariants on its own output (`headerPhdrDisjoint` etc.),
 which are parser-derivable for any op that doesn't widen the file.
-~14 ops × ~100 LOC each, mostly mechanical.  `sizeFit` now reads
-`s.shdrSize` — covers NOBITS via `memSize`.
+
+**Obstacle for op-level Tier D, discovered.**  `Adapter.toElfFile`
+threads `typed : ValidElfFile` through dependent-type-bearing
+matches (e.g., `applyDynamic`'s match on
+`typed.dynamic : Option (DynamicSection typed.dynstr)`).  When `op`
+is `setOsAbi` — which only changes `header.ident.osAbi` — the
+record-update form `{ typed with header := ... }` doesn't reduce
+inside the dependent matches even though `(setOsAbi abi).dynstr =
+typed.dynstr` holds by `rfl`.  The result: `Adapter.toElfFile
+template (typed.setOsAbi abi)` is *not* `rfl`-equal to
+`Adapter.toElfFile template typed`, blocking the obvious
+"non-section ops are sections-trivial" argument.
+
+Workarounds for op-level Tier D, in increasing complexity:
+* (a) Rephrase `Adapter.toElfFile`'s applies to take separate
+  arguments instead of `typed : ValidElfFile`, e.g.
+  `applyDynamic (e : ElfFile) (dyn? : Option (DynamicSection ds))
+  (ds : StringSection) : ElfFile`.  Removes the dependent typing
+  problem at the cost of a wider call surface.  Estimated ~200 LOC
+  refactor.
+* (b) Prove an explicit `Adapter.toElfFile`-congruence lemma family
+  (one per op): `toElfFile_<op>_eq` showing
+  `Adapter.toElfFile template (op typed) =
+   { Adapter.toElfFile template typed with header := ... }` directly
+  (not via `rfl`).  Each op gets a custom proof; ~50 LOC per op.
+* (c) Define op-level Tier D in a "structural transport" style:
+  prove `EncodeCompatible (toElfFile template typed) (toElfFile
+  template (op typed))` (where `EncodeCompatible` says headers agree
+  modulo the op's specific change) and a single `EncodePreconditions.transport`.
+  Was attempted; the `syncOk` clause's full ElfFile-equality made the
+  proof tangled under the dependent-type issues.
+
+For ops that *do* modify section content (most: `addNeeded`,
+`removeNeeded`, `setRpath`, `replaceNeeded`, etc.) the picture is
+different because they do change `sections`; these need their own
+`_preserves_spliceDisjoint` proofs anyway, and the dependent-type
+complication only affects "no-op" sections-trivial ops like
+`setOsAbi`, `noDefaultLib`, `addDebugTag`.
+
+Recommend revisiting this item after picking up §1.1 (Parser
+establishes `IsLoadable`) — that pins down where the input
+invariants come from, and may suggest a cleaner shape for the op
+preservation theorems.
 
 #### 5.2 Op-level `_observable` completeness
 
