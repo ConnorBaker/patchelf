@@ -46,8 +46,8 @@ PY
 cp "$SCRATCH/base.elf" "$SCRATCH/p4096.elf"
 cp "$SCRATCH/base.elf" "$SCRATCH/p8192.elf"
 
-"$PATCHELF_BIN" --add-debug-tag "$SCRATCH/p4096.elf"
-"$PATCHELF_BIN" --page-size 8192 --add-debug-tag "$SCRATCH/p8192.elf"
+"$PATCHELF_BIN" add-debug-tag "$SCRATCH/p4096.elf"
+"$PATCHELF_BIN" add-debug-tag --page-size 8192 "$SCRATCH/p8192.elf"
 
 s4096=$(wc -c <"$SCRATCH/p4096.elf" | tr -d ' ')
 s8192=$(wc -c <"$SCRATCH/p8192.elf" | tr -d ' ')
@@ -59,14 +59,14 @@ fi
 
 # Both must re-parse cleanly.
 for f in "$SCRATCH/p4096.elf" "$SCRATCH/p8192.elf"; do
-  if ! "$PATCHELF_BIN" --parse "$f" >/dev/null 2>&1; then
+  if ! "$PATCHELF_BIN" parse "$f" >/dev/null 2>&1; then
     echo "FAIL: $f did not re-parse" >&2
     exit 1
   fi
 done
 
 # Rejection: --page-size 0 should error (exit code 1).
-if "$PATCHELF_BIN" --page-size 0 --print-os-abi "$SCRATCH/base.elf" >/dev/null 2>&1; then
+if "$PATCHELF_BIN" print-os-abi --page-size 0 "$SCRATCH/base.elf" >/dev/null 2>&1; then
   echo "FAIL: --page-size 0 was accepted" >&2
   exit 1
 fi

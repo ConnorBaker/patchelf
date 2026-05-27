@@ -33,8 +33,10 @@ public import Patchelf.Elf.ElfFile
 public import Patchelf.Elf.Parser
 public import Patchelf.Elf.Encoder
 public import Patchelf.Elf.LayoutEngine
+public import Patchelf.Elf.GrowEOF
 public import Patchelf.Elf.ByteRoundtrip
 public import Patchelf.Elf.SectionOps
+public import Patchelf.Elf.Validate
 
 -- Typed-section algebra + adapter + round-trip
 public import Patchelf.Elf.StringSection

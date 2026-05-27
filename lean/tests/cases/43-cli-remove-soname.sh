@@ -39,15 +39,15 @@ with open(sys.argv[1], "wb") as f:
             + shstrtab + dynstr + dynamic)
 PY
 
-before=$("$PATCHELF_BIN" --print-soname "$SCRATCH/input.elf")
+before=$("$PATCHELF_BIN" print-soname "$SCRATCH/input.elf")
 case "$before" in
   *libc.so*) ;;
   *) echo "FAIL (setup): pre-op soname was: $before" >&2; exit 1 ;;
 esac
 
-"$PATCHELF_BIN" --remove-soname "$SCRATCH/input.elf"
+"$PATCHELF_BIN" remove-soname "$SCRATCH/input.elf"
 
-after=$("$PATCHELF_BIN" --print-soname "$SCRATCH/input.elf")
+after=$("$PATCHELF_BIN" print-soname "$SCRATCH/input.elf")
 case "$after" in
   *libc.so*) echo "FAIL: soname still present: $after" >&2; exit 1 ;;
 esac

@@ -31,7 +31,7 @@ PY
 echo "Linux" > "$SCRATCH/abi.txt"
 
 # Use @sidecar for the --set-os-abi value.
-"$PATCHELF_BIN" --set-os-abi "@$SCRATCH/abi.txt" "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-os-abi "@$SCRATCH/abi.txt" "$SCRATCH/input.elf"
 
 after=$(od -An -tx1 -N1 -j7 "$SCRATCH/input.elf" | tr -d ' \n')
 if [ "$after" != "03" ]; then

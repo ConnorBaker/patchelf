@@ -77,10 +77,13 @@ def rebase {ds ds' : StringSection} (h : StringSection.SizeLE ds ds')
     validity is preserved at the type level without a theorem.
 -/
 
-/-- DT_NEEDED append: push a pre-existing dynstr offset onto `needed`. -/
+/-- DT_NEEDED prepend: place a pre-existing dynstr offset at the
+    front of `needed`.  Matches C++ patchelf's `addNeeded`, which
+    shifts existing DT_NEEDED entries down and inserts new entries
+    at the top of `.dynamic`. -/
 def pushNeeded {ds : StringSection} (d : DynamicSection ds)
     (off : Fin ds.size) : DynamicSection ds :=
-  { d with needed := d.needed.push off }
+  { d with needed := #[off] ++ d.needed }
 
 /-- DT_NEEDED remove: filter out entries whose dynstr-resolved name
     equals `target`.  Observable-style: the predicate is expressed at
@@ -188,20 +191,22 @@ def removeSoname {ds : StringSection} (d : DynamicSection ds) : DynamicSection d
   rfl
 
 /-- `pushNeeded` returns a dynamic section whose `needed` is the old
-    one with `off` pushed.  Trivial but named. -/
+    one with `off` prepended.  Trivial but named. -/
 @[simp] theorem pushNeeded_needed
     {ds : StringSection} (d : DynamicSection ds) (off : Fin ds.size) :
-    (d.pushNeeded off).needed = d.needed.push off := rfl
+    (d.pushNeeded off).needed = #[off] ++ d.needed := rfl
 
-/-- After `pushNeeded off`, the last element IS `off`.  This is the
+/-- After `pushNeeded off`, the FIRST element IS `off`.  This is the
     core observable for `addNeeded`: the newly-added offset, looked up
     in the new `.dynstr`, resolves to the new name.  Combining with
     `StringSection.append_lookup` gives the full addNeeded observable. -/
-@[simp] theorem pushNeeded_back?
-    {ds : StringSection} (d : DynamicSection ds) (off : Fin ds.size) :
-    (d.pushNeeded off).needed.back? = some off := by
-  unfold pushNeeded
-  simp
+@[simp] theorem pushNeeded_getElem_zero
+    {ds : StringSection} (d : DynamicSection ds) (off : Fin ds.size)
+    (h : 0 < (d.pushNeeded off).needed.size) :
+    (d.pushNeeded off).needed[0]'h = off := by
+  show (#[off] ++ d.needed)[0]'h = off
+  rw [Array.getElem_append_left (by simp)]
+  rfl
 
 end DynamicSection
 end Patchelf.Elf

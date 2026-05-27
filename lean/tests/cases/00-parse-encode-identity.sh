@@ -48,10 +48,10 @@ PY
 
 cp "$SCRATCH/input.elf" "$SCRATCH/backup.elf"
 
-# A print-only op causes the CLI to parse+encode but then NOT write back
-# (actually: it does write, but the bytes should be identical since
-# nothing was mutated).  --output forces a write to a separate file.
-"$PATCHELF_BIN" --print-needed --output "$SCRATCH/output.elf" "$SCRATCH/input.elf" > /dev/null
+# `roundtrip` is the dedicated parse+encode subcommand.  --output
+# forces a write to a separate file (otherwise the CLI elides the
+# write since the bytes match the input).
+"$PATCHELF_BIN" roundtrip --output "$SCRATCH/output.elf" "$SCRATCH/input.elf" > /dev/null
 
 # Input must be untouched.
 if ! cmp -s "$SCRATCH/input.elf" "$SCRATCH/backup.elf"; then

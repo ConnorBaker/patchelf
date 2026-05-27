@@ -44,7 +44,7 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 # --add-needed inserts a new DT_NEEDED + appends name to .dynstr.
-"$PATCHELF_BIN" --add-needed libfoo.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" add-needed libfoo.so "$SCRATCH/input.elf"
 
 # Verify DT_STRSZ matches post-op .dynstr.sh_size.
 python3 - "$SCRATCH/input.elf" <<'PY'

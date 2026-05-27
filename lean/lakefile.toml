@@ -1,6 +1,13 @@
 name = "patchelf"
 defaultTargets = ["Patchelf", "patchelf"]
 
+# lean4-cli pinned to its v4.29.0 commit so it elaborates against
+# our Lean 4.29.1 toolchain.  Newer commits track Lean 4.30+.
+[[require]]
+name = "Cli"
+git = "https://github.com/leanprover/lean4-cli.git"
+rev = "7802da0"
+
 [[lean_lib]]
 name = "Patchelf"
 

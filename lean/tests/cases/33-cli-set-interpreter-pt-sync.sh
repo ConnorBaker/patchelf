@@ -68,7 +68,7 @@ PY
 
 # Set a longer interpreter — forces .interp to grow and be relocated.
 NEW_INTERP="/much/longer/path/to/ld-linux-x86-64.so.2"
-"$PATCHELF_BIN" --set-interpreter "$NEW_INTERP" "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-interpreter --no-validate "$NEW_INTERP" "$SCRATCH/input.elf"
 
 # Parse the output: verify PT_INTERP's p_offset matches .interp's sh_offset.
 python3 - "$SCRATCH/input.elf" <<'PY'

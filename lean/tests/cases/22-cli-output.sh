@@ -29,7 +29,7 @@ PY
 
 cp "$SCRATCH/input.elf" "$SCRATCH/pristine.elf"
 
-"$PATCHELF_BIN" --set-os-abi Linux --output "$SCRATCH/output.elf" "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-os-abi --output "$SCRATCH/output.elf" Linux "$SCRATCH/input.elf"
 
 # Input must be unchanged.
 if ! cmp -s "$SCRATCH/input.elf" "$SCRATCH/pristine.elf"; then

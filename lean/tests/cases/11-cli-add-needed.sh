@@ -58,7 +58,7 @@ PY
 original_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
 
 # Run the op.
-"$PATCHELF_BIN" --add-needed libnew.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" add-needed libnew.so "$SCRATCH/input.elf"
 
 # The file should have grown by at least the added bytes (libnew.so\0 = 10,
 # plus one new dynamic entry = 16 bytes, plus PT_LOAD phdrs).
@@ -69,7 +69,7 @@ if [ "$new_size" -le "$original_size" ]; then
 fi
 
 # Re-parse using --parse; the output should be well-formed enough to parse.
-if ! "$PATCHELF_BIN" --parse "$SCRATCH/input.elf" >"$SCRATCH/parse.out" 2>&1; then
+if ! "$PATCHELF_BIN" parse "$SCRATCH/input.elf" >"$SCRATCH/parse.out" 2>&1; then
   echo "FAIL: post-add-needed reparse failed" >&2
   cat "$SCRATCH/parse.out" >&2
   exit 1

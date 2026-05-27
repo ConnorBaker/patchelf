@@ -84,9 +84,10 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 # Multi-op: clear foo's versym AND retag rpath.
-"$PATCHELF_BIN" --clear-symbol-version foo --set-rpath /new "$SCRATCH/input.elf"
+"$PATCHELF_BIN" clear-symbol-version foo "$SCRATCH/input.elf"
 
-got_rpath=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/input.elf")
+"$PATCHELF_BIN" set-rpath /new "$SCRATCH/input.elf"
+got_rpath=$("$PATCHELF_BIN" print-rpath "$SCRATCH/input.elf")
 if [ "$got_rpath" != "/new" ]; then
   echo "FAIL: --print-rpath returned '$got_rpath', expected '/new'" >&2
   exit 1

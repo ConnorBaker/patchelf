@@ -90,7 +90,7 @@ with open(sys.argv[1], "wb") as f:
             + shstrtab_bytes + dynstr_bytes + dynsym_bytes + versym_bytes)
 PY
 
-"$PATCHELF_BIN" --clear-symbol-version foo "$SCRATCH/input.elf"
+"$PATCHELF_BIN" clear-symbol-version foo "$SCRATCH/input.elf"
 
 python3 - "$SCRATCH/input.elf" <<'PY'
 import sys, struct

@@ -1,6 +1,7 @@
 #!/bin/sh -e
-# CLI: multiple op flags in one invocation are applied in order.
-# --set-os-abi Linux followed by --print-os-abi should print 3 / Linux.
+# CLI: multiple sequential subcommand invocations work.  In the new
+# subcommand-based CLI there's no in-process multi-op, but chaining
+# `&&` subcommands is the supported path.
 
 cd "$(dirname "$0")/.."
 
@@ -26,20 +27,28 @@ with open(sys.argv[1], "wb") as f:
     f.write(hdr + null_shdr + shstr_shdr + shstr)
 PY
 
-# Before: should print whatever the original abi is (SysV / 0).
-out=$("$PATCHELF_BIN" --set-os-abi Linux --print-os-abi "$SCRATCH/input.elf")
-
-# The print-os-abi should have run AFTER set-os-abi, so we expect 'Linux'.
-case "$out" in
-  *Linux*) ;;
-  *) echo "FAIL: multi-op didn't apply --set-os-abi before --print-os-abi. Got: $out" >&2; exit 1 ;;
+# Pre-check: original abi is SysV (byte 0 in EI_OSABI).
+before=$("$PATCHELF_BIN" print-os-abi "$SCRATCH/input.elf")
+case "$before" in
+  *"System V"*) ;;
+  *) echo "FAIL: pre-mutation print-os-abi should be 'System V'. Got: $before" >&2; exit 1 ;;
 esac
 
-# Byte 7 should now be 3 on disk (set really happened).
-after=$(od -An -tx1 -N1 -j7 "$SCRATCH/input.elf" | tr -d ' \n')
-if [ "$after" != "03" ]; then
-  echo "FAIL: post-multi-op byte 7 = $after, expected 03" >&2
+# Run the mutation.
+"$PATCHELF_BIN" set-os-abi Linux "$SCRATCH/input.elf"
+
+# Post-check: now reads 'Linux'.
+after=$("$PATCHELF_BIN" print-os-abi "$SCRATCH/input.elf")
+case "$after" in
+  *Linux*) ;;
+  *) echo "FAIL: post-mutation print-os-abi should be 'Linux'. Got: $after" >&2; exit 1 ;;
+esac
+
+# Byte 7 should now be 3 on disk.
+byte7=$(od -An -tx1 -N1 -j7 "$SCRATCH/input.elf" | tr -d ' \n')
+if [ "$byte7" != "03" ]; then
+  echo "FAIL: byte 7 = $byte7, expected 03" >&2
   exit 1
 fi
 
-echo "PASS: multi-op --set-os-abi Linux --print-os-abi applied in order"
+echo "PASS: chained subcommand invocations apply mutations correctly"

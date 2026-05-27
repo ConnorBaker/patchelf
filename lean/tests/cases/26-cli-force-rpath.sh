@@ -45,14 +45,14 @@ PY
 
 # Default: --set-rpath retags to DT_RUNPATH (0x1d).
 cp "$SCRATCH/base.elf" "$SCRATCH/default.elf"
-"$PATCHELF_BIN" --set-rpath /newpath "$SCRATCH/default.elf"
+"$PATCHELF_BIN" set-rpath /newpath "$SCRATCH/default.elf"
 # --force-rpath: retags to DT_RPATH (0x0f).
 cp "$SCRATCH/base.elf" "$SCRATCH/forced.elf"
-"$PATCHELF_BIN" --force-rpath --set-rpath /newpath "$SCRATCH/forced.elf"
+"$PATCHELF_BIN" set-rpath --force-rpath /newpath "$SCRATCH/forced.elf"
 
 # Both should re-parse, and --print-rpath should return "/newpath" in both.
-out_default=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/default.elf")
-out_forced=$("$PATCHELF_BIN"  --print-rpath "$SCRATCH/forced.elf")
+out_default=$("$PATCHELF_BIN" print-rpath "$SCRATCH/default.elf")
+out_forced=$("$PATCHELF_BIN" print-rpath "$SCRATCH/forced.elf")
 if [ "$out_default" != "/newpath" ]; then
   echo "FAIL: default --print-rpath = '$out_default', expected /newpath" >&2; exit 1
 fi

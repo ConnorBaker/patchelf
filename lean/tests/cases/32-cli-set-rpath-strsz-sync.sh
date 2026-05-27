@@ -52,7 +52,7 @@ PY
 
 # Set a new rpath — this grows .dynstr by "/new/lib/path\0" (14 bytes),
 # so the new size should be 11 + 14 = 25.
-"$PATCHELF_BIN" --set-rpath /new/lib/path "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-rpath /new/lib/path "$SCRATCH/input.elf"
 
 # Extract DT_STRSZ and .dynstr size from the post-op ELF using python.
 python3 - "$SCRATCH/input.elf" <<'PY'

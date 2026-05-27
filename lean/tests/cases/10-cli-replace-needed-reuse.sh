@@ -57,7 +57,7 @@ original_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
 cp "$SCRATCH/input.elf" "$SCRATCH/before.elf"
 
 # Run CLI — should succeed.
-"$PATCHELF_BIN" --replace-needed libold.so libnew.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" replace-needed libold.so libnew.so "$SCRATCH/input.elf"
 
 # File size unchanged.
 new_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')

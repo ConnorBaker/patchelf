@@ -43,15 +43,15 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 # Sanity: before should have no needed entries.
-before=$("$PATCHELF_BIN" --print-needed "$SCRATCH/input.elf")
+before=$("$PATCHELF_BIN" print-needed "$SCRATCH/input.elf")
 if [ -n "$before" ]; then
   echo "FAIL (setup): expected no needed entries, got '$before'" >&2
   exit 1
 fi
 
-"$PATCHELF_BIN" --add-needed libnew.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" add-needed libnew.so "$SCRATCH/input.elf"
 
-after=$("$PATCHELF_BIN" --print-needed "$SCRATCH/input.elf")
+after=$("$PATCHELF_BIN" print-needed "$SCRATCH/input.elf")
 expected='libnew.so'
 if [ "$after" != "$expected" ]; then
   echo "FAIL: expected '$expected', got '$after'" >&2

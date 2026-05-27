@@ -50,23 +50,23 @@ with open(sys.argv[1], "wb") as f:
             + shstrtab + dynstr_bytes + dynamic)
 PY
 
-initial=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/base.elf")
+initial=$("$PATCHELF_BIN" print-rpath "$SCRATCH/base.elf")
 if [ "$initial" != "/a/b:/c/d:/e/f" ]; then
   echo "FAIL: initial rpath = '$initial'" >&2; exit 1
 fi
 
 # Keep only entries starting with /c.
 cp "$SCRATCH/base.elf" "$SCRATCH/shrunk.elf"
-"$PATCHELF_BIN" --shrink-rpath --allowed-rpath-prefixes /c "$SCRATCH/shrunk.elf"
-result=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/shrunk.elf")
+"$PATCHELF_BIN" shrink-rpath --allowed-prefixes /c "$SCRATCH/shrunk.elf"
+result=$("$PATCHELF_BIN" print-rpath "$SCRATCH/shrunk.elf")
 if [ "$result" != "/c/d" ]; then
   echo "FAIL: --shrink-rpath with /c prefix got '$result', expected /c/d" >&2; exit 1
 fi
 
 # Multi-prefix: keep entries starting with /a OR /e.
 cp "$SCRATCH/base.elf" "$SCRATCH/multi.elf"
-"$PATCHELF_BIN" --shrink-rpath --allowed-rpath-prefixes "/a:/e" "$SCRATCH/multi.elf"
-result=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/multi.elf")
+"$PATCHELF_BIN" shrink-rpath --allowed-prefixes "/a:/e" "$SCRATCH/multi.elf"
+result=$("$PATCHELF_BIN" print-rpath "$SCRATCH/multi.elf")
 if [ "$result" != "/a/b:/e/f" ]; then
   echo "FAIL: --shrink-rpath with /a:/e prefixes got '$result', expected /a/b:/e/f" >&2; exit 1
 fi

@@ -68,7 +68,7 @@ def decodeSectionContent (bs : ByteArray) (sh : SectionHeader) :
   let off := sh.offset.val
   let sz  := sh.size.val
   if sh.type = ShType.SHT_NOBITS then
-    SectionContent.nobits
+    SectionContent.nobits sz
   else if sh.type = ShType.SHT_STRTAB then
     SectionContent.strtab (decodeStringTable bs off sz)
   else if sh.type = ShType.SHT_DYNAMIC then

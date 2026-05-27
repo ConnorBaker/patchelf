@@ -46,10 +46,10 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 # Remove libfoo.so (appears twice).
-"$PATCHELF_BIN" --remove-needed libfoo.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" remove-needed libfoo.so "$SCRATCH/input.elf"
 
 # After removal: only libbar.so should remain.
-actual=$("$PATCHELF_BIN" --print-needed "$SCRATCH/input.elf")
+actual=$("$PATCHELF_BIN" print-needed "$SCRATCH/input.elf")
 expected='libbar.so'
 if [ "$actual" != "$expected" ]; then
   echo "FAIL: expected '$expected', got '$actual'" >&2

@@ -41,7 +41,7 @@ with open(sys.argv[1], "wb") as f:
             + shstrtab + dynstr + dynamic)
 PY
 
-"$PATCHELF_BIN" --force-rpath --set-rpath /legacy/path "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-rpath --force-rpath /legacy/path "$SCRATCH/input.elf"
 
 python3 - "$SCRATCH/input.elf" <<'PY'
 import sys, struct

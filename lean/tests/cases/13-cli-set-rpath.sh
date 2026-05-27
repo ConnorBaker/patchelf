@@ -42,14 +42,14 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 original_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
-before=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/input.elf")
+before=$("$PATCHELF_BIN" print-rpath "$SCRATCH/input.elf")
 if [ "$before" != "libc.so" ]; then
   echo "FAIL (setup): pre-op rpath was '$before', expected 'libc.so'" >&2
   exit 1
 fi
 
 # Set a new rpath.
-"$PATCHELF_BIN" --set-rpath /new/lib/path "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-rpath /new/lib/path "$SCRATCH/input.elf"
 
 new_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
 if [ "$new_size" -le "$original_size" ]; then
@@ -57,7 +57,7 @@ if [ "$new_size" -le "$original_size" ]; then
   exit 1
 fi
 
-after=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/input.elf")
+after=$("$PATCHELF_BIN" print-rpath "$SCRATCH/input.elf")
 if [ "$after" != "/new/lib/path" ]; then
   echo "FAIL: post-op rpath was '$after', expected '/new/lib/path'" >&2
   exit 1

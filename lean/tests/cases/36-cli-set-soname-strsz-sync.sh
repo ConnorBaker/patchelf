@@ -43,7 +43,7 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 NEW_NAME="libreplaced.so"
-"$PATCHELF_BIN" --set-soname "$NEW_NAME" "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-soname "$NEW_NAME" "$SCRATCH/input.elf"
 
 python3 - "$SCRATCH/input.elf" <<'PY'
 import sys, struct

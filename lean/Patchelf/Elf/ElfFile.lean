@@ -50,7 +50,12 @@ inductive SectionContent
   | dynamic  (entries : Array DynEntry)
   | dynsym   (syms : Array Symbol)
   | versym   (entries : Array UInt16)
-  | nobits
+  /-- SHT_NOBITS section (`.bss`, `.tbss`).  `memSize` records the
+      runtime allocation size from the original `sh_size` — not used
+      for file encoding (NOBITS contributes 0 file bytes), but the
+      shdr table's `sh_size` field needs this value so the loader
+      knows how many zero-filled bytes to allocate at `sh_addr`. -/
+  | nobits   (memSize : Nat)
   deriving Repr
 
 namespace SectionContent
@@ -63,7 +68,7 @@ def WellFormed : SectionContent → Prop
       entries.back?.any (fun e => decide (e.tag = DynTag.null)) = true
   | dynsym _           => True
   | versym _           => True
-  | nobits             => True
+  | nobits _           => True
 
 instance : ∀ (c : SectionContent), Decidable c.WellFormed := by
   intro c
@@ -95,8 +100,8 @@ structure Section where
 
 namespace Section
 
-/-- Encoded byte length of a section's content.  `encodedSize` is the
-    authoritative size oracle (no stored `.size` field to go stale).  -/
+/-- File-encoded byte length of a section's content.  Zero for NOBITS
+    (no file bytes), `bs.size` for raw, etc.  -/
 def encodedSize (s : Section) : Nat :=
   match s.content with
   | .raw bs         => bs.size
@@ -104,7 +109,15 @@ def encodedSize (s : Section) : Nat :=
   | .dynamic ds     => ds.size * Layout.dynEntrySize
   | .dynsym syms    => syms.size * Layout.symEntrySize
   | .versym vs      => vs.size * 2
-  | .nobits         => 0
+  | .nobits _       => 0
+
+/-- Shdr-table `sh_size` value: matches `encodedSize` for file-resident
+    sections, but for NOBITS uses the declared memory allocation size
+    (so the loader knows how many zero-filled bytes to allocate). -/
+def shdrSize (s : Section) : Nat :=
+  match s.content with
+  | .nobits memSize => memSize
+  | _               => s.encodedSize
 
 end Section
 
@@ -274,7 +287,7 @@ instance (e : ElfFile) : Decidable e.sectionsContentWellFormed := by
     decoder routes to the wrong constructor. -/
 def Section.typeContentMatchesB (s : Section) : Bool :=
   if s.type = ShType.SHT_NOBITS then
-    match s.content with | .nobits => true | _ => false
+    match s.content with | .nobits _ => true | _ => false
   else if s.type = ShType.SHT_STRTAB then
     match s.content with | .strtab _ => true | _ => false
   else if s.type = ShType.SHT_DYNAMIC then
@@ -776,6 +789,48 @@ instance (e : ElfFile) : Decidable e.IsFullyValid :=
     (e.IsLoadable ∧ e.dynamicAddressCoherent)
     ⟨fun ⟨hl, hd⟩ => { toIsLoadable := hl, dyn_addrs_coherent := hd },
      fun h => ⟨h.toIsLoadable, h.dyn_addrs_coherent⟩⟩
+
+/-! ## PT_LOAD coverage
+
+    The kernel's `load_elf_binary` mmaps each PT_LOAD segment from
+    `[p_offset, p_offset + p_filesz)`.  For a section to be readable
+    at runtime, its file range must be inside *some* PT_LOAD's file
+    range — but ONLY for sections marked SHF_ALLOC.  Non-allocatable
+    sections (`.symtab`, `.strtab`, `.shstrtab`, `.comment`,
+    `.debug_*`) are tooling-only and never mmaped at exec; they live
+    outside every PT_LOAD by design.  `layoutForEncoding`'s reflow
+    may move SHF_ALLOC sections out of any PT_LOAD's window — that
+    produces structurally well-formed bytes but a binary that
+    SIGSEGVs at exec.  This predicate detects that case. -/
+
+/-- SHF_ALLOC: section occupies memory at runtime. -/
+def SHF_ALLOC : UInt64 := 0x2
+
+/-- One section's file range is inside some PT_LOAD's file range,
+    OR the section contributes no file bytes (NOBITS / NULL),
+    OR the section isn't SHF_ALLOC (so the kernel never mmaps it). -/
+def sectionInSomePtLoad (e : ElfFile) (i : Nat) (h : i < e.sections.size) : Prop :=
+  let s := e.sections[i]'h
+  s.type = ShType.SHT_NOBITS ∨ s.type = ShType.SHT_NULL ∨
+  s.flags &&& SHF_ALLOC = 0 ∨
+  ∃ (j : Nat) (hj : j < e.phdrs.size),
+    let ph := e.phdrs[j]'hj
+    ph.type = PhType.PT_LOAD ∧
+    ph.offset.val ≤ s.offset.val ∧
+    s.offset.val + s.encodedSize ≤ ph.offset.val + ph.filesz.val
+
+instance (e : ElfFile) (i : Nat) (h : i < e.sections.size) :
+    Decidable (sectionInSomePtLoad e i h) := by
+  unfold sectionInSomePtLoad; exact inferInstance
+
+/-- Every SHF_ALLOC section's file range is inside some PT_LOAD's
+    file range.  This is the missing clause that
+    `layoutForEncoding` violates on real binaries. -/
+def sectionFileInSomePtLoad (e : ElfFile) : Prop :=
+  ∀ (i : Nat) (h : i < e.sections.size), sectionInSomePtLoad e i h
+
+instance (e : ElfFile) : Decidable e.sectionFileInSomePtLoad := by
+  unfold sectionFileInSomePtLoad; exact inferInstance
 
 end ElfFile
 end Patchelf.Elf

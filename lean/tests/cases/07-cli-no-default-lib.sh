@@ -31,7 +31,7 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 rc=0
-output=$("$PATCHELF_BIN" --no-default-lib "$SCRATCH/minimal.elf" 2>&1) || rc=$?
+output=$("$PATCHELF_BIN" no-default-lib "$SCRATCH/minimal.elf" 2>&1) || rc=$?
 if [ "$rc" != "3" ]; then
   echo "FAIL: expected exit 3, got $rc" >&2
   echo "output: $output" >&2

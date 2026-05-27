@@ -54,7 +54,7 @@ PY
 original_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
 
 # Run the op.
-"$PATCHELF_BIN" --add-debug-tag "$SCRATCH/input.elf"
+"$PATCHELF_BIN" add-debug-tag "$SCRATCH/input.elf"
 
 # File should have grown (one new dynamic entry of 16 bytes, plus engine overhead).
 new_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
@@ -64,7 +64,7 @@ if [ "$new_size" -le "$original_size" ]; then
 fi
 
 # Re-parse to verify the result is well-formed.
-if ! "$PATCHELF_BIN" --parse "$SCRATCH/input.elf" >"$SCRATCH/parse.out" 2>&1; then
+if ! "$PATCHELF_BIN" parse "$SCRATCH/input.elf" >"$SCRATCH/parse.out" 2>&1; then
   echo "FAIL: post-add-debug-tag reparse failed" >&2
   cat "$SCRATCH/parse.out" >&2
   exit 1

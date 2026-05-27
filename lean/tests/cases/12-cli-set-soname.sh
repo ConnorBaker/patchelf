@@ -44,14 +44,14 @@ PY
 original_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
 
 # Print the current soname.
-before=$("$PATCHELF_BIN" --print-soname "$SCRATCH/input.elf")
+before=$("$PATCHELF_BIN" print-soname "$SCRATCH/input.elf")
 if [ "$before" != "libc.so" ]; then
   echo "FAIL (setup): pre-op soname was '$before', expected 'libc.so'" >&2
   exit 1
 fi
 
 # Set a new (longer) soname.
-"$PATCHELF_BIN" --set-soname libnewname.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-soname libnewname.so "$SCRATCH/input.elf"
 
 # File should have grown.
 new_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
@@ -61,7 +61,7 @@ if [ "$new_size" -le "$original_size" ]; then
 fi
 
 # The new soname should be readable after the op.
-after=$("$PATCHELF_BIN" --print-soname "$SCRATCH/input.elf")
+after=$("$PATCHELF_BIN" print-soname "$SCRATCH/input.elf")
 if [ "$after" != "libnewname.so" ]; then
   echo "FAIL: post-op soname was '$after', expected 'libnewname.so'" >&2
   exit 1

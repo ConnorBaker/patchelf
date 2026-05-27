@@ -61,7 +61,7 @@ PY
 original_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
 
 # Run: rename symbol "foo" to "fooBAR".
-"$PATCHELF_BIN" --rename-dynamic-symbol foo fooBAR "$SCRATCH/input.elf"
+"$PATCHELF_BIN" rename-dynamic-symbol foo fooBAR "$SCRATCH/input.elf"
 
 new_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
 if [ "$new_size" -le "$original_size" ]; then
@@ -70,7 +70,7 @@ if [ "$new_size" -le "$original_size" ]; then
 fi
 
 # Re-parse to confirm the output is well-formed.
-if ! "$PATCHELF_BIN" --parse "$SCRATCH/input.elf" >"$SCRATCH/parse.out" 2>&1; then
+if ! "$PATCHELF_BIN" parse "$SCRATCH/input.elf" >"$SCRATCH/parse.out" 2>&1; then
   echo "FAIL: post-rename reparse failed" >&2
   cat "$SCRATCH/parse.out" >&2
   exit 1

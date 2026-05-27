@@ -41,7 +41,7 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 # Run CLI — should succeed.
-"$PATCHELF_BIN" --no-default-lib "$SCRATCH/input.elf"
+"$PATCHELF_BIN" no-default-lib "$SCRATCH/input.elf"
 
 # The DT_FLAGS_1 value (bytes [367..375) = offset 359 + 8 = 367) should now be 0x800.
 val=$(od -An -tx1 -N8 -j367 "$SCRATCH/input.elf" | tr -d ' \n')

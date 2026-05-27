@@ -44,11 +44,11 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 # Replace libfoo.so → libbrand.so (reuse path).
-"$PATCHELF_BIN" --replace-needed libfoo.so libbrand.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" replace-needed libfoo.so libbrand.so "$SCRATCH/input.elf"
 
 # --print-needed emits entries in .dynamic order.  Expect libbrand first,
 # libbar second (since libfoo was at position 1 and got renamed).
-actual=$("$PATCHELF_BIN" --print-needed "$SCRATCH/input.elf")
+actual=$("$PATCHELF_BIN" print-needed "$SCRATCH/input.elf")
 expected='libbrand.so
 libbar.so'
 if [ "$actual" != "$expected" ]; then

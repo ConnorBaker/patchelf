@@ -33,23 +33,23 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 # Initially: PF_X is not set, so --print-execstack should print "-".
-out=$("$PATCHELF_BIN" --print-execstack "$SCRATCH/input.elf")
+out=$("$PATCHELF_BIN" print-execstack "$SCRATCH/input.elf")
 case "$out" in
   *"execstack: -"*) ;;
   *) echo "FAIL: initial print-execstack got: $out (expected '-')" >&2; exit 1 ;;
 esac
 
 # Set PF_X, then print-execstack should be 'X'.
-"$PATCHELF_BIN" --set-execstack "$SCRATCH/input.elf"
-out=$("$PATCHELF_BIN" --print-execstack "$SCRATCH/input.elf")
+"$PATCHELF_BIN" set-execstack "$SCRATCH/input.elf"
+out=$("$PATCHELF_BIN" print-execstack "$SCRATCH/input.elf")
 case "$out" in
   *"execstack: X"*) ;;
   *) echo "FAIL: post-set print-execstack got: $out (expected 'X')" >&2; exit 1 ;;
 esac
 
 # Clear PF_X, then print-execstack should be '-' again.
-"$PATCHELF_BIN" --clear-execstack "$SCRATCH/input.elf"
-out=$("$PATCHELF_BIN" --print-execstack "$SCRATCH/input.elf")
+"$PATCHELF_BIN" clear-execstack "$SCRATCH/input.elf"
+out=$("$PATCHELF_BIN" print-execstack "$SCRATCH/input.elf")
 case "$out" in
   *"execstack: -"*) ;;
   *) echo "FAIL: post-clear print-execstack got: $out (expected '-')" >&2; exit 1 ;;

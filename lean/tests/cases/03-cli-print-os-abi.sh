@@ -28,7 +28,7 @@ with open(sys.argv[1], "wb") as f:
     f.write(out)
 PY
 
-out=$("$PATCHELF_BIN" --print-os-abi "$SCRATCH/input.elf")
+out=$("$PATCHELF_BIN" print-os-abi "$SCRATCH/input.elf")
 if [ "$out" != "Linux" ]; then
   echo "FAIL: expected 'Linux', got '$out'" >&2
   exit 1

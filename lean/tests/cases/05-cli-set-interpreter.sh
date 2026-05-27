@@ -43,17 +43,17 @@ PY
 original_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
 
 # --print-interpreter reads the old path back.
-before_path=$("$PATCHELF_BIN" --print-interpreter "$SCRATCH/input.elf")
+before_path=$("$PATCHELF_BIN" print-interpreter "$SCRATCH/input.elf")
 if [ "$before_path" != "/lib64/ld-linux.so.2" ]; then
   echo "FAIL: pre-mutation print-interpreter returned '$before_path'" >&2
   exit 1
 fi
 
 # Rewrite to a shorter path.
-"$PATCHELF_BIN" --set-interpreter /tmp/new-ld.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-interpreter --no-validate /tmp/new-ld.so "$SCRATCH/input.elf"
 
 # --print-interpreter now returns the new path.
-after_path=$("$PATCHELF_BIN" --print-interpreter "$SCRATCH/input.elf")
+after_path=$("$PATCHELF_BIN" print-interpreter "$SCRATCH/input.elf")
 if [ "$after_path" != "/tmp/new-ld.so" ]; then
   echo "FAIL: post-mutation print-interpreter returned '$after_path'" >&2
   exit 1
@@ -70,7 +70,7 @@ fi
 # should be byte-identical. This validates that the lockstep path (which
 # updates e.bytes) and the encoder stay in sync.
 cp "$SCRATCH/input.elf" "$SCRATCH/before-idempotent.elf"
-"$PATCHELF_BIN" --set-interpreter /tmp/new-ld.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-interpreter --no-validate /tmp/new-ld.so "$SCRATCH/input.elf"
 if ! cmp -s "$SCRATCH/input.elf" "$SCRATCH/before-idempotent.elf"; then
   echo "FAIL: --set-interpreter with same path was not idempotent" >&2
   diff <(od -An -tx1 "$SCRATCH/before-idempotent.elf") \

@@ -50,7 +50,7 @@ with open(sys.argv[1], "wb") as f:
             + shstrtab + dynstr + dynamic)
 PY
 
-"$PATCHELF_BIN" --add-needed libfoo.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" add-needed libfoo.so "$SCRATCH/input.elf"
 
 # Verify PT_DYNAMIC.p_offset matches .dynamic.sh_offset.
 python3 - "$SCRATCH/input.elf" <<'PY'

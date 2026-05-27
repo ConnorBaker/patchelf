@@ -45,10 +45,10 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 NEW_RPATH="/opt/lib"
-"$PATCHELF_BIN" --set-rpath "$NEW_RPATH" "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-rpath "$NEW_RPATH" "$SCRATCH/input.elf"
 
 # Verify --print-rpath now returns the inserted rpath.
-got=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/input.elf")
+got=$("$PATCHELF_BIN" print-rpath "$SCRATCH/input.elf")
 if [ "$got" != "$NEW_RPATH" ]; then
   echo "FAIL: --print-rpath returned '$got', expected '$NEW_RPATH'" >&2
   exit 1

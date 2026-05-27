@@ -39,7 +39,7 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 cp "$SCRATCH/input.elf" "$SCRATCH/before.elf"
-"$PATCHELF_BIN" --remove-rpath "$SCRATCH/input.elf"
+"$PATCHELF_BIN" remove-rpath "$SCRATCH/input.elf"
 
 if ! cmp -s "$SCRATCH/input.elf" "$SCRATCH/before.elf"; then
   echo "FAIL: no-op --remove-rpath changed bytes" >&2

@@ -49,7 +49,7 @@ if [ "$before" != "00" ]; then
 fi
 
 # Run the CLI.
-"$PATCHELF_BIN" --set-os-abi Linux "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-os-abi Linux "$SCRATCH/input.elf"
 
 # Byte 7 should now be 3 (Linux).
 after=$(od -An -tx1 -N1 -j7 "$SCRATCH/input.elf" | tr -d ' \n')

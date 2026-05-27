@@ -45,7 +45,7 @@ PY
 cp "$SCRATCH/input.elf" "$SCRATCH/before.elf"
 
 # Run CLI — should succeed (no-op).
-"$PATCHELF_BIN" --add-debug-tag "$SCRATCH/input.elf"
+"$PATCHELF_BIN" add-debug-tag "$SCRATCH/input.elf"
 
 # File should be byte-identical.
 if ! cmp -s "$SCRATCH/input.elf" "$SCRATCH/before.elf"; then

@@ -1,38 +1,41 @@
 /-
-  CLI: parse argv, dispatch a list of ops, emit modified bytes.
+  CLI front end built on the `Cli` library (lean4-cli).
 
-  Pipeline: byte parser → `Adapter.ofElfFile` → typed op
-  (from `Patchelf/Elf/Ops/*.lean`) → `Adapter.toElfFile` → byte
-  encoder.  The encoder runs DT_STRSZ sync + conditional
-  layout-repack (see `Elf/Encoder.lean`) so size-growing ops
-  produce valid ELF output automatically.
+  Each patchelf operation is a subcommand:
 
-  Flag names mirror `src/patchelf.cc`. All 14 base ops + 6 read-only
-  print ops + parity flags (`--force-rpath`, `--page-size`, `--output`,
-  `--version`, `--debug`, `--no-sort`, `--no-clobber-old-sections`,
-  `@file`).
+    patchelf print-rpath <file>
+    patchelf set-rpath [--force-rpath] <path> <file>
+    patchelf add-needed <lib> <file>
+    ...
 
-  A single `patchelf` invocation can combine multiple flags; they
-  are applied in argv order. Between ops we re-parse the intermediate
-  bytes so each op sees a fully-validated input.
+  This is a deliberate divergence from the C++ tool's "stack of flags
+  in argv order" CLI.  Subcommands eliminate the argv-order pitfalls
+  (set-rpath-then-print-rpath ambiguity, repeated `--add-needed`
+  flags overriding each other, `--allowed-rpath-prefixes` only
+  applying to the preceding `--shrink-rpath`) and make `--help`
+  per-op meaningful.  Multiple operations are achieved by chaining
+  invocations:
 
-  Every mutating branch dispatches through a typed op via
-  `Adapter.ofElfFile` → op → `Adapter.toElfFile`.  Precondition checks
-  (e.g. `e.dynamic.isSome` for dynamic-section ops) are
-  runtime-checked and build the `isSome` witness or return
-  `CliError.opPreconditionFailed`.  Zero `sorry`.
+    patchelf set-rpath /a foo &&
+    patchelf add-needed libbar.so foo
 
-  Test status: all 49 shell tests in `tests/cases/` pass.
+  Implementation:
+    * Each `Cmd` is built with the `[Cli|...]` macro DSL.
+    * Mutating subcommands get `--output / --no-validate /
+      --page-size / --debug` via the `mutatingFlagsExt` extension.
+      Read-only subcommands (`print-*`, `validate`, `parse`)
+      reject those flags as unknown — surfacing user mistakes.
+    * Each handler decodes the file, runs the typed-algebra op,
+      and routes through `runWith` → `runResultToIO`, which
+      validates (unless `--no-validate`) and writes the result.
+    * `Run` holds read-only accessors on `ElfFile`.
 -/
 module
 
+public import Patchelf.Log
 public import Patchelf.Elf.Parser
 public import Patchelf.Elf.Encoder
-
--- 14 mutating ops + adapter live under Elf/Ops/ and Elf/
--- respectively.  The byte-level parser/encoder (Parser / Encoder)
--- are the byte-layer wire codecs.
-
+public import Patchelf.Elf.Validate
 public import Patchelf.Elf.Adapter
 public import Patchelf.Elf.Ops.OsAbi
 public import Patchelf.Elf.Ops.Execstack
@@ -48,376 +51,125 @@ public import Patchelf.Elf.Ops.Interpreter
 public import Patchelf.Elf.Ops.ReplaceNeeded
 public import Patchelf.Elf.Ops.ClearSymbolVersion
 public import Patchelf.Elf.Ops.RenameDynamicSymbols
+public import Cli.Basic
+public import Cli.Extensions
 
 @[expose] public section
 
 namespace Patchelf.CLI
 
-open Patchelf.Elf (OsAbi ParseError DynEntry DynTag StringTable)
+open Cli
+open Patchelf.Elf (OsAbi DynEntry DynTag StringTable)
 open Patchelf.Elf (ElfFile ParsedElf parse encode)
+open Patchelf.Elf (ValidateFailure validateBytes)
 open Patchelf.Elf.Layout (PhType)
+-- Cli.ParseError clashes with Patchelf.Elf.ParseError; keep the latter
+-- fully qualified.
 
-/-- How `--set-rpath`/`--add-rpath` should choose between DT_RPATH and
-    DT_RUNPATH. `.default` uses the modern choice (DT_RUNPATH) unless
-    the binary already has a DT_RPATH and no DT_RUNPATH, in which case
-    C++ patchelf converts to RUNPATH anyway. `.force` (from
-    `--force-rpath`) keeps DT_RPATH. -/
-inductive RpathTagPolicy | default | force
-  deriving DecidableEq, Repr
+/-! ## Shared types -/
 
-/-- One operation to run, derived from the parsed argv. Ops with
-    context-dependent input (e.g. `--add-rpath` needs the existing
-    rpath string) are resolved at runtime during the pipeline fold. -/
-inductive Op
-  -- Safe (no section growth): implemented
-  | setOsAbi (abi : OsAbi)
-  | setExecstack
-  | clearExecstack
-  | removeRpath
-  | removeNeeded (lib : String)
-  | removeSoname
-
-  -- Read-only prints: implemented
-  | printOsAbi
-  | printInterpreter
-  | printRpath
-  | printNeeded
-  | printSoname
-  | printExecstack
-
-  -- Mutating ops (the encoder handles growth implicitly via `encodedSize`).
-  | setRpath (policy : RpathTagPolicy) (path : String)
-  /-- `--add-rpath`: prepend the existing rpath to `newPath` with ':'.
-      At runtime we read the current rpath via `rpathValue`, compose
-      `oldRpath ++ ":" ++ newPath`, and dispatch as `setRpath`. -/
-  | addRpath (policy : RpathTagPolicy) (path : String)
-  /-- `--shrink-rpath`: keep only the entries whose string starts with
-      one of the given allowed prefixes (or all entries when the list
-      is empty — matches C++ rpShrink's filesystem-based heuristic's
-      degenerate case). Composes with the current rpath at runtime. -/
-  | shrinkRpath (policy : RpathTagPolicy) (allowedPrefixes : List String)
-  | addNeeded (lib : String)
-  | replaceNeeded (oldName newName : String)
-  | setSoname (name : String)
-  | setInterpreter (path : String)
-  | addDebugTag
-  | noDefaultLib
-  | renameDynamicSymbols (mappingFile : System.FilePath)
-  /-- Single-pair rename (CLI convenience; the map-file form is IO-bound
-      so it lives in Main.lean, not the pure dispatcher). -/
-  | renameDynamicSymbol (oldName newName : String)
-  | clearSymbolVersion (sym : String)
-  deriving Repr
-
-/-- Global options that apply across the whole invocation, orthogonal
-    to the list of ops. -/
+/-- Options bundle consumed by per-subcommand handlers.  Each field
+    corresponds to a flag; flags appear only on subcommands that
+    consume the corresponding field (see `mutatingFlags` and
+    `mutatingFlagsExt` below). -/
 structure Options where
-  /-- Override target path for writes. `none` = write back in place. -/
+  /-- `--output PATH`: write target override.  `none` = in-place. -/
   outputPath : Option System.FilePath := none
-  /-- Alignment parameter accepted for C++ CLI parity. The CLI has no
-      layout engine, so it's recorded but unused. -/
-  pageSize : Nat := 4096
-  /-- Enable verbose stderr tracing. Accepted-and-recorded; The CLI doesn't
-      currently emit trace output. -/
-  debug : Bool := false
+  /-- `--no-validate` flips this to `false`; default skips the
+      loader-coherence check before write (UNSAFE). -/
+  validate   : Bool := true
+  /-- `--force-rpath`: emit DT_RPATH instead of DT_RUNPATH. -/
+  forceRpath : Bool := false
+  /-- `--page-size N`: override the layout engine's PT_LOAD alignment.
+      `none` falls back to auto-detection from existing PT_LOAD
+      `p_align` values. -/
+  pageSize   : Option Nat := none
+  /-- `--debug`: enable stderr tracing via `Patchelf.Log`. -/
+  debug      : Bool := false
   deriving Repr
 
-/-- A parsed command line. -/
-structure Invocation where
-  ops    : List Op
-  file   : System.FilePath
-  opts   : Options
-  deriving Repr
-
-/-- Classified exit conditions. -/
+/-- CLI error classes; `exitCode` matches the previous shell tests. -/
 inductive CliError
   | badArgs (message : String)
-  | parseFailed (err : ParseError)
+  | parseFailed (err : Patchelf.Elf.ParseError)
   | opPreconditionFailed (message : String)
   | ioError (message : String)
+  | validateFailed (msg : String)
   deriving Repr
 
 def CliError.exitCode : CliError → UInt32
-  | .badArgs _               => 1
-  | .parseFailed _           => 2
-  | .opPreconditionFailed _  => 3
-  | .ioError _               => 4
+  | .badArgs _              => 1
+  | .parseFailed _          => 2
+  | .opPreconditionFailed _ => 3
+  | .ioError _              => 4
+  | .validateFailed _       => 5
 
 def CliError.message : CliError → String
   | .badArgs m              => s!"bad arguments: {m}"
   | .parseFailed e          => s!"parse failed: {repr e}"
   | .opPreconditionFailed m => s!"op precondition failed: {m}"
   | .ioError m              => s!"I/O error: {m}"
+  | .validateFailed m       => s!"validate: {m}"
 
-/-! ## Argument parsing -/
+/-- Result of a subcommand: bytes to write back, text to print, or
+    nothing (some print ops emit nothing when the queried tag is
+    absent — match C++ patchelf print-soname). -/
+inductive RunResult
+  | bytes (bs : ByteArray)
+  | print (s : String)
+  | silent
 
-namespace Parse
-
-/-- Look up a canonical OS/ABI name. Matches the names `patchelf --set-os-abi`
-    accepts on the command line. -/
-def parseOsAbi (s : String) : Except CliError OsAbi :=
-  match s with
-  | "System V" | "SysV" | "sysv" => .ok .systemV
-  | "Linux" | "linux" => .ok .linux
-  | "FreeBSD" | "freebsd" => .ok .freebsd
-  | _ =>
-    match s.toNat? with
-    | some n => if n < 256 then .ok (OsAbi.ofByte n.toUInt8)
-                else .error (.badArgs s!"OS/ABI byte out of range: {s}")
-    | none => .error (.badArgs s!"unknown OS/ABI: {s}")
-
-/-- Split a colon-delimited string, dropping empty fields. Used for
-    `--allowed-rpath-prefixes`. -/
-def splitColonDelimited (s : String) : List String :=
-  (s.splitOn ":").filter (fun t => !t.isEmpty)
-
-/-- Parser state: accumulated ops, options, positional files. -/
-structure State where
-  ops   : List Op       := []
-  opts  : Options       := {}
-  files : List String   := []
-  /-- Set by `--force-rpath`. Applies to any SUBSEQUENT rpath set/add in
-      the same invocation, matching C++ patchelf where the flag is a
-      sticky boolean read at op time. -/
-  forceRpath : Bool     := false
-  deriving Repr
-
-/-- Append one op to the state. -/
-def State.push (s : State) (op : Op) : State := { s with ops := s.ops ++ [op] }
-
-/-- Consumers left in `args` after we peel `n` tokens. The `--flag ARG`
-    pattern threads as `consume 1 args k`, binding `arg` and the tail. -/
-def needArg (flag : String) (args : List String)
-    (k : String → List String → Except CliError State) : Except CliError State :=
-  match args with
-  | []      => .error (.badArgs s!"{flag}: missing argument")
-  | a :: tl => k a tl
-
-/-- The token-stream parser. Walks left-to-right, producing a `State` on
-    success. -/
-partial def parseLoop (st : State) : List String → Except CliError State
-  | [] => .ok st
-  | a :: rest =>
-    let policy : RpathTagPolicy :=
-      if st.forceRpath then .force else .default
-    match a with
-    -- Trivial flags.
-    | "--set-execstack"   => parseLoop (st.push .setExecstack) rest
-    | "--clear-execstack" => parseLoop (st.push .clearExecstack) rest
-    | "--print-execstack" => parseLoop (st.push .printExecstack) rest
-    | "--remove-rpath"    => parseLoop (st.push .removeRpath) rest
-    | "--remove-soname"   => parseLoop (st.push .removeSoname) rest
-    | "--print-os-abi"    => parseLoop (st.push .printOsAbi) rest
-    | "--print-interpreter" => parseLoop (st.push .printInterpreter) rest
-    | "--print-rpath"     => parseLoop (st.push .printRpath) rest
-    | "--print-needed"    => parseLoop (st.push .printNeeded) rest
-    | "--print-soname"    => parseLoop (st.push .printSoname) rest
-    | "--add-debug-tag"   => parseLoop (st.push .addDebugTag) rest
-    | "--no-default-lib"  => parseLoop (st.push .noDefaultLib) rest
-    -- Sticky rpath-tag policy.
-    | "--force-rpath"     => parseLoop { st with forceRpath := true } rest
-    -- Parity no-ops (The layout engine doesn't reorder phdrs
-    -- or clobber sections, so these flags are accepted as no-ops).
-    | "--no-sort"                 => parseLoop st rest
-    | "--no-clobber-old-sections" => parseLoop st rest
-    -- Informational flags handled by the caller.
-    | "--debug" => parseLoop { st with opts := { st.opts with debug := true } } rest
-    -- Arg-taking flags.
-    | "--set-os-abi" => needArg "--set-os-abi" rest fun abi rest' => do
-        let a ← parseOsAbi abi
-        parseLoop (st.push (.setOsAbi a)) rest'
-    | "--remove-needed" => needArg "--remove-needed" rest fun lib rest' =>
-        parseLoop (st.push (.removeNeeded lib)) rest'
-    | "--set-rpath" => needArg "--set-rpath" rest fun p rest' =>
-        parseLoop (st.push (.setRpath policy p)) rest'
-    | "--add-rpath" => needArg "--add-rpath" rest fun p rest' =>
-        parseLoop (st.push (.addRpath policy p)) rest'
-    | "--shrink-rpath" =>
-        parseLoop (st.push (.shrinkRpath policy [])) rest
-    | "--allowed-rpath-prefixes" =>
-        needArg "--allowed-rpath-prefixes" rest fun pfxStr rest' =>
-          let pfx := splitColonDelimited pfxStr
-          match st.ops.reverse with
-          | .shrinkRpath pol _ :: earlierRev =>
-              let ops' := (.shrinkRpath pol pfx :: earlierRev).reverse
-              parseLoop { st with ops := ops' } rest'
-          | _ =>
-              .error (.badArgs
-                "--allowed-rpath-prefixes must follow --shrink-rpath")
-    | "--add-needed" => needArg "--add-needed" rest fun lib rest' =>
-        parseLoop (st.push (.addNeeded lib)) rest'
-    | "--replace-needed" =>
-        needArg "--replace-needed (old)" rest fun o rest' =>
-        needArg "--replace-needed (new)" rest' fun n rest'' =>
-          parseLoop (st.push (.replaceNeeded o n)) rest''
-    | "--set-soname" => needArg "--set-soname" rest fun name rest' =>
-        parseLoop (st.push (.setSoname name)) rest'
-    | "--set-interpreter" | "--interpreter" =>
-        needArg "--set-interpreter" rest fun p rest' =>
-          parseLoop (st.push (.setInterpreter p)) rest'
-    | "--rename-dynamic-symbol" =>
-        needArg "--rename-dynamic-symbol (old)" rest fun o rest' =>
-        needArg "--rename-dynamic-symbol (new)" rest' fun n rest'' =>
-          parseLoop (st.push (.renameDynamicSymbol o n)) rest''
-    | "--rename-dynamic-symbols" =>
-        needArg "--rename-dynamic-symbols" rest fun m rest' =>
-          parseLoop (st.push (.renameDynamicSymbols (System.FilePath.mk m))) rest'
-    | "--clear-symbol-version" =>
-        needArg "--clear-symbol-version" rest fun s rest' =>
-          parseLoop (st.push (.clearSymbolVersion s)) rest'
-    | "--output" => needArg "--output" rest fun p rest' =>
-        parseLoop { st with opts :=
-          { st.opts with outputPath := some (System.FilePath.mk p) } } rest'
-    | "--page-size" => needArg "--page-size" rest fun ps rest' =>
-        match ps.toNat? with
-        | some n =>
-            if n > 0 then
-              parseLoop { st with opts := { st.opts with pageSize := n } } rest'
-            else .error (.badArgs s!"--page-size requires a positive integer, got: {ps}")
-        | none => .error (.badArgs s!"--page-size: not a non-negative integer: {ps}")
-    -- Recognized by caller, not here.
-    | "--version" | "--help" | "-h" =>
-        .error (.badArgs s!"{a} must be the only argument")
-    -- Anything else is a positional (file) argument.
-    | other =>
-        if other.startsWith "--" then
-          .error (.badArgs s!"unrecognized flag: {other}")
-        else
-          parseLoop { st with files := st.files ++ [other] } rest
-
-end Parse
-
-/-- Read an argument; if it begins with `@`, read the rest as a file path
-    and return its contents (mirrors C++ `resolveArgument`). -/
-def resolveArgument (s : String) : IO (Except CliError String) := do
-  if s.startsWith "@" ∧ s.length > 1 then
-    let path : String := s.drop 1 |>.toString
-    try
-      let body ← IO.FS.readFile (System.FilePath.mk path)
-      return .ok body.trimAscii.toString
-    catch e =>
-      return .error (.ioError s!"reading @{path}: {e}")
-  else
-    return .ok s
-
-/-- Rewrite `@file` arguments to their resolved contents. Only values
-    starting with `@` are resolved; flag names and regular positional
-    paths pass through unchanged. -/
-def resolveArgs (args : List String) : IO (Except CliError (List String)) := do
-  let rec loop : List String → IO (Except CliError (List String))
-    | []      => return .ok []
-    | a :: tl => do
-      if a.startsWith "@" then
-        match (← resolveArgument a) with
-        | .error e  => return .error e
-        | .ok body  =>
-          match (← loop tl) with
-          | .error e  => return .error e
-          | .ok tl'   => return .ok (body :: tl')
-      else
-        match (← loop tl) with
-        | .error e  => return .error e
-        | .ok tl'   => return .ok (a :: tl')
-  loop args
-
-/-- Walk an argv list, producing an `Invocation`. The last positional
-    argument is the file path; everything else is flags. -/
-def parseArgs : List String → Except CliError Invocation
-  | [] => .error (.badArgs "no arguments; try `patchelf --help`")
-  | args => do
-    let st ← Parse.parseLoop {} args
-    match st.files with
-    | []          => .error (.badArgs "missing file argument")
-    | [filePath]  =>
-        if st.ops.isEmpty then
-          .error (.badArgs "no operation flags given")
-        else
-          .ok { ops := st.ops, file := filePath, opts := st.opts }
-    | files       => .error (.badArgs s!"multiple files not supported yet: {files}")
-
-/-! ## Read-only accessors on ElfFile
-
-    Each one walks the pure-IR `ElfFile` for the bit of context the
-    corresponding `print*` op needs. -/
+/-! ## Read-only ElfFile accessors -/
 
 namespace Run
 
-/-- Lookup a C-string at an offset in `.dynstr`. -/
 def resolveDynstrName (e : ElfFile) (off : UInt64) : Option String :=
   match e.dynstr with
   | some ds => ds.lookup off.toNat |>.bind String.fromUTF8?
   | none => none
 
-/-- DT_NEEDED library names, each resolved via `.dynstr`. Entries whose
-    name can't be resolved are dropped. -/
 def neededLibs (e : ElfFile) : List String :=
   e.dynamic.map (·.toList.filterMap fun d =>
     if d.tag = DynTag.needed then resolveDynstrName e d.value else none)
     |>.getD []
 
-/-- Find the first entry in `.dynamic` with a given tag and resolve its
-    `value` as a `.dynstr` offset. Returns `none` if `.dynamic` is
-    absent, no entry matches, or the offset doesn't resolve. -/
 def findDynstrByTag (e : ElfFile) (tag : DynTag) : Option String :=
   e.dynamic.bind (fun dyn =>
     dyn.toList.find? (fun d => d.tag = tag)
       |>.bind (fun d => resolveDynstrName e d.value))
 
-/-- DT_RPATH / DT_RUNPATH value. Real patchelf prefers RUNPATH when both
-    are present. -/
 def rpathValue (e : ElfFile) : Option String :=
   findDynstrByTag e DynTag.runpath |>.orElse fun _ => findDynstrByTag e DynTag.rpath
 
-/-- DT_SONAME value. -/
 def sonameValue (e : ElfFile) : Option String :=
   findDynstrByTag e DynTag.soname
 
-/-- PF_X bit on PT_GNU_STACK: `some true` if set, `some false` if cleared,
-    `none` if no PT_GNU_STACK segment. -/
 def execstackState (e : ElfFile) : Option Bool :=
   e.phdrs.foldl (init := none) fun acc ph =>
     match acc with
     | some _ => acc
     | none   =>
       if ph.type = PhType.PT_GNU_STACK then
-        some ((ph.flags &&& Patchelf.Elf.ExecstackFlags.PF_X) = Patchelf.Elf.ExecstackFlags.PF_X)
+        some ((ph.flags &&& Patchelf.Elf.ExecstackFlags.PF_X) =
+              Patchelf.Elf.ExecstackFlags.PF_X)
       else none
 
-/-- Read the C-string at the start of a `.interp`-style byte array:
-    everything up to the first NUL byte. Returns `none` on no NUL. -/
 def readInterpPath (ib : ByteArray) : Option ByteArray :=
   StringTable.findNullFrom ib 0 0
 
-end Run
-
-/-- Run result: either bytes to write back to the file, or a string to
-    print on stdout (for `--print-*` ops). -/
-inductive RunResult
-  | bytes (bs : ByteArray)
-  | print (s : String)
-
-/-! ## Op dispatch -/
-
-namespace Run
-
-/-- Shared precondition-failure wrapper. -/
 def badPrecondition (opName detail : String) : CliError :=
   .opPreconditionFailed s!"{opName}: bad precondition ({detail})"
 
-/-- Convert the policy to the `forceRpath` Bool consumed by `modifyRPath`. -/
-def policyForce (p : RpathTagPolicy) : Bool :=
-  match p with
-  | .default => false
-  | .force   => true
-
 end Run
 
-/-! ## Typed-op routing helpers.
+/-! ## Op dispatch helpers (shared across subcommands) -/
 
-    Most ops take `e : ValidElfFile → (args) → (_h : e.dynamic.isSome) → ValidElfFile`.
-    This helper wires bytes → typed → op → bytes → encode,
-    handling the `isSome` precondition via runtime match. -/
-def runDynOp (opName : String) (e : Patchelf.Elf.ElfFile)
+/-- Wrap a typed-op that requires `e.dynamic.isSome`.  Routes
+    bytes → typed → op → bytes → `encodeWith opts.pageSize`.
+
+    `opts.pageSize` (from `--page-size`) is forwarded to the layout
+    engine; `none` lets it auto-detect from the binary. -/
+def runDynOp (opts : Options) (opName : String) (e : Patchelf.Elf.ElfFile)
     (f : (v : Patchelf.Elf.ValidElfFile) → v.dynamic.isSome → Patchelf.Elf.ValidElfFile) :
     Except CliError RunResult :=
   match Patchelf.Elf.Adapter.ofElfFile e with
@@ -430,11 +182,10 @@ def runDynOp (opName : String) (e : Patchelf.Elf.ElfFile)
           let hSome : v.dynamic.isSome := by rw [h]; rfl
           let v' := f v hSome
           let e' := Patchelf.Elf.Adapter.toElfFile e v'
-          .ok (.bytes (encode e'))
+          .ok (.bytes (Patchelf.Elf.encodeWith opts.pageSize e'))
 
-/-- No-precondition wrapper (for ops like setOsAbi, modifyExecstack
-    that don't require dynamic section). -/
-def runOpNoPre (e : Patchelf.Elf.ElfFile)
+/-- No-precondition wrapper.  See `runDynOp` for the page-size note. -/
+def runOpNoPre (opts : Options) (e : Patchelf.Elf.ElfFile)
     (f : Patchelf.Elf.ValidElfFile → Patchelf.Elf.ValidElfFile) :
     Except CliError RunResult :=
   match Patchelf.Elf.Adapter.ofElfFile e with
@@ -443,159 +194,716 @@ def runOpNoPre (e : Patchelf.Elf.ElfFile)
   | .ok tv =>
       let tv' := f tv
       let e' := Patchelf.Elf.Adapter.toElfFile e tv'
-      .ok (.bytes (encode e'))
+      .ok (.bytes (Patchelf.Elf.encodeWith opts.pageSize e'))
 
-/-- Apply an op to a validated ElfFile. For read-only (`print*`) ops,
-    returns text to emit. For mutating ops, returns encoded bytes. -/
-def runOp (_opts : Options) (op : Op) (v : ParsedElf) :
-    Except CliError RunResult := do
-  let e := v.elf
-  match op with
-  -- Base ops with no runtime precondition — routed through the typed algebra.
-  | .setOsAbi abi =>
-      runOpNoPre e (fun tv => Patchelf.Elf.setOsAbi tv abi)
-  | .setExecstack =>
-      runOpNoPre e (fun tv => Patchelf.Elf.modifyExecstack tv .set)
-  | .clearExecstack =>
-      runOpNoPre e (fun tv => Patchelf.Elf.modifyExecstack tv .clear)
+/-! ## Cli plumbing: extract Options + file from a Parsed -/
 
-  -- Dynamic-only ops — routed through the typed algebra.
-  | .removeRpath =>
-      runDynOp "removeRpath" e (fun tv h =>
-        Patchelf.Elf.removeRpath tv h)
-  | .removeNeeded lib =>
-      runDynOp "removeNeeded" e (fun tv h =>
-        Patchelf.Elf.removeNeeded tv lib h)
-  | .removeSoname =>
-      runDynOp "removeSoname" e (fun tv h =>
-        Patchelf.Elf.modifySoname tv .remove "" h)
+/-- Read the per-subcommand flags from a `Cli.Parsed` and bundle as
+    `Options`.  Each flag is read with `hasFlag`, which returns
+    `false` if the flag wasn't declared on this subcommand — so
+    handlers for read-only subcommands that don't declare
+    `--output`/`--no-validate` simply see the defaults.
 
-  -- Read-only prints.
-  | .printOsAbi =>
-      return .print e.header.ident.osAbi.display
-  | .printInterpreter =>
-      match e.interp.bind Run.readInterpPath with
-      | none    => return .print "(no interpreter)"
-      | some bs =>
-        match String.fromUTF8? bs with
-        | some s => return .print s
-        | none   => return .print "(interpreter: invalid UTF-8)"
-  | .printRpath =>
-      return .print (Run.rpathValue e |>.getD "")
-  | .printNeeded =>
-      return .print (String.intercalate "\n" (Run.neededLibs e))
-  | .printSoname =>
-      return .print (Run.sonameValue e |>.getD "")
-  | .printExecstack =>
-      let c : Char :=
-        match Run.execstackState e with
-        | some true  => 'X'
-        | some false => '-'
-        | none       => '?'
-      return .print s!"execstack: {c}"
+    `--page-size 0` is rejected: page sizes must be positive. -/
+def optionsOf (p : Parsed) : Except CliError Options := do
+  let mut opts : Options := {}
+  if p.hasFlag "output" then
+    opts := { opts with outputPath := some (p.flag! "output" |>.as! String) }
+  if p.hasFlag "no-validate" then
+    opts := { opts with validate := false }
+  if p.hasFlag "force-rpath" then
+    opts := { opts with forceRpath := true }
+  if p.hasFlag "page-size" then
+    let n : Nat := p.flag! "page-size" |>.as! Nat
+    if n = 0 then throw (.badArgs "--page-size requires a positive integer")
+    opts := { opts with pageSize := some n }
+  if p.hasFlag "debug" then
+    opts := { opts with debug := true }
+  return opts
 
-  -- setInterpreter — typed-algebra-routed.
-  | .setInterpreter newPath =>
-      runOpNoPre e (fun tv => Patchelf.Elf.setInterpreter tv newPath)
+/-- Read the positional `file` argument. -/
+def fileOf (p : Parsed) : System.FilePath :=
+  System.FilePath.mk (p.positionalArg! "file" |>.as! String)
 
-  | .addDebugTag =>
-      runDynOp "addDebugTag" e (fun tv h =>
-        Patchelf.Elf.addDebugTag tv h)
+/-! ## OS-ABI parsing -/
 
-  | .noDefaultLib =>
-      runDynOp "noDefaultLib" e (fun tv h =>
-        Patchelf.Elf.noDefaultLib tv h)
+def parseOsAbi (s : String) : Except CliError OsAbi :=
+  match s with
+  | "System V" | "SysV" | "sysv" => .ok .systemV
+  | "Linux"    | "linux"          => .ok .linux
+  | "FreeBSD"  | "freebsd"        => .ok .freebsd
+  | _ =>
+    match s.toNat? with
+    | some n => if n < 256 then .ok (OsAbi.ofByte n.toUInt8)
+                else .error (.badArgs s!"OS/ABI byte out of range: {s}")
+    | none => .error (.badArgs s!"unknown OS/ABI: {s}")
 
-  | .replaceNeeded oldName newName =>
-      -- try reuse first (look up newName in dynstr); fall back to grow path.
-      runDynOp "replaceNeeded" e (fun tv h =>
-        match tv.dynstr.findOffsetOf newName.toUTF8 with
-        | some off => Patchelf.Elf.replaceNeededReuse tv oldName off h
-        | none     => Patchelf.Elf.replaceNeeded tv oldName newName h)
+/-! ## Subcommand handlers
 
-  | .addNeeded lib =>
-      runDynOp "addNeeded" e (fun tv h =>
-        Patchelf.Elf.addNeeded tv lib h)
+    Each handler reads its file, dispatches the op, and emits stdout
+    or writes back per the `RunResult`.  Validation runs at the IO
+    boundary in `runResultToIO` so every mutating handler has the
+    same write semantics.
+-/
 
-  | .setSoname name =>
-      runDynOp "setSoname" e (fun tv h =>
-        Patchelf.Elf.modifySoname tv .set name h)
+/-- Write `out` to `target`, validating first unless `--no-validate`. -/
+def writeWithValidation (opts : Options) (target : System.FilePath)
+    (out : ByteArray) : IO UInt32 := do
+  if opts.validate then
+    Patchelf.Log.debug s!"validating {out.size} bytes"
+    match validateBytes out with
+    | .error f =>
+        IO.eprintln s!"validate: {target}: {f.message}"
+        IO.eprintln "(use --no-validate to bypass; output may not load at runtime)"
+        return 5
+    | .ok () => Patchelf.Log.debug "validate: PASS"
+  else
+    Patchelf.Log.debug "validate: SKIPPED (--no-validate)"
+  Patchelf.Log.debug s!"writing {out.size} bytes to {target}"
+  let wrOpt ← (IO.FS.writeBinFile target out : IO Unit).toBaseIO
+  match wrOpt with
+  | .ok _    => return 0
+  | .error e => IO.eprintln s!"I/O error writing {target}: {e}"; return 4
 
-  -- --set-rpath: retag existing DT_RPATH/RUNPATH if present; otherwise
-  -- insert a fresh DT_RUNPATH (or DT_RPATH under `--force-rpath`).
-  -- single modifyRPath op handles both paths (it's a typed record update).
-  | .setRpath policy path =>
-      runDynOp "setRpath" e (fun tv h =>
-        Patchelf.Elf.modifyRPath tv (Run.policyForce policy) .set path h)
+/-- Render a `RunResult` to IO.
 
-  -- --add-rpath: compose with existing rpath, then setRpath.
-  | .addRpath policy newPath =>
-      match e.dynamic with
-      | none => throw (Run.badPrecondition "addRpath" "no dynamic section")
-      | some dyn =>
-        let composed :=
-          if dyn.any (·.isRpathish) then
-            match Run.rpathValue e with
-            | some old => if old.isEmpty then newPath else old ++ ":" ++ newPath
-            | none     => newPath
-          else newPath
-        runDynOp "addRpath" e (fun tv h =>
-          Patchelf.Elf.modifyRPath tv (Run.policyForce policy) .set composed h)
+    `bytes`  — write to `--output` if set, else back to `file` (skip
+               write when no mutation occurred).
+    `print`  — emit on stdout.  Read-only subcommands return this.
+    `silent` — emit nothing.  For prints whose tag is absent (e.g.
+               `print-soname` on a binary without DT_SONAME). -/
+def runResultToIO (opts : Options) (file : System.FilePath)
+    (origBytes : ByteArray) (r : RunResult) :
+    IO UInt32 := do
+  match r with
+  | .print s   => IO.println s; return 0
+  | .silent    => return 0
+  | .bytes out =>
+    let target := opts.outputPath.getD file
+    let shouldWrite := opts.outputPath.isSome ∨ out.data ≠ origBytes.data
+    if !shouldWrite then return 0
+    writeWithValidation opts target out
 
-  -- --shrink-rpath: filter the current rpath against the prefix whitelist
-  -- and dispatch as setRpath.  typed-algebra-routed.
-  | .shrinkRpath policy allowedPrefixes =>
-      match Run.rpathValue e with
-      | none => return .bytes (encode e)
-      | some old =>
-          let keep : List String :=
-            (old.splitOn ":").filter fun entry =>
-              !entry.isEmpty ∧
-              (allowedPrefixes.isEmpty ∨
-                allowedPrefixes.any (fun p => entry.startsWith p))
-          let composed := String.intercalate ":" keep
-          if composed = old then return .bytes (encode e)
-          else
-            runDynOp "shrinkRpath" e (fun tv h =>
-              Patchelf.Elf.modifyRPath tv (Run.policyForce policy) .set composed h)
+/-- Read a file, parse it, run a dispatcher, route through
+    `runResultToIO`.  The dispatcher is `IO`-valued so handlers can
+    do additional IO (read a rename-map file, probe the filesystem
+    for `shrink-rpath`, etc.) before emitting a `RunResult`.
 
-  | .renameDynamicSymbol oldName newName =>
-      -- Typed op uses a RenameDynamicSymbolsOk structure; build it at runtime.
-      match Patchelf.Elf.Adapter.ofElfFile e with
-      | .error err => throw (Run.badPrecondition "renameDynamicSymbol"
-          s!"adapter failed: {repr err}")
-      | .ok tv =>
-          if hDs : tv.dynsym.isSome then
-          if hGh : tv.gnuHash.isNone then
-          if hFit : tv.dynstr.bytes.size + newName.toUTF8.size + 1 < UInt32.size then
-            let hOk : Patchelf.Elf.RenameDynamicSymbolsOk tv newName :=
-              { hasDynsym := hDs, offsetFits := hFit, noGnuHash := hGh }
-            let tv' := Patchelf.Elf.renameDynamicSymbols tv oldName newName hOk
-            let e' := Patchelf.Elf.Adapter.toElfFile e tv'
-            return .bytes (encode e')
-          else throw (Run.badPrecondition "renameDynamicSymbol" "UInt32 offset overflow")
-          else throw (Run.badPrecondition "renameDynamicSymbol" ".gnu.hash present")
-          else throw (Run.badPrecondition "renameDynamicSymbol" "no .dynsym")
+    Emits debug traces on stderr when `--debug` is enabled. -/
+def runWith (p : Parsed)
+    (dispatch : Options → ParsedElf → IO (Except CliError RunResult)) :
+    IO UInt32 := do
+  match optionsOf p with
+  | .error ce => IO.eprintln ce.message; return ce.exitCode
+  | .ok opts =>
+    Patchelf.Log.setEnabled opts.debug
+    Patchelf.Log.debug s!"opts = {repr opts}"
+    let file := fileOf p
+    Patchelf.Log.debug s!"reading {file}"
+    let bsOpt ← (IO.FS.readBinFile file : IO ByteArray).toBaseIO
+    match bsOpt with
+    | .error e =>
+        IO.eprintln s!"I/O error reading {file}: {e}"; return 4
+    | .ok bs =>
+      Patchelf.Log.debug s!"read {bs.size} bytes; parsing"
+      match parse bs with
+      | .error err =>
+          IO.eprintln s!"parse failed: {repr err}"; return 2
+      | .ok pe =>
+        Patchelf.Log.debug s!"parsed: phnum={pe.elf.header.phnum} \
+          shnum={pe.elf.header.shnum} \
+          dynstr={pe.elf.dynstr.map (·.bytes.size) |>.getD 0}B"
+        match (← dispatch opts pe) with
+        | .error ce =>
+            IO.eprintln ce.message; return ce.exitCode
+        | .ok r =>
+          (match r with
+           | .print _ => Patchelf.Log.debug "result: print"
+           | .silent  => Patchelf.Log.debug "result: silent"
+           | .bytes b => Patchelf.Log.debug s!"result: bytes ({b.size} bytes)")
+          runResultToIO opts file bs r
 
-  -- The map-file form takes IO; intercepted by Main.runRenamePipeline
-  -- before the pure dispatcher runs.
-  | .renameDynamicSymbols _ => throw (.opPreconditionFailed
-      "renameDynamicSymbols (map-file form) must go through Main.applyRenameMap")
+/-! ## Per-op handlers
 
-  -- --clear-symbol-version <sym>: zero versym entries matching `sym`.
-  | .clearSymbolVersion sym =>
-      match Patchelf.Elf.Adapter.ofElfFile e with
-      | .error err => throw (Run.badPrecondition "clearSymbolVersion"
-          s!"adapter failed: {repr err}")
-      | .ok tv =>
-          if hDs : tv.dynsym.isSome then
-          if hVs : tv.versym.isSome then
-            let hOk : Patchelf.Elf.ClearSymbolVersionOk tv :=
-              { hasDynsym := hDs, hasVersym := hVs }
-            let tv' := Patchelf.Elf.clearSymbolVersion tv sym hOk
-            let e' := Patchelf.Elf.Adapter.toElfFile e tv'
-            return .bytes (encode e')
-          else throw (Run.badPrecondition "clearSymbolVersion" "no .gnu.version section")
-          else throw (Run.badPrecondition "clearSymbolVersion" "no .dynsym section")
+    Each handler dispatches to the typed-algebra ops via `runDynOp` /
+    `runOpNoPre` (returning `Except CliError RunResult`), then `pure`-
+    lifts into the `IO` shape `runWith` expects.  Handlers that need
+    intra-handler IO (file reads, FS probes) use the `do` form.
+
+    ### Read-only handlers -/
+
+def runPrintOsAbi (p : Parsed) : IO UInt32 :=
+  runWith p fun _ pe => pure (.ok (.print pe.elf.header.ident.osAbi.display))
+
+def runPrintRpath (p : Parsed) : IO UInt32 :=
+  runWith p fun _ pe => pure (.ok (.print (Run.rpathValue pe.elf |>.getD "")))
+
+def runPrintNeeded (p : Parsed) : IO UInt32 :=
+  runWith p fun _ pe =>
+    pure (.ok (.print (String.intercalate "\n" (Run.neededLibs pe.elf))))
+
+def runPrintSoname (p : Parsed) : IO UInt32 :=
+  runWith p fun _ pe =>
+    pure (.ok (match Run.sonameValue pe.elf with
+               | none   => .silent
+               | some s => .print s))
+
+def runPrintExecstack (p : Parsed) : IO UInt32 :=
+  runWith p fun _ pe =>
+    let c : Char :=
+      match Run.execstackState pe.elf with
+      | some true  => 'X'
+      | some false => '-'
+      | none       => '?'
+    pure (.ok (.print s!"execstack: {c}"))
+
+def runPrintInterpreter (p : Parsed) : IO UInt32 :=
+  runWith p fun _ pe =>
+    let s :=
+      match pe.elf.interp.bind Run.readInterpPath with
+      | none    => "(no interpreter)"
+      | some bs => (String.fromUTF8? bs).getD "(interpreter: invalid UTF-8)"
+    pure (.ok (.print s))
+
+/-! ### Mutating handlers -/
+
+def runSetOsAbi (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => pure do
+    let abi ← parseOsAbi (p.positionalArg! "abi" |>.as! String)
+    runOpNoPre opts pe.elf (fun tv => Patchelf.Elf.setOsAbi tv abi)
+
+def runSetExecstack (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => pure <|
+    runOpNoPre opts pe.elf (fun tv => Patchelf.Elf.modifyExecstack tv .set)
+
+def runClearExecstack (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => pure <|
+    runOpNoPre opts pe.elf (fun tv => Patchelf.Elf.modifyExecstack tv .clear)
+
+def runRemoveRpath (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => pure <|
+    runDynOp opts "removeRpath" pe.elf (fun tv h => Patchelf.Elf.removeRpath tv h)
+
+def runSetRpath (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe =>
+    let path := p.positionalArg! "path" |>.as! String
+    pure <| runDynOp opts "setRpath" pe.elf fun tv h =>
+      Patchelf.Elf.modifyRPath tv opts.forceRpath .set path h
+
+def runAddRpath (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe =>
+    let newPath := p.positionalArg! "path" |>.as! String
+    let e := pe.elf
+    match e.dynamic with
+    | none => pure (throw (Run.badPrecondition "addRpath" "no dynamic section"))
+    | some dyn =>
+      let composed :=
+        if dyn.any (·.isRpathish) then
+          match Run.rpathValue e with
+          | some old => if old.isEmpty then newPath else old ++ ":" ++ newPath
+          | none     => newPath
+        else newPath
+      pure <| runDynOp opts "addRpath" e fun tv h =>
+        Patchelf.Elf.modifyRPath tv opts.forceRpath .set composed h
+
+def splitColonDelimited (s : String) : List String :=
+  (s.splitOn ":").filter (fun t => !t.isEmpty)
+
+/-- `shrink-rpath`: filter the existing rpath.  With `--allowed-prefixes`,
+    keep only entries that start with one of the supplied prefixes.
+    Without it, keep only entries that exist on disk (matches C++
+    patchelf's default `--shrink-rpath` heuristic). -/
+def runShrinkRpath (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => do
+    let e := pe.elf
+    match Run.rpathValue e with
+    | none => pure (.ok .silent)  -- no rpath; nothing to shrink
+    | some old =>
+      let hasPrefixes := p.hasFlag "allowed-prefixes"
+      let allowedPrefixes : List String :=
+        if hasPrefixes then
+          splitColonDelimited (p.flag! "allowed-prefixes" |>.as! String)
+        else []
+      let mut keep : List String := []
+      for entry in old.splitOn ":" do
+        if entry.isEmpty then continue
+        let prefixOk :=
+          !hasPrefixes ∨ allowedPrefixes.any (fun pfx => entry.startsWith pfx)
+        if !prefixOk then continue
+        if !hasPrefixes ∧ !(← System.FilePath.pathExists ⟨entry⟩) then continue
+        keep := keep ++ [entry]
+      let composed := String.intercalate ":" keep
+      pure <| runDynOp opts "shrinkRpath" e fun tv h =>
+        Patchelf.Elf.modifyRPath tv opts.forceRpath .set composed h
+
+def runAddNeeded (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe =>
+    let lib := p.positionalArg! "lib" |>.as! String
+    pure <| runDynOp opts "addNeeded" pe.elf fun tv h =>
+      Patchelf.Elf.addNeeded tv lib h
+
+def runRemoveNeeded (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe =>
+    let lib := p.positionalArg! "lib" |>.as! String
+    pure <| runDynOp opts "removeNeeded" pe.elf fun tv h =>
+      Patchelf.Elf.removeNeeded tv lib h
+
+def runReplaceNeeded (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe =>
+    let oldName := p.positionalArg! "old" |>.as! String
+    let newName := p.positionalArg! "new" |>.as! String
+    pure <| runDynOp opts "replaceNeeded" pe.elf fun tv h =>
+      match tv.dynstr.findOffsetOf newName.toUTF8 with
+      | some off => Patchelf.Elf.replaceNeededReuse tv oldName off h
+      | none     => Patchelf.Elf.replaceNeeded tv oldName newName h
+
+def runSetSoname (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe =>
+    let name := p.positionalArg! "soname" |>.as! String
+    pure <| runDynOp opts "setSoname" pe.elf fun tv h =>
+      Patchelf.Elf.modifySoname tv .set name h
+
+def runRemoveSoname (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => pure <|
+    runDynOp opts "removeSoname" pe.elf fun tv h =>
+      Patchelf.Elf.modifySoname tv .remove "" h
+
+def runSetInterpreter (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe =>
+    let path := p.positionalArg! "path" |>.as! String
+    pure <| runOpNoPre opts pe.elf fun tv => Patchelf.Elf.setInterpreter tv path
+
+def runAddDebugTag (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => pure <|
+    runDynOp opts "addDebugTag" pe.elf fun tv h => Patchelf.Elf.addDebugTag tv h
+
+def runNoDefaultLib (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => pure <|
+    runDynOp opts "noDefaultLib" pe.elf fun tv h => Patchelf.Elf.noDefaultLib tv h
+
+def runClearSymbolVersion (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => pure do
+    let sym := p.positionalArg! "symbol" |>.as! String
+    let e := pe.elf
+    let tv ← match Patchelf.Elf.Adapter.ofElfFile e with
+      | .error err =>
+          throw (Run.badPrecondition "clearSymbolVersion" s!"adapter failed: {repr err}")
+      | .ok tv => pure tv
+    if hDs : tv.dynsym.isSome then
+    if hVs : tv.versym.isSome then
+      let hOk : Patchelf.Elf.ClearSymbolVersionOk tv := { hasDynsym := hDs, hasVersym := hVs }
+      let tv' := Patchelf.Elf.clearSymbolVersion tv sym hOk
+      let e'  := Patchelf.Elf.Adapter.toElfFile e tv'
+      .ok (.bytes (Patchelf.Elf.encodeWith opts.pageSize e'))
+    else throw (Run.badPrecondition "clearSymbolVersion" "no .gnu.version section")
+    else throw (Run.badPrecondition "clearSymbolVersion" "no .dynsym section")
+
+/-- Apply a single `(oldName, newName)` rename.  Returns the post-encode
+    bytes, or an error if the typed-op's preconditions aren't met. -/
+def renameOnce (opts : Options) (e : ElfFile) (oldName newName : String) :
+    Except CliError ByteArray := do
+  let tv ← match Patchelf.Elf.Adapter.ofElfFile e with
+    | .error err =>
+        throw (Run.badPrecondition "renameDynamicSymbol" s!"adapter failed: {repr err}")
+    | .ok tv => pure tv
+  if hDs : tv.dynsym.isSome then
+  if hGh : tv.gnuHash.isNone then
+  if hFit : tv.dynstr.bytes.size + newName.toUTF8.size + 1 < UInt32.size then
+    let hOk : Patchelf.Elf.RenameDynamicSymbolsOk tv newName :=
+      { hasDynsym := hDs, offsetFits := hFit, noGnuHash := hGh }
+    let tv' := Patchelf.Elf.renameDynamicSymbols tv oldName newName hOk
+    .ok (Patchelf.Elf.encodeWith opts.pageSize (Patchelf.Elf.Adapter.toElfFile e tv'))
+  else throw (Run.badPrecondition "renameDynamicSymbol" "UInt32 offset overflow")
+  else throw (Run.badPrecondition "renameDynamicSymbol" ".gnu.hash present")
+  else throw (Run.badPrecondition "renameDynamicSymbol" "no .dynsym")
+
+def runRenameDynamicSymbol (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => pure do
+    let oldName := p.positionalArg! "old" |>.as! String
+    let newName := p.positionalArg! "new" |>.as! String
+    let bytes ← renameOnce opts pe.elf oldName newName
+    .ok (.bytes bytes)
+
+/-- Parse a rename-map file's text into a list of `(oldName, newName)` pairs. -/
+def parseRenameMap (text : String) : List (String × String) :=
+  text.splitOn "\n" |>.filterMap fun line =>
+    let toks := (line.splitOn " ").flatMap (·.splitOn "\t") |>.filter (fun t => !t.isEmpty)
+    match toks with
+    | [o, n] => some (o, n)
+    | _      => none
+
+def runRenameDynamicSymbols (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => do
+    let mapPath := System.FilePath.mk (p.positionalArg! "map-file" |>.as! String)
+    match (← (IO.FS.readFile mapPath : IO String).toBaseIO) with
+    | .error e => pure (throw (.ioError s!"reading {mapPath}: {e}"))
+    | .ok mapText =>
+      -- Apply renames sequentially: each iteration parses the post-encode
+      -- bytes from the prior iteration to recover an ElfFile.
+      let rec loop (buf : ByteArray) :
+          List (String × String) → Except CliError ByteArray
+        | [] => .ok buf
+        | (o, n) :: rest => do
+          let pe' ← parse buf |>.mapError .parseFailed
+          let buf' ← renameOnce opts pe'.elf o n
+          loop buf' rest
+      pure do
+        let bytes ← loop (Patchelf.Elf.encodeWith opts.pageSize pe.elf)
+                          (parseRenameMap mapText)
+        .ok (.bytes bytes)
+
+/-- `roundtrip` — parse the input, re-encode, write the result.
+    No semantic mutation.  Useful for codec testing: parse+encode
+    should be byte-identity on already-laid-out inputs.  Honors
+    `--output` (writing in place, with no-write elision when the
+    bytes are unchanged). -/
+def runRoundtrip (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe =>
+    pure (.ok (.bytes (Patchelf.Elf.encodeWith opts.pageSize pe.elf)))
+
+def runValidate (p : Parsed) : IO UInt32 := do
+  let file := fileOf p
+  let bsOpt ← (IO.FS.readBinFile file : IO ByteArray).toBaseIO
+  match bsOpt with
+  | .error e => IO.eprintln s!"I/O error reading {file}: {e}"; return 4
+  | .ok bs =>
+    match validateBytes bs with
+    | .ok () => return 0
+    | .error f =>
+        IO.eprintln s!"validate: {file}: {f.message}"; return 5
+
+def runInspect (p : Parsed) : IO UInt32 := do
+  let file := fileOf p
+  let bsOpt ← (IO.FS.readBinFile file : IO ByteArray).toBaseIO
+  match bsOpt with
+  | .error e =>
+      IO.eprintln s!"I/O error reading {file}: {e}"; return 4
+  | .ok bs =>
+    match parse bs with
+    | .error err =>
+        IO.eprintln s!"parse failed: {repr err}"; return 2
+    | .ok pe =>
+        IO.println "ok"
+        IO.println s!"  phnum    = {pe.elf.header.phnum}"
+        IO.println s!"  shnum    = {pe.elf.header.shnum}"
+        IO.println s!"  shstrndx = {pe.elf.header.shstrndx}"
+        IO.println s!"  has dynstr  = {pe.elf.dynstr.isSome}"
+        IO.println s!"  has dynamic = {pe.elf.dynamic.isSome}"
+        IO.println s!"  has dynsym  = {pe.elf.dynsym.isSome}"
+        return 0
+
+/-! ## Subcommand definitions
+
+    Each command is built with the `[Cli|...]` macro DSL.  Op-specific
+    flags (e.g. `--force-rpath` for rpath ops, `--allowed-prefixes`
+    for shrink-rpath) are declared inline.  The mutating-op flags
+    (`--output`, `--no-validate`, `--page-size`, `--debug`) are
+    injected into mutating subcommands ONLY via the
+    `mutatingFlagsExt` extension.  Read-only subcommands (`print-*`,
+    `parse`, `validate`) don't accept these flags — supplying one
+    is a CLI error, surfacing user mistakes rather than silently
+    ignoring them. -/
+
+/-- Flags consumed by mutating ops:
+    * `--output` / `-o` — write target override.
+    * `--no-validate` — skip the loader-coherence validator.
+    * `--page-size` — override the layout engine's page-alignment.
+    * `--debug` — verbose stderr tracing. -/
+def mutatingFlags : Array Flag := #[
+  { shortName? := some "o", longName := "output",
+    description := "write output to PATH instead of in-place",
+    type := String },
+  { longName := "no-validate",
+    description := "skip the loader-coherence validator (UNSAFE)",
+    type := Unit },
+  { longName := "page-size",
+    description := "page-size override for PT_LOAD alignment (e.g. 0x10000 on AArch64)",
+    type := Nat },
+  { longName := "debug",
+    description := "emit verbose tracing on stderr",
+    type := Unit }
+]
+
+/-- Names of subcommands that DON'T accept the mutating flags.
+    Anything not in this list is mutating. -/
+def readOnlySubcommands : List String :=
+  ["print-os-abi", "print-execstack", "print-rpath", "print-needed",
+   "print-soname", "print-interpreter", "validate", "parse"]
+
+/-- Extension that injects `mutatingFlags` into every mutating
+    subcommand (i.e. every subcommand whose name isn't in
+    `readOnlySubcommands`).  This avoids 4-line flag repetition in
+    every mutating subcommand's `[Cli|...]` block AND keeps the read-
+    only subcommands clean — passing `--output` to `print-rpath` is
+    a real bug surface (the user probably meant to chain commands
+    differently), so the CLI rejects it with "Unknown flag". -/
+def mutatingFlagsExt : Extension := {
+  extend := fun cmd =>
+    let augmentedSubs := cmd.subCmds.map fun sub =>
+      if readOnlySubcommands.contains sub.meta.name then sub
+      else
+        let existing := sub.meta.flags
+        sub.update (flags := existing ++ mutatingFlags)
+    cmd.update (subCmds := augmentedSubs)
+}
+
+def cmdPrintOsAbi : Cmd := `[Cli|
+  "print-os-abi" VIA runPrintOsAbi;
+  "print the ELF header's EI_OSABI byte (canonical name)."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdSetOsAbi : Cmd := `[Cli|
+  "set-os-abi" VIA runSetOsAbi;
+  "set EI_OSABI to <abi> (e.g. linux, sysv, freebsd, or a numeric byte 0..255)."
+  ARGS:
+    abi : String;           "target OS/ABI"
+    file : String;          "ELF file to operate on"
+]
+
+def cmdSetExecstack : Cmd := `[Cli|
+  "set-execstack" VIA runSetExecstack;
+  "set PF_X on PT_GNU_STACK (allow executable stack)."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdClearExecstack : Cmd := `[Cli|
+  "clear-execstack" VIA runClearExecstack;
+  "clear PF_X on PT_GNU_STACK (deny executable stack)."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdPrintExecstack : Cmd := `[Cli|
+  "print-execstack" VIA runPrintExecstack;
+  "print execstack state (X = allowed, - = denied, ? = absent)."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdRemoveRpath : Cmd := `[Cli|
+  "remove-rpath" VIA runRemoveRpath;
+  "strip DT_RPATH/DT_RUNPATH entries."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdPrintRpath : Cmd := `[Cli|
+  "print-rpath" VIA runPrintRpath;
+  "print DT_RUNPATH (or DT_RPATH if no RUNPATH)."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdSetRpath : Cmd := `[Cli|
+  "set-rpath" VIA runSetRpath;
+  "set DT_RUNPATH (or DT_RPATH with --force-rpath)."
+  FLAGS:
+    f, "force-rpath";       "emit DT_RPATH instead of DT_RUNPATH"
+  ARGS:
+    path : String;          "filesystem path"
+    file : String;          "ELF file to operate on"
+]
+
+def cmdAddRpath : Cmd := `[Cli|
+  "add-rpath" VIA runAddRpath;
+  "append <path> to existing rpath with ':' separator."
+  FLAGS:
+    f, "force-rpath";       "emit DT_RPATH instead of DT_RUNPATH"
+  ARGS:
+    path : String;          "filesystem path"
+    file : String;          "ELF file to operate on"
+]
+
+def cmdShrinkRpath : Cmd := `[Cli|
+  "shrink-rpath" VIA runShrinkRpath;
+  "drop rpath entries that don't exist on disk; with --allowed-prefixes also drop entries not matching any allowed prefix."
+  FLAGS:
+    f, "force-rpath";          "emit DT_RPATH instead of DT_RUNPATH"
+    "allowed-prefixes" : String; "colon-separated whitelist of prefixes"
+  ARGS:
+    file : String;             "ELF file to operate on"
+]
+
+def cmdPrintNeeded : Cmd := `[Cli|
+  "print-needed" VIA runPrintNeeded;
+  "print DT_NEEDED library names, one per line."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdAddNeeded : Cmd := `[Cli|
+  "add-needed" VIA runAddNeeded;
+  "insert DT_NEEDED <lib> at the front of the needed list."
+  ARGS:
+    lib : String;           "shared library name (e.g. libc.so.6)"
+    file : String;          "ELF file to operate on"
+]
+
+def cmdRemoveNeeded : Cmd := `[Cli|
+  "remove-needed" VIA runRemoveNeeded;
+  "drop DT_NEEDED entries matching <lib>."
+  ARGS:
+    lib : String;           "shared library name (e.g. libc.so.6)"
+    file : String;          "ELF file to operate on"
+]
+
+def cmdReplaceNeeded : Cmd := `[Cli|
+  "replace-needed" VIA runReplaceNeeded;
+  "rewrite DT_NEEDED <old> to <new>; reuse-existing-offset fast path when <new> is already in dynstr."
+  ARGS:
+    old : String;           "current library name"
+    new : String;           "new library name"
+    file : String;          "ELF file to operate on"
+]
+
+def cmdPrintSoname : Cmd := `[Cli|
+  "print-soname" VIA runPrintSoname;
+  "print DT_SONAME (or nothing if absent)."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdSetSoname : Cmd := `[Cli|
+  "set-soname" VIA runSetSoname;
+  "set DT_SONAME to <soname> (typically the library's own name)."
+  ARGS:
+    soname : String;        "new SONAME"
+    file : String;          "ELF file to operate on"
+]
+
+def cmdRemoveSoname : Cmd := `[Cli|
+  "remove-soname" VIA runRemoveSoname;
+  "strip DT_SONAME."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdPrintInterpreter : Cmd := `[Cli|
+  "print-interpreter" VIA runPrintInterpreter;
+  "print PT_INTERP path."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdSetInterpreter : Cmd := `[Cli|
+  "set-interpreter" VIA runSetInterpreter;
+  "rewrite PT_INTERP path."
+  ARGS:
+    path : String;          "filesystem path"
+    file : String;          "ELF file to operate on"
+]
+
+def cmdAddDebugTag : Cmd := `[Cli|
+  "add-debug-tag" VIA runAddDebugTag;
+  "insert DT_DEBUG = 0 if absent (idempotent)."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdNoDefaultLib : Cmd := `[Cli|
+  "no-default-lib" VIA runNoDefaultLib;
+  "OR DF_1_NODEFLIB into DT_FLAGS_1."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdClearSymbolVersion : Cmd := `[Cli|
+  "clear-symbol-version" VIA runClearSymbolVersion;
+  "set the .gnu.version entry for <symbol> to VER_NDX_GLOBAL."
+  ARGS:
+    symbol : String;        "symbol name"
+    file : String;          "ELF file to operate on"
+]
+
+def cmdRenameDynamicSymbol : Cmd := `[Cli|
+  "rename-dynamic-symbol" VIA runRenameDynamicSymbol;
+  "rewrite a single .dynsym entry's st_name from <old> to <new>."
+  ARGS:
+    old : String;           "current symbol name"
+    new : String;           "new symbol name"
+    file : String;          "ELF file to operate on"
+]
+
+def cmdRenameDynamicSymbols : Cmd := `[Cli|
+  "rename-dynamic-symbols" VIA runRenameDynamicSymbols;
+  "apply renames listed in <map-file> (one '<old> <new>' pair per line)."
+  ARGS:
+    "map-file" : String;    "rename map file (one '<old> <new>' pair per line)"
+    file : String;          "ELF file to operate on"
+]
+
+def cmdValidate : Cmd := `[Cli|
+  validate VIA runValidate;
+  "check whether <file> is loader-coherent (decidable predicate; no mutation)."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdRoundtrip : Cmd := `[Cli|
+  roundtrip VIA runRoundtrip;
+  "parse <file> and re-encode it (no mutation).  Useful for codec testing: parse+encode should be byte-identity on already-laid-out inputs."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+def cmdParse : Cmd := `[Cli|
+  parse VIA runInspect;
+  "parse <file> and print a brief structural summary (debug/inspection)."
+  ARGS:
+    file : String;          "ELF file to operate on"
+]
+
+/-- The root command's `run` is reached only when no subcommand was
+    given; print usage to stderr and exit non-zero.  `--help` and
+    `--version` are intercepted by `Cmd.validate` before this fires. -/
+def runRoot (_p : Parsed) : IO UInt32 := do
+  IO.eprintln "no subcommand given; try `patchelf --help`"
+  return 1
+
+/-- Root command.  Subcommands are registered here.  We attach
+    `helpSubCommand` as an extension so users can write
+    `patchelf help` in addition to `patchelf --help`. -/
+def cmdRoot : Cmd := `[Cli|
+  patchelf VIA runRoot; ["patchelf (Lean 4 port)"]
+  "ELF rewriter (Lean 4 port).\n\
+   Run `patchelf <subcommand> --help` for per-command details."
+
+  SUBCOMMANDS:
+    cmdPrintOsAbi;
+    cmdSetOsAbi;
+    cmdSetExecstack;
+    cmdClearExecstack;
+    cmdPrintExecstack;
+    cmdRemoveRpath;
+    cmdPrintRpath;
+    cmdSetRpath;
+    cmdAddRpath;
+    cmdShrinkRpath;
+    cmdPrintNeeded;
+    cmdAddNeeded;
+    cmdRemoveNeeded;
+    cmdReplaceNeeded;
+    cmdPrintSoname;
+    cmdSetSoname;
+    cmdRemoveSoname;
+    cmdPrintInterpreter;
+    cmdSetInterpreter;
+    cmdAddDebugTag;
+    cmdNoDefaultLib;
+    cmdClearSymbolVersion;
+    cmdRenameDynamicSymbol;
+    cmdRenameDynamicSymbols;
+    cmdValidate;
+    cmdRoundtrip;
+    cmdParse
+
+  EXTENSIONS:
+    mutatingFlagsExt;
+    helpSubCommand;
+    versionSubCommand!
+]
 
 end Patchelf.CLI

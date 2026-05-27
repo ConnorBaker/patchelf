@@ -40,9 +40,10 @@ with open(sys.argv[1], "wb") as f:
             + shstrtab + dynstr + dynamic)
 PY
 
-"$PATCHELF_BIN" --set-rpath /first --set-rpath /second "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-rpath /first "$SCRATCH/input.elf"
 
-got=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/input.elf")
+"$PATCHELF_BIN" set-rpath /second "$SCRATCH/input.elf"
+got=$("$PATCHELF_BIN" print-rpath "$SCRATCH/input.elf")
 if [ "$got" != "/second" ]; then
   echo "FAIL: --print-rpath returned '$got', expected '/second'" >&2
   exit 1

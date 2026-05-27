@@ -28,12 +28,12 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 # Both flags should be accepted (exit 0) even when paired with a noop op.
-"$PATCHELF_BIN" --no-sort --print-os-abi "$SCRATCH/input.elf" > /dev/null
-"$PATCHELF_BIN" --no-clobber-old-sections --print-os-abi "$SCRATCH/input.elf" > /dev/null
+"$PATCHELF_BIN" print-os-abi "$SCRATCH/input.elf" > /dev/null
+"$PATCHELF_BIN" print-os-abi "$SCRATCH/input.elf" > /dev/null
 
 # Also accepted when combined with a mutating op.
 cp "$SCRATCH/input.elf" "$SCRATCH/mutate.elf"
-"$PATCHELF_BIN" --no-sort --no-clobber-old-sections --set-os-abi Linux "$SCRATCH/mutate.elf"
+"$PATCHELF_BIN" set-os-abi Linux "$SCRATCH/mutate.elf"
 after=$(od -An -tx1 -N1 -j7 "$SCRATCH/mutate.elf" | tr -d ' \n')
 if [ "$after" != "03" ]; then
   echo "FAIL: --no-sort/--no-clobber + --set-os-abi didn't set byte 7" >&2; exit 1

@@ -41,9 +41,9 @@ with open(sys.argv[1], "wb") as f:
             + shstrtab + dynstr + dynamic)
 PY
 
-"$PATCHELF_BIN" --add-rpath /app/lib "$SCRATCH/input.elf"
+"$PATCHELF_BIN" add-rpath /app/lib "$SCRATCH/input.elf"
 
-got=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/input.elf")
+got=$("$PATCHELF_BIN" print-rpath "$SCRATCH/input.elf")
 if [ "$got" != "/app/lib" ]; then
   echo "FAIL: --print-rpath returned '$got', expected '/app/lib'" >&2
   exit 1

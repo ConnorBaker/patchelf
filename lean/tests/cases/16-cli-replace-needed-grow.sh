@@ -59,7 +59,7 @@ PY
 original_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
 
 # Run: replace libold.so with libbrand.so (not in .dynstr → grows).
-"$PATCHELF_BIN" --replace-needed libold.so libbrand.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" replace-needed libold.so libbrand.so "$SCRATCH/input.elf"
 
 # File should have grown (new name appended + relocated dynstr).
 new_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
@@ -69,14 +69,14 @@ if [ "$new_size" -le "$original_size" ]; then
 fi
 
 # Re-parse must succeed (validates clauses 1-7).
-if ! "$PATCHELF_BIN" --parse "$SCRATCH/input.elf" >"$SCRATCH/parse.out" 2>&1; then
+if ! "$PATCHELF_BIN" parse "$SCRATCH/input.elf" >"$SCRATCH/parse.out" 2>&1; then
   echo "FAIL: post-replace reparse failed" >&2
   cat "$SCRATCH/parse.out" >&2
   exit 1
 fi
 
 # The DT_NEEDED name should now resolve to libbrand.so via --print-needed.
-needed=$("$PATCHELF_BIN" --print-needed "$SCRATCH/input.elf")
+needed=$("$PATCHELF_BIN" print-needed "$SCRATCH/input.elf")
 if [ "$needed" != "libbrand.so" ]; then
   echo "FAIL: post-replace DT_NEEDED value resolved to '$needed', expected 'libbrand.so'" >&2
   exit 1

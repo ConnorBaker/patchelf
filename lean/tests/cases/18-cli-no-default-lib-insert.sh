@@ -47,7 +47,7 @@ PY
 original_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
 
 # Run the op.
-"$PATCHELF_BIN" --no-default-lib "$SCRATCH/input.elf"
+"$PATCHELF_BIN" no-default-lib "$SCRATCH/input.elf"
 
 # File should have grown (one new DT_FLAGS_1 entry of 16 bytes + engine overhead).
 new_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
@@ -57,7 +57,7 @@ if [ "$new_size" -le "$original_size" ]; then
 fi
 
 # Re-parse to verify the result is well-formed.
-if ! "$PATCHELF_BIN" --parse "$SCRATCH/input.elf" >"$SCRATCH/parse.out" 2>&1; then
+if ! "$PATCHELF_BIN" parse "$SCRATCH/input.elf" >"$SCRATCH/parse.out" 2>&1; then
   echo "FAIL: post-no-default-lib reparse failed" >&2
   cat "$SCRATCH/parse.out" >&2
   exit 1

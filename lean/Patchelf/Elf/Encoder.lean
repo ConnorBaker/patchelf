@@ -35,6 +35,7 @@ public import Patchelf.Elf.Schemas
 public import Patchelf.Elf.DynamicLemmas
 public import Patchelf.Elf.SectionOps
 public import Patchelf.Elf.LayoutEngine
+public import Patchelf.Elf.GrowEOF
 
 @[expose] public section
 
@@ -55,13 +56,15 @@ def Section.writeContent (s : Section) : ByteArray :=
   | .dynamic ds  => writeArray Patchelf.Elf.DynEntry.write ds
   | .dynsym syms => writeArray Patchelf.Elf.Symbol.write syms
   | .versym vs   => writeArray writeU16 vs
-  | .nobits      => ByteArray.empty
+  | .nobits _    => ByteArray.empty
 
 /-- Project a byte-layer Section to a SectionHeader for the encoded shdr
-    table (content is dropped; size is derived from encodedSize). -/
+    table (content is dropped; size comes from `shdrSize`, which differs
+    from `encodedSize` only for NOBITS — NOBITS file size is 0 but the
+    shdr's `sh_size` records the runtime allocation). -/
 def toShdr (s : Section) : SectionHeader :=
   { name := s.name, type := s.type, flags := s.flags, addr := s.addr,
-    offset := s.offset, size := ⟨s.encodedSize⟩,
+    offset := s.offset, size := ⟨s.shdrSize⟩,
     link := s.link, info := s.info,
     addralign := s.addralign, entsize := s.entsize }
 
@@ -135,25 +138,60 @@ theorem encodeBody_eq (e : ElfFile) :
       e.sections.foldl (init := buf3) sectionFoldStep := by
   unfold encodeBody; rfl
 
+/-- Layout pre-pass for the encoder.  When the input is already laid out
+    (`layoutAlreadyValid e = true`), this is the identity — preserving
+    byte-for-byte stability for parser-derived inputs.  Otherwise:
+
+      1. `growEOFWith pageSize? e` — append stale sections to a new
+         region at file end (aligned to `pageSize? ⊔ maxPtLoadAlign`),
+         extend the last PT_LOAD to cover it, update PT_INTERP /
+         PT_DYNAMIC / shoff.
+      2. `syncDtAddrTagsInFile e` — rewrite `.dynamic`'s DT_STRTAB /
+         DT_SYMTAB / DT_HASH / DT_GNU_HASH / DT_VERNEED / DT_VERSYM /
+         DT_JMPREL / DT_REL / DT_RELA tags to point at the moved
+         sections' new addresses. -/
+def prepLayoutForEncodeWith (pageSize? : Option Nat) (e : ElfFile) : ElfFile :=
+  if layoutAlreadyValid e then e
+  else syncDtAddrTagsInFile (growEOFWith pageSize? e)
+
+/-- `prepLayoutForEncodeWith none` — auto-detected page size. -/
+def prepLayoutForEncode (e : ElfFile) : ElfFile :=
+  prepLayoutForEncodeWith none e
+
 /-- Encode a pure-IR ElfFile to bytes.
 
     Pipeline:
       0. Sync DT_STRSZ entries to match `.dynstr.bytes.size`.
-      1. Conditional `layoutForEncoding` if current layout has overlaps.
+      1. Conditional layout pre-pass via `prepLayoutForEncode`.
       2. `encodeBody` — the splice cascade.
 
     Marked `@[irreducible]`; use `encode_eq` for propositional
     unfolding. -/
 @[irreducible] def encode (e : ElfFile) : ByteArray :=
   let e := syncDtStrszInFile e
-  let e := if layoutAlreadyValid e then e else layoutForEncoding e
+  let e := prepLayoutForEncode e
+  encodeBody e
+
+/-- `encode` with an explicit page-size override.  When provided, the
+    layout pre-pass uses `max pageSize (maxPtLoadAlign e.phdrs)` for
+    appended-region alignment.  See `growEOFWith` for context. -/
+def encodeWith (pageSize? : Option Nat) (e : ElfFile) : ByteArray :=
+  let e := syncDtStrszInFile e
+  let e := prepLayoutForEncodeWith pageSize? e
   encodeBody e
 
 theorem encode_eq (e : ElfFile) :
     encode e =
-      encodeBody (let e' := syncDtStrszInFile e
-                  if layoutAlreadyValid e' then e' else layoutForEncoding e') := by
+      encodeBody (prepLayoutForEncode (syncDtStrszInFile e)) := by
   unfold encode; rfl
+
+/-- When the input is already laid out, `prepLayoutForEncode` is the
+    identity.  This is the master-theorem path. -/
+@[simp] theorem prepLayoutForEncode_of_layoutAlreadyValid
+    {e : ElfFile} (hLay : layoutAlreadyValid e = true) :
+    prepLayoutForEncode e = e := by
+  unfold prepLayoutForEncode prepLayoutForEncodeWith
+  simp [hLay]
 
 /-! ## Sizes match: writeContent.size = encodedSize.
 
@@ -179,7 +217,7 @@ theorem Section_writeContent_size_eq (s : Section) :
             Symbol.write_size syms
   | .versym vs =>
     exact writeArray_size_of_uniform Writer.writeU16 2 (fun _ => writeU16_size _) vs
-  | .nobits => simp
+  | .nobits _ => simp
 
 /-! ## Section-fold splice preservation
 

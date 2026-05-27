@@ -86,8 +86,7 @@ open Patchelf.Elf.Encoder
     contract is structural on the encoder's pipeline shape. -/
 theorem encode_size_eq (e : ElfFile) :
     (encode e).size = encodedFileSize
-      (let e1 := syncDtStrszInFile e
-       if layoutAlreadyValid e1 then e1 else layoutForEncoding e1) := by
+      (prepLayoutForEncode (syncDtStrszInFile e)) := by
   unfold encode encodeBody
   -- After the three header-class splices, the running buffer has size
   -- `encodedFileSize e` (by `zeroBytes_size` + three `splice_size`).
@@ -282,8 +281,7 @@ theorem extract_encode_eq_header_write (e : ElfFile)
     (hDisj : e.spliceRegionsDisjoint) :
     (encode e).extract 0 Layout.ehdrSize = ElfHeader.write e.header := by
   have hEncSz : (encode e).size = encodedFileSize
-      (let e1 := syncDtStrszInFile e
-       if layoutAlreadyValid e1 then e1 else layoutForEncoding e1) :=
+      (prepLayoutForEncode (syncDtStrszInFile e)) :=
     encode_size_eq e
   have hEncSz' : (encode e).size = encodedFileSize e := by
     rw [hEncSz]; show encodedFileSize _ = _; rw [hSync]; simp [hLay]
@@ -1066,7 +1064,7 @@ theorem shdrs_decode_encode (e : ElfFile)
     (hDisj : e.spliceRegionsDisjoint)
     (hVal : e.IsValid)
     (hSizeFit : ∀ (i : Nat) (h : i < e.sections.size),
-      (e.sections[i]'h).encodedSize < UInt64.size)
+      (e.sections[i]'h).shdrSize < UInt64.size)
     (hShdrFit : ∀ (i : Nat) (h : i < e.sections.size),
       (e.sections[i]'h).addr.val < UInt64.size ∧
       (e.sections[i]'h).offset.val < UInt64.size ∧
@@ -2002,7 +2000,7 @@ theorem section_decode_encode (e : ElfFile)
     (hVal : e.IsValid)
     (hTCM : e.sectionsTypeContentMatch)
     (hSizeFit : ∀ (i : Nat) (h : i < e.sections.size),
-      (e.sections[i]'h).encodedSize < UInt64.size)
+      (e.sections[i]'h).shdrSize < UInt64.size)
     (hNullEmpty : ∀ (i : Nat) (h : i < e.sections.size),
       (e.sections[i]'h).type = ShType.SHT_NULL →
       ∃ bs, (e.sections[i]'h).content = .raw bs ∧ bs.size = 0)
@@ -2019,8 +2017,10 @@ theorem section_decode_encode (e : ElfFile)
   -- Compute (toShdr s).type / .offset / .size.val.
   have hToShdrType : (toShdr (e.sections[i]'hi)).type = (e.sections[i]'hi).type := rfl
   have hToShdrOff : (toShdr (e.sections[i]'hi)).offset = (e.sections[i]'hi).offset := rfl
+  -- (toShdr s).size.val = s.shdrSize.  For non-NOBITS, shdrSize = encodedSize;
+  -- for NOBITS, shdrSize = memSize (handled separately in the NOBITS case).
   have hToShdrSz : (toShdr (e.sections[i]'hi)).size.val
-                   = (e.sections[i]'hi).encodedSize := rfl
+                   = (e.sections[i]'hi).shdrSize := rfl
   -- Type-content match for this i.
   have hTCMi : ElfFile.Section.typeContentMatchesB (e.sections[i]'hi) = true := by
     have hAll := hTCM
@@ -2036,7 +2036,15 @@ theorem section_decode_encode (e : ElfFile)
     unfold ElfFile.Section.typeContentMatchesB at hTCMi
     rw [if_pos hT_NB] at hTCMi
     match hC : (e.sections[i]'hi).content with
-    | .nobits => rfl
+    | .nobits memSize =>
+      -- decodeSectionContent on NOBITS produces `.nobits sh.size.val`.
+      -- After the `rw [hToShdrSz]` above, the goal has `s.shdrSize` in
+      -- the size slot.  By `s.content = .nobits memSize`, `s.shdrSize = memSize`.
+      show SectionContent.nobits (e.sections[i]'hi).shdrSize
+        = SectionContent.nobits memSize
+      have : (e.sections[i]'hi).shdrSize = memSize := by
+        unfold Section.shdrSize; rw [hC]
+      rw [this]
     | .raw _      => simp [hC] at hTCMi
     | .strtab _   => simp [hC] at hTCMi
     | .dynamic _  => simp [hC] at hTCMi
@@ -2051,8 +2059,11 @@ theorem section_decode_encode (e : ElfFile)
       rw [if_neg hT_NB, if_pos hT_ST] at hTCMi
       match hC : (e.sections[i]'hi).content with
       | .strtab st =>
+        have : (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize := by
+          unfold Section.shdrSize; rw [hC]
+        rw [this]
         rw [decodeStringTable_encode_strtab e hSync hLay hDisj i hi hT_NB hT_NL st hC]
-      | .nobits     => simp [hC] at hTCMi
+      | .nobits _   => simp [hC] at hTCMi
       | .raw _      => simp [hC] at hTCMi
       | .dynamic _  => simp [hC] at hTCMi
       | .dynsym _   => simp [hC] at hTCMi
@@ -2066,10 +2077,13 @@ theorem section_decode_encode (e : ElfFile)
         rw [if_neg hT_NB, if_neg hT_ST, if_pos hT_DY] at hTCMi
         match hC : (e.sections[i]'hi).content with
         | .dynamic ds =>
+          have : (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize := by
+            unfold Section.shdrSize; rw [hC]
+          rw [this]
           obtain ⟨hDS_size, hDS_lastNull, hDS_noEarly⟩ := hDynWF i hi ds hC
           rw [decodeDynamic_encode_dynamic e hSync hLay hDisj i hi hT_NB hT_NL
                 ds hC hDS_size hDS_lastNull hDS_noEarly]
-        | .nobits     => simp [hC] at hTCMi
+        | .nobits _   => simp [hC] at hTCMi
         | .raw _      => simp [hC] at hTCMi
         | .strtab _   => simp [hC] at hTCMi
         | .dynsym _   => simp [hC] at hTCMi
@@ -2083,8 +2097,11 @@ theorem section_decode_encode (e : ElfFile)
           rw [if_neg hT_NB, if_neg hT_ST, if_neg hT_DY, if_pos hT_DS] at hTCMi
           match hC : (e.sections[i]'hi).content with
           | .dynsym syms =>
+            have : (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize := by
+              unfold Section.shdrSize; rw [hC]
+            rw [this]
             rw [decodeDynsym_encode_dynsym e hSync hLay hDisj i hi hT_NB hT_NL syms hC]
-          | .nobits     => simp [hC] at hTCMi
+          | .nobits _   => simp [hC] at hTCMi
           | .raw _      => simp [hC] at hTCMi
           | .strtab _   => simp [hC] at hTCMi
           | .dynamic _  => simp [hC] at hTCMi
@@ -2099,8 +2116,11 @@ theorem section_decode_encode (e : ElfFile)
                 if_pos hT_VS] at hTCMi
             match hC : (e.sections[i]'hi).content with
             | .versym vs =>
+              have : (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize := by
+                unfold Section.shdrSize; rw [hC]
+              rw [this]
               rw [decodeVersym_encode_versym e hSync hLay hDisj i hi hT_NB hT_NL vs hC]
-            | .nobits     => simp [hC] at hTCMi
+            | .nobits _   => simp [hC] at hTCMi
             | .raw _      => simp [hC] at hTCMi
             | .strtab _   => simp [hC] at hTCMi
             | .dynamic _  => simp [hC] at hTCMi
@@ -2112,6 +2132,9 @@ theorem section_decode_encode (e : ElfFile)
                 if_neg hT_VS] at hTCMi
             match hC : (e.sections[i]'hi).content with
             | .raw bs =>
+              have : (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize := by
+                unfold Section.shdrSize; rw [hC]
+              rw [this]
               by_cases hT_NL_default : (e.sections[i]'hi).type = ShType.SHT_NULL
               · -- SHT_NULL: use the empty-bs discharge.
                 obtain ⟨bs', hContent', hEmpty'⟩ := hNullEmpty i hi hT_NL_default
@@ -2122,7 +2145,7 @@ theorem section_decode_encode (e : ElfFile)
                 subst hBsEq
                 rw [decodeRaw_encode_null e i hi hT_NL_default bs hC hEmpty']
               · rw [decodeRaw_encode_raw e hSync hLay hDisj i hi hT_NB hT_NL_default bs hC]
-            | .nobits     => simp [hC] at hTCMi
+            | .nobits _   => simp [hC] at hTCMi
             | .strtab _   => simp [hC] at hTCMi
             | .dynamic _  => simp [hC] at hTCMi
             | .dynsym _   => simp [hC] at hTCMi
@@ -2169,7 +2192,7 @@ structure DecodeRoundtripWitness (e : ElfFile) : Prop where
       e.header.shoff.val e.header.shnum.toNat
       = e.sections.map (fun s =>
           ({ name := s.name, type := s.type, flags := s.flags, addr := s.addr,
-             offset := s.offset, size := ⟨s.encodedSize⟩,
+             offset := s.offset, size := ⟨s.shdrSize⟩,
              link := s.link, info := s.info, addralign := s.addralign,
              entsize := s.entsize }
             : SectionHeader))
@@ -2183,7 +2206,7 @@ structure DecodeRoundtripWitness (e : ElfFile) : Prop where
            flags := (e.sections[i]'h).flags,
            addr := (e.sections[i]'h).addr,
            offset := (e.sections[i]'h).offset,
-           size := ⟨(e.sections[i]'h).encodedSize⟩,
+           size := ⟨(e.sections[i]'h).shdrSize⟩,
            link := (e.sections[i]'h).link,
            info := (e.sections[i]'h).info,
            addralign := (e.sections[i]'h).addralign,
@@ -2210,9 +2233,10 @@ structure EncodePreconditions (e : ElfFile) : Prop where
   identValid : IdentBytesValid e
   /-- Each section's type matches its content constructor. -/
   typesMatch : e.sectionsTypeContentMatch
-  /-- Each section's encodedSize fits in UInt64. -/
+  /-- Each section's shdr size fits in UInt64.  For non-NOBITS this is
+      `encodedSize`; for NOBITS this is the declared `memSize`. -/
   sizeFit : ∀ (i : Nat) (h : i < e.sections.size),
-    (e.sections[i]'h).encodedSize < UInt64.size
+    (e.sections[i]'h).shdrSize < UInt64.size
   /-- SHT_NULL sections (e.g. the conventional sections[0]) have
       `.raw ByteArray.empty` content. -/
   nullEmpty : ∀ (i : Nat) (h : i < e.sections.size),
@@ -2283,7 +2307,7 @@ theorem sectionsFromShdrs_eq (e : ElfFile)
     (hVal : e.IsValid)
     (hTCM : e.sectionsTypeContentMatch)
     (hSizeFit : ∀ (i : Nat) (h : i < e.sections.size),
-      (e.sections[i]'h).encodedSize < UInt64.size)
+      (e.sections[i]'h).shdrSize < UInt64.size)
     (hNullEmpty : ∀ (i : Nat) (h : i < e.sections.size),
       (e.sections[i]'h).type = ShType.SHT_NULL →
       ∃ bs, (e.sections[i]'h).content = .raw bs ∧ bs.size = 0) :
@@ -2353,7 +2377,7 @@ theorem parse_encode_roundtrip_witness (e : ParsedElf)
   have hSecs : sectionsFromShdrs (encode e.elf)
       (e.elf.sections.map (fun s =>
         ({ name := s.name, type := s.type, flags := s.flags, addr := s.addr,
-           offset := s.offset, size := ⟨s.encodedSize⟩,
+           offset := s.offset, size := ⟨s.shdrSize⟩,
            link := s.link, info := s.info, addralign := s.addralign,
            entsize := s.entsize }
           : SectionHeader)))
@@ -2752,6 +2776,54 @@ theorem sectionFromShdr_encodedSize_le (bs : ByteArray) (sh : SectionHeader) :
     unfold Reader.readBytes
     rw [ByteArray.size_extract]; omega
 
+/-- `sectionFromShdr`'s `shdrSize` is bounded by `sh.size.val`.  For
+    NOBITS sections, shdrSize = memSize = sh.size.val (exact equality);
+    for non-NOBITS, shdrSize = encodedSize ≤ sh.size.val (via
+    `sectionFromShdr_encodedSize_le`). -/
+theorem sectionFromShdr_shdrSize_le (bs : ByteArray) (sh : SectionHeader) :
+    (sectionFromShdr bs sh).shdrSize ≤ sh.size.val := by
+  by_cases hT_NB : sh.type = ShType.SHT_NOBITS
+  · -- NOBITS: content is `.nobits sh.size.val`, so shdrSize = sh.size.val.
+    show (sectionFromShdr bs sh).shdrSize ≤ sh.size.val
+    have hContent : (sectionFromShdr bs sh).content = .nobits sh.size.val := by
+      unfold sectionFromShdr decodeSectionContent
+      simp [hT_NB]
+    unfold Section.shdrSize
+    rw [hContent]
+    -- Goal: sh.size.val ≤ sh.size.val.
+    exact Nat.le_refl _
+  · -- non-NOBITS: shdrSize = encodedSize ≤ sh.size.val (the latter by
+    -- sectionFromShdr_encodedSize_le).
+    have hContentNotNB : ∀ memSize, (sectionFromShdr bs sh).content ≠ .nobits memSize := by
+      intro memSize hEq
+      have hC : (sectionFromShdr bs sh).content = decodeSectionContent bs sh := by
+        unfold sectionFromShdr; simp
+      rw [hC] at hEq
+      unfold decodeSectionContent at hEq
+      rw [if_neg hT_NB] at hEq
+      -- decodeSectionContent's residual after stripping NOBITS branch is a
+      -- nested 4-way if cascade.  Each branch's body is a non-`.nobits`
+      -- constructor, so every concrete value has constructor ≠ `.nobits`.
+      -- `split` repeatedly until all branches are concrete; each closes by
+      -- `injection hEq` (the constructor mismatch derives `False`).
+      split at hEq
+      all_goals (try (split at hEq))
+      all_goals (try (split at hEq))
+      all_goals (try (split at hEq))
+      all_goals injection hEq
+    have hShdrSize_eq : (sectionFromShdr bs sh).shdrSize
+                      = (sectionFromShdr bs sh).encodedSize := by
+      unfold Section.shdrSize
+      cases hC : (sectionFromShdr bs sh).content with
+      | nobits memSize => exact absurd hC (hContentNotNB memSize)
+      | raw _ => rfl
+      | strtab _ => rfl
+      | dynamic _ => rfl
+      | dynsym _ => rfl
+      | versym _ => rfl
+    rw [hShdrSize_eq]
+    exact sectionFromShdr_encodedSize_le bs sh
+
 /-- For SHT_NULL parser-output sections with `sh.size = 0` (the spec
     convention), the content is `.raw <empty bytes>`. -/
 theorem sectionFromShdr_null_empty (bs : ByteArray) (sh : SectionHeader)
@@ -2898,7 +2970,7 @@ theorem encodePreconditions_of_parser
         congr 1]
       exact this
     rw [hSecEq]
-    have := sectionFromShdr_encodedSize_le bs (shdrs[i]'hShdrI)
+    have := sectionFromShdr_shdrSize_le bs (shdrs[i]'hShdrI)
     have hShFit := hShdrSizes i hShdrI
     omega
   nullEmpty := by

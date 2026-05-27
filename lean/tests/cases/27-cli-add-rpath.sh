@@ -38,15 +38,15 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 # Sanity: initial rpath is "/existing".
-initial=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/base.elf")
+initial=$("$PATCHELF_BIN" print-rpath "$SCRATCH/base.elf")
 if [ "$initial" != "/existing" ]; then
   echo "FAIL: initial rpath = '$initial', expected /existing" >&2; exit 1
 fi
 
 # --add-rpath /new: expect "/existing:/new".
 cp "$SCRATCH/base.elf" "$SCRATCH/appended.elf"
-"$PATCHELF_BIN" --add-rpath /new "$SCRATCH/appended.elf"
-result=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/appended.elf")
+"$PATCHELF_BIN" add-rpath /new "$SCRATCH/appended.elf"
+result=$("$PATCHELF_BIN" print-rpath "$SCRATCH/appended.elf")
 if [ "$result" != "/existing:/new" ]; then
   echo "FAIL: --add-rpath result = '$result', expected /existing:/new" >&2; exit 1
 fi

@@ -47,7 +47,7 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 # Before: both libs listed.
-before=$("$PATCHELF_BIN" --print-needed "$SCRATCH/input.elf")
+before=$("$PATCHELF_BIN" print-needed "$SCRATCH/input.elf")
 case "$before" in
   *libfoo.so*) ;;
   *) echo "FAIL (setup): pre-op output missing libfoo.so: $before" >&2; exit 1 ;;
@@ -58,9 +58,9 @@ case "$before" in
 esac
 
 # Remove libfoo.so.
-"$PATCHELF_BIN" --remove-needed libfoo.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" remove-needed libfoo.so "$SCRATCH/input.elf"
 
-after=$("$PATCHELF_BIN" --print-needed "$SCRATCH/input.elf")
+after=$("$PATCHELF_BIN" print-needed "$SCRATCH/input.elf")
 case "$after" in
   *libfoo.so*) echo "FAIL: libfoo.so still listed: $after" >&2; exit 1 ;;
 esac

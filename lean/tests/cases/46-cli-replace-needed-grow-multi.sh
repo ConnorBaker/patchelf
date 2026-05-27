@@ -44,10 +44,10 @@ with open(sys.argv[1], "wb") as f:
 PY
 
 # Replace libold → libbrand (grow path — libbrand not in dynstr).
-"$PATCHELF_BIN" --replace-needed libold.so libbrand.so "$SCRATCH/input.elf"
+"$PATCHELF_BIN" replace-needed libold.so libbrand.so "$SCRATCH/input.elf"
 
 # Expect: libbrand.so first (renamed), libbar.so second (unchanged).
-actual=$("$PATCHELF_BIN" --print-needed "$SCRATCH/input.elf")
+actual=$("$PATCHELF_BIN" print-needed "$SCRATCH/input.elf")
 expected='libbrand.so
 libbar.so'
 if [ "$actual" != "$expected" ]; then

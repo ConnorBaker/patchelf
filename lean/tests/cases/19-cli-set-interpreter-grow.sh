@@ -45,7 +45,7 @@ PY
 original_size=$(wc -c <"$SCRATCH/input.elf" | tr -d ' ')
 
 # Initial state: old path is "/a.so".
-before_path=$("$PATCHELF_BIN" --print-interpreter "$SCRATCH/input.elf")
+before_path=$("$PATCHELF_BIN" print-interpreter "$SCRATCH/input.elf")
 if [ "$before_path" != "/a.so" ]; then
   echo "FAIL: pre-mutation print-interpreter returned '$before_path'" >&2
   exit 1
@@ -54,10 +54,10 @@ fi
 # Rewrite to a LONG path that cannot fit the 8-byte slot.
 # "/lib64/ld-linux-x86-64.so.2" is 27 bytes + NUL = 28 bytes, way bigger than 8.
 new_path="/lib64/ld-linux-x86-64.so.2"
-"$PATCHELF_BIN" --set-interpreter "$new_path" "$SCRATCH/input.elf"
+"$PATCHELF_BIN" set-interpreter --no-validate "$new_path" "$SCRATCH/input.elf"
 
 # --print-interpreter now returns the new path.
-after_path=$("$PATCHELF_BIN" --print-interpreter "$SCRATCH/input.elf")
+after_path=$("$PATCHELF_BIN" print-interpreter "$SCRATCH/input.elf")
 if [ "$after_path" != "$new_path" ]; then
   echo "FAIL: post-mutation print-interpreter returned '$after_path', expected '$new_path'" >&2
   exit 1

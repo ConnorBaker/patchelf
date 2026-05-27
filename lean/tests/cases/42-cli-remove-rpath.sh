@@ -39,15 +39,15 @@ with open(sys.argv[1], "wb") as f:
             + shstrtab + dynstr + dynamic)
 PY
 
-before=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/input.elf")
+before=$("$PATCHELF_BIN" print-rpath "$SCRATCH/input.elf")
 case "$before" in
   *"/usr"*) ;;
   *) echo "FAIL (setup): pre-op rpath was: $before" >&2; exit 1 ;;
 esac
 
-"$PATCHELF_BIN" --remove-rpath "$SCRATCH/input.elf"
+"$PATCHELF_BIN" remove-rpath "$SCRATCH/input.elf"
 
-after=$("$PATCHELF_BIN" --print-rpath "$SCRATCH/input.elf")
+after=$("$PATCHELF_BIN" print-rpath "$SCRATCH/input.elf")
 if [ -n "$after" ] && [ "$after" != "" ]; then
   case "$after" in
     *"/usr"*) echo "FAIL: rpath still present: $after" >&2; exit 1 ;;
