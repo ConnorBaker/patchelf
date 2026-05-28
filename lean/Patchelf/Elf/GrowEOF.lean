@@ -743,6 +743,22 @@ theorem updatePhdrsAfterMove_type
   unfold updatePhdrsAfterMove
   exact Array.size_mapIdx
 
+/-! ## Shared helpers for the fresh-PT_LOAD `_preserves_loadable` proofs
+
+    The two fresh-PT_LOAD branches push a `freshPtLoad` phdr onto the end of
+    the array.  These three facts characterize that pushed entry. -/
+
+/-- `roundUp n align` is a multiple of `align` (when `align ≠ 0`). -/
+theorem roundUp_mod_self (n align : Nat) (h : align ≠ 0) :
+    roundUp n align % align = 0 := by
+  unfold roundUp; rw [if_neg h]; exact Nat.mul_mod_left _ _
+
+/-- Pushing `x` onto an array of size `n`, the element at index `n` is `x`. -/
+theorem array_getElem_at_base_size {α : Type _} (xs : Array α) (x : α) (n : Nat)
+    (hn : xs.size = n) (h : n < (xs.push x).size) :
+    (xs.push x)[n]'h = x := by
+  subst hn; exact Array.getElem_push_eq
+
 /-! ## Main entry point -/
 
 /-- Is it safe to extend the last PT_LOAD to cover a new region starting at
@@ -810,6 +826,21 @@ def freshPtLoad (startOffset startPage appendedBytes alignStartPage : Nat) :
     filesz := ⟨appendedBytes⟩
     memsz  := ⟨appendedBytes⟩
     align  := ⟨alignStartPage⟩ }
+
+/-- A fresh PT_LOAD whose offset and vaddr are both `roundUp _ align` for the
+    SAME `align` satisfies the `segmentCongruence` disjunction: both sides are
+    `≡ 0 (mod align)` (or `align = 0`, the degenerate `≤ 1` branch).  Used by
+    the two fresh-PT_LOAD `_preserves_loadable` proofs. -/
+theorem freshPtLoad_roundUp_congruence (a b appendedBytes align : Nat) :
+    (freshPtLoad (roundUp a align) (roundUp b align) appendedBytes align).align.val ≤ 1 ∨
+    (freshPtLoad (roundUp a align) (roundUp b align) appendedBytes align).offset.val
+      % (freshPtLoad (roundUp a align) (roundUp b align) appendedBytes align).align.val
+    = (freshPtLoad (roundUp a align) (roundUp b align) appendedBytes align).vaddr.val
+      % (freshPtLoad (roundUp a align) (roundUp b align) appendedBytes align).align.val := by
+  unfold freshPtLoad; simp only []
+  by_cases h : align = 0
+  · left; omega
+  · right; rw [roundUp_mod_self a align h, roundUp_mod_self b align h]
 
 /-- Append-at-end layout strategy: when sections overflow their original
     slots, move them to a new region at file end, extend the last PT_LOAD
@@ -2954,6 +2985,157 @@ theorem growEOFWithFreshPtLoad_produces_spliceRegionsDisjoint
       have : (newSections[j]'hjN).offset.val + (newSections[j]'hjN).encodedSize
             ≤ startOffset + appendedBytes := hPlace.2.2
       omega
+
+/-! ## `growEOFWithFreshPtLoad` preserves `IsLoadable`
+
+    The in-place fresh-PT_LOAD branch.  The phdrs array is
+    `updatePhdrsAfterMove e.phdrs none … |>.push (freshPtLoad …)`, so index
+    `< e.phdrs.size` lifts the Layer-1 facts through `Array.getElem_push_lt`
+    while index `= e.phdrs.size` is the pushed fresh PT_LOAD: PT_LOAD type
+    (vacuous for the agreement clauses) with offset/vaddr both `roundUp _
+    align` hence congruent. -/
+
+/-- `growEOFWithFreshPtLoad` preserves `interpIdx`. -/
+@[simp] theorem growEOFWithFreshPtLoad_interpIdx
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).interpIdx = e.interpIdx :=
+  growEOFWithFreshPtLoad_findIdxByName pageSize? e _
+
+/-- Pre-existing phdr (index `< e.phdrs.size`) type = input type. -/
+theorem growEOFWithFreshPtLoad_phdr_lt_type
+    (pageSize? : Option Nat) (e : ElfFile) (i : Nat)
+    (hi : i < (growEOFWithFreshPtLoad pageSize? e).phdrs.size)
+    (hiE : i < e.phdrs.size) :
+    ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).type = (e.phdrs[i]'hiE).type := by
+  unfold growEOFWithFreshPtLoad; unfold growEOFWithFreshPtLoad at hi
+  rw [Array.getElem_push_lt (by rw [updatePhdrsAfterMove_size]; exact hiE)]
+  exact updatePhdrsAfterMove_type (i := i) e.phdrs _ _ _ _ _ _ _ hiE
+
+/-- Pre-existing PT_INTERP phdr: output offset = output `.interp` offset. -/
+theorem growEOFWithFreshPtLoad_phdr_lt_pt_interp
+    (pageSize? : Option Nat) (e : ElfFile) (i : Nat)
+    (hi : i < (growEOFWithFreshPtLoad pageSize? e).phdrs.size)
+    (hiE : i < e.phdrs.size)
+    (hPhT : (e.phdrs[i]'hiE).type = PhType.PT_INTERP)
+    {iS : Nat} (hIdx : e.interpIdx = some iS)
+    (hS : iS < (growEOFWithFreshPtLoad pageSize? e).sections.size) :
+    ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).offset
+      = ((growEOFWithFreshPtLoad pageSize? e).sections[iS]'hS).offset := by
+  unfold growEOFWithFreshPtLoad; unfold growEOFWithFreshPtLoad at hi hS
+  rw [Array.getElem_push_lt (by rw [updatePhdrsAfterMove_size]; exact hiE)]
+  exact updatePhdrsAfterMove_pt_interp (i := i) (iS := iS) e.phdrs _ _ _ _ _ _ hiE hPhT hIdx hS
+
+/-- Pre-existing PT_DYNAMIC phdr: output offset = output `.dynamic` offset. -/
+theorem growEOFWithFreshPtLoad_phdr_lt_pt_dynamic
+    (pageSize? : Option Nat) (e : ElfFile) (i : Nat)
+    (hi : i < (growEOFWithFreshPtLoad pageSize? e).phdrs.size)
+    (hiE : i < e.phdrs.size)
+    (hPhT : (e.phdrs[i]'hiE).type = PhType.PT_DYNAMIC)
+    {iS : Nat} (hIdx : e.dynamicIdx = some iS)
+    (hS : iS < (growEOFWithFreshPtLoad pageSize? e).sections.size) :
+    ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).offset
+      = ((growEOFWithFreshPtLoad pageSize? e).sections[iS]'hS).offset := by
+  unfold growEOFWithFreshPtLoad; unfold growEOFWithFreshPtLoad at hi hS
+  rw [Array.getElem_push_lt (by rw [updatePhdrsAfterMove_size]; exact hiE)]
+  exact updatePhdrsAfterMove_pt_dynamic (i := i) (iS := iS) e.phdrs _ _ _ _ _ _ hiE hPhT hIdx hS
+
+/-- Pre-existing PT_LOAD phdr: output keeps type/offset/vaddr/align. -/
+theorem growEOFWithFreshPtLoad_phdr_lt_pt_load
+    (pageSize? : Option Nat) (e : ElfFile) (i : Nat)
+    (hi : i < (growEOFWithFreshPtLoad pageSize? e).phdrs.size)
+    (hiE : i < e.phdrs.size)
+    (hPhT : (e.phdrs[i]'hiE).type = PhType.PT_LOAD) :
+    ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).type = (e.phdrs[i]'hiE).type ∧
+    ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).offset = (e.phdrs[i]'hiE).offset ∧
+    ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).vaddr = (e.phdrs[i]'hiE).vaddr ∧
+    ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).align = (e.phdrs[i]'hiE).align := by
+  unfold growEOFWithFreshPtLoad; unfold growEOFWithFreshPtLoad at hi
+  rw [Array.getElem_push_lt (by rw [updatePhdrsAfterMove_size]; exact hiE)]
+  exact updatePhdrsAfterMove_pt_load_offset_vaddr_align (i := i) e.phdrs _ _ _ _ _ _ _ hiE hPhT
+
+/-- The pushed fresh PT_LOAD (index `= e.phdrs.size`) has type PT_LOAD. -/
+theorem growEOFWithFreshPtLoad_phdr_fresh_type
+    (pageSize? : Option Nat) (e : ElfFile) (i : Nat)
+    (hi : i < (growEOFWithFreshPtLoad pageSize? e).phdrs.size)
+    (hiNot : ¬ i < e.phdrs.size) :
+    ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).type = PhType.PT_LOAD := by
+  have hiSize : i = e.phdrs.size := by
+    have := growEOFWithFreshPtLoad_phdrs_size pageSize? e; omega
+  subst hiSize
+  unfold growEOFWithFreshPtLoad
+  rw [array_getElem_at_base_size _ _ _ (updatePhdrsAfterMove_size _ _ _ _ _ _ _)]; rfl
+
+/-- The pushed fresh PT_LOAD satisfies the `segmentCongruence` disjunction. -/
+theorem growEOFWithFreshPtLoad_phdr_fresh_congruence
+    (pageSize? : Option Nat) (e : ElfFile) (i : Nat)
+    (hi : i < (growEOFWithFreshPtLoad pageSize? e).phdrs.size)
+    (hiNot : ¬ i < e.phdrs.size) :
+    ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).align.val ≤ 1 ∨
+    ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).offset.val
+      % ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).align.val
+    = ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).vaddr.val
+      % ((growEOFWithFreshPtLoad pageSize? e).phdrs[i]'hi).align.val := by
+  have hiSize : i = e.phdrs.size := by
+    have := growEOFWithFreshPtLoad_phdrs_size pageSize? e; omega
+  subst hiSize
+  unfold growEOFWithFreshPtLoad
+  rw [array_getElem_at_base_size _ _ _ (updatePhdrsAfterMove_size _ _ _ _ _ _ _)]
+  exact freshPtLoad_roundUp_congruence _ _ _ _
+
+/-- `growEOFWithFreshPtLoad` preserves `IsLoadable`.  Needs the phnum bound
+    (for `_preserves_valid`), `canAddFreshPtLoad` + `headerSectionDisjoint`
+    (for `sections_nonoverlapping` via `_produces_spliceRegionsDisjoint`). -/
+theorem growEOFWithFreshPtLoad_preserves_loadable
+    (pageSize? : Option Nat) (e : ElfFile)
+    (hLoad : e.IsLoadable)
+    (hPhdrFit : (e.phdrs.size + 1) < UInt16.size)
+    (hCan : canAddFreshPtLoad e = true)
+    (hHeaderSec : e.headerSectionDisjoint) :
+    (growEOFWithFreshPtLoad pageSize? e).IsLoadable := by
+  refine
+    { toIsValid := growEOFWithFreshPtLoad_preserves_valid pageSize? e hLoad.toIsValid hPhdrFit
+      sections_nonoverlapping := ?_
+      pt_interp_agrees := ?_
+      pt_dynamic_agrees := ?_
+      segment_congruent := ?_ }
+  · exact (growEOFWithFreshPtLoad_produces_spliceRegionsDisjoint pageSize? e hCan
+            hHeaderSec).sections_disjoint
+  · unfold ElfFile.ptInterpAgreement
+    rw [growEOFWithFreshPtLoad_interpIdx]
+    cases hI : e.interpIdx with
+    | none => trivial
+    | some iS =>
+      intro hLt iPh hPh hPhT
+      by_cases hiE : iPh < e.phdrs.size
+      · have hPhTE : (e.phdrs[iPh]'hiE).type = PhType.PT_INTERP := by
+          rw [← growEOFWithFreshPtLoad_phdr_lt_type pageSize? e iPh hPh hiE]; exact hPhT
+        exact growEOFWithFreshPtLoad_phdr_lt_pt_interp pageSize? e iPh hPh hiE hPhTE hI hLt
+      · exfalso
+        rw [growEOFWithFreshPtLoad_phdr_fresh_type pageSize? e iPh hPh hiE] at hPhT
+        exact absurd hPhT (by decide)
+  · unfold ElfFile.ptDynamicAgreement
+    rw [growEOFWithFreshPtLoad_dynamicIdx]
+    cases hD : e.dynamicIdx with
+    | none => trivial
+    | some iS =>
+      intro hLt iPh hPh hPhT
+      by_cases hiE : iPh < e.phdrs.size
+      · have hPhTE : (e.phdrs[iPh]'hiE).type = PhType.PT_DYNAMIC := by
+          rw [← growEOFWithFreshPtLoad_phdr_lt_type pageSize? e iPh hPh hiE]; exact hPhT
+        exact growEOFWithFreshPtLoad_phdr_lt_pt_dynamic pageSize? e iPh hPh hiE hPhTE hD hLt
+      · exfalso
+        rw [growEOFWithFreshPtLoad_phdr_fresh_type pageSize? e iPh hPh hiE] at hPhT
+        exact absurd hPhT (by decide)
+  · unfold ElfFile.segmentCongruence
+    intro iPh hPh hPhT
+    by_cases hiE : iPh < e.phdrs.size
+    · have hPhTE : (e.phdrs[iPh]'hiE).type = PhType.PT_LOAD := by
+        rw [← growEOFWithFreshPtLoad_phdr_lt_type pageSize? e iPh hPh hiE]; exact hPhT
+      obtain ⟨_, hOff, hVad, hAlign⟩ :=
+        growEOFWithFreshPtLoad_phdr_lt_pt_load pageSize? e iPh hPh hiE hPhTE
+      rw [hOff, hVad, hAlign]
+      exact hLoad.segment_congruent iPh hiE hPhTE
+    · exact growEOFWithFreshPtLoad_phdr_fresh_congruence pageSize? e iPh hPh hiE
 
 /-- The `relocatePht` construction satisfies `spliceRegionsDisjoint`.
     Crucially, this needs NO precondition beyond the standard structural
