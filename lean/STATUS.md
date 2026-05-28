@@ -9,7 +9,16 @@
 > remains the planning document for the broader unification arc;
 > the §"Known gaps" list below records what didn't land
 > (BSS-collision binaries fall back to `layoutForEncoding`'s
-> repack and are caught by the validator at write time).
+> repack and are caught by the validator at write time —
+> design plan for the fix in
+> [`research/REWRITE-FRESH-PT-LOAD-DESIGN.md`](../research/REWRITE-FRESH-PT-LOAD-DESIGN.md)).
+>
+> **2026-05 feature gap pass.** Closed C++ parity gaps §3.3
+> (GNU hash rebuild + reloc remap) and §3.4 (vn_file rewrite in
+> replace-needed); design plan for §3.5a (fresh PT_LOAD).  Tests:
+> 49 → 52 shell tests passing.  Plus a cleanup pass (~−260 LOC
+> mechanical duplication) extending `simp_splice`'s
+> omega-discharger.  See "Recent work" below.
 
 This document records the **current state** of the Lean 4 patchelf
 port — what works, what doesn't, what's verified, what isn't.
@@ -84,7 +93,13 @@ Multi-op invocations: chain CLI calls via the shell
 The single-process multi-op CLI was retired with the lean4-cli
 migration.
 
-**Test status:** all 49 shell tests in `tests/cases/` pass.
+**Test status:** all 52 shell tests in `tests/cases/` pass.
+
+`/tmp/lean-pe-fixtures/hello` and `/tmp/lean-pe-fixtures/greeter`
+(real glibc-linked binaries) are used by integration tests 50–52
+(`replace-needed --vn-file`, `rename-dynamic-symbol` on `.gnu.hash`,
+`rename-dynamic-symbol` with bucket-changing relocs).  When absent,
+those tests skip gracefully (exit 77).
 
 ---
 
@@ -393,15 +408,56 @@ fully-general fix — is left for a follow-up (see ROADMAP §3.5b).
 
 ### Priority 3 gaps (C++ patchelf parity)
 
-- **`.gnu.hash` rebuild** in `rename-dynamic-symbols` — rejected
-  precondition, not implemented.
-- **Verneed update in `replace-needed`** — rewrites
-  `.dynamic`+`.dynstr` but not `vn_file` in `.gnu.version_r`.
+- **`.gnu.hash` rebuild** in `rename-dynamic-symbols` — DONE.
+  `Patchelf/Elf/GnuHashRebuild.lean` mirrors C++
+  `rebuildGnuHashTable`; `Ops/RenameDynamicSymbols.lean` exposes
+  `gnuHashRebuildOp` as a CLI post-pass.  Reorders dynsym + versym;
+  rewrites bloom/buckets/chain.  Returns the dynsym permutation
+  for the reloc remap.  See ROADMAP §3.3.
+- **Relocation symbol-index remap** — DONE.
+  `Patchelf/Elf/RelocRemap.lean` walks SHT_REL/SHT_RELA section
+  bytes, applies the dynsym permutation to every entry's `r_info`
+  high-32-bit symbol index.  Tested on a real glibc binary: rename
+  forces bucket movement, relocations correctly retarget, binary
+  still runs.
+- **`.gnu.version_r vn_file` update in `replace-needed`** — DONE.
+  `Patchelf/Elf/Ops/ReplaceNeeded.lean` exposes
+  `VerneedSection.rewriteVnFile`; both `replaceNeededReuse` and
+  `replaceNeeded` thread it through.  See ROADMAP §3.4.
 - **PT_GNU_STACK append** when missing — `Ops/Execstack.lean` only
   maps over existing PT_GNU_STACK phdrs; C++ appends when absent.
-  Synthesizing a new phdr requires growing the phdr table.
-- **Allocate a fresh PT_LOAD when extension is unsafe.** `growEOFWith`
-  bails to `layoutForEncoding` (caught by the validator) when
-  `canExtendLastPtLoad` rejects.  C++ patchelf's
-  `rewriteSectionsLibrary` allocates a new PT_LOAD; that path needs
-  phdr-table growth, which we don't have.
+  Synthesizing a new phdr requires growing the phdr table; bundle
+  with §3.5a below.  See ROADMAP §3.5b.
+- **Allocate a fresh PT_LOAD when extension is unsafe** — DESIGN
+  READY, IMPL OPEN.  `growEOFWith` bails to `layoutForEncoding`
+  (caught by the validator with exit 5) when `canExtendLastPtLoad`
+  rejects.  C++ patchelf's `rewriteSectionsLibrary` allocates a
+  new PT_LOAD; that path needs phdr-table growth.  Complete
+  porting plan in
+  [`../research/REWRITE-FRESH-PT-LOAD-DESIGN.md`](../research/REWRITE-FRESH-PT-LOAD-DESIGN.md):
+  ~530 LOC, ~3 days for the in-place sub-case, +~150 LOC for the
+  `relocatePht` sub-case.  This is the only feature gap that
+  blocks a real binary class today (BSS-heavy ELFs like coreutils
+  `ls`).  See ROADMAP §3.5a.
+
+### Recent work (2026-05)
+
+**Cleanup pass.** Six commits removing mechanical duplication:
+`addRpathEntry := modifyRPath … .set` alias; `applyOpt` combinator
+folding 7 `applyX` definitions in `Adapter.lean`;
+`discharge_ofElfFile_proj` macro folding 4 byte-identical proofs
+in `AdapterRoundtrip.lean`; `printHandler`/`dynHandler`/`noPreHandler`
+combinators in `CLI.lean` plus `isReadOnlyName` derivation
+(killing the `readOnlySubcommands` drift surface); ByteRoundtrip
+simp-set lifting 9 dead width-lift theorems; SectionOps trim of 6
+dead theorems; `simp_splice` discharger extension to chain through
+`writeArray_*_size` simps (4 region preservation proofs collapsed
+by ~88 LOC each).  Total: ~−260 LOC; no regressions.
+
+**Feature-gap pass.** Three commits closing the most-impactful C++
+parity gaps that don't require multi-day phdr-table-growth work:
+`vn_file` rewrite in `replace-needed` (§3.4), GNU hash rebuild
+(§3.3), reloc symbol-index remap.  Plus a complete porting plan
+([`../research/REWRITE-FRESH-PT-LOAD-DESIGN.md`](../research/REWRITE-FRESH-PT-LOAD-DESIGN.md))
+for §3.5a (fresh PT_LOAD allocation), the only remaining
+real-binary gap.

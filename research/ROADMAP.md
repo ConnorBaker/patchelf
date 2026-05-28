@@ -25,6 +25,17 @@ forward-looking view.
 > was discovered during the worked example — see §5.1 for details.
 >
 > Items §1.1, §1.2, §3.5a, §5.1 remain open.
+>
+> **2026-05 cleanup + feature gap pass landed.** Six commits of
+> mechanical-duplication cleanup (~−260 LOC across CLI, Adapter,
+> AdapterRoundtrip, ByteRoundtrip, SectionOps; extends
+> `simp_splice`'s omega-discharger with `writeArray_*_size`
+> lemmas).  Plus three feature commits closing §3.3 (GNU hash
+> rebuild + reloc remap), §3.4 (vn_file rewrite in replace-needed),
+> and adding the §3.5a porting plan
+> ([`REWRITE-FRESH-PT-LOAD-DESIGN.md`](REWRITE-FRESH-PT-LOAD-DESIGN.md)).
+> Tests: 49 → 52 shell tests passing.  See ROADMAP §3.3 / §3.4 /
+> §3.5a for current state.
 
 ---
 
@@ -33,12 +44,21 @@ forward-looking view.
 **Build and test from `lean/`:**
 ```sh
 nix develop ../.#lean -c lake build              # expect a clean build
-nix develop ../.#lean -c bash tests/run.sh       # 49/49 shell tests expected
+nix develop ../.#lean -c bash tests/run.sh       # 52/52 shell tests expected
 grep -rn "sorry\b" Patchelf/                     # zero matches expected
 ```
 
 **Recommended pickup order:**
 
+- **§3.5a (allocate fresh PT_LOAD) — DESIGN READY, IMPL OPEN.**
+  The only feature gap that blocks a real binary class today
+  (BSS-heavy ELFs like `coreutils ls`).  Complete porting plan in
+  [`REWRITE-FRESH-PT-LOAD-DESIGN.md`](REWRITE-FRESH-PT-LOAD-DESIGN.md):
+  ~530 LOC, ~3 days, layered work (file-level layout / splice
+  region / proof / encoder dispatch).  In-place sub-case is
+  estimated ~half day; the harder `relocatePht` sub-case for
+  phdr-table-pressure ELFs adds another day.  Recommended next
+  pickup for users who want concrete feature progress.
 - **§1.3a `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` — DONE.**
   `Encoder.lean` exposes the composed theorem.  See §1.3a for details.
   This was intended to unblock §5.1 (op-level Tier D), but a
@@ -46,18 +66,16 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
   attempting the worked example — see §5.1 for details and three
   workaround paths.
 - **§1.1 (Parser establishes `IsLoadable`)** is the most natural
-  next pickup.  Independent of §5.1's obstacle.  Threads the structural
-  input invariants through the parser → `ParsedElf` bridge; the
-  decidable predicate already exists in `Validate.lean`.  Recommended
-  before revisiting §5.1 — clarifies the input-invariant chain.
+  next pickup *for verification depth*.  Independent of §5.1's
+  obstacle.  Threads the structural input invariants through the
+  parser → `ParsedElf` bridge; the decidable predicate already
+  exists in `Validate.lean`.  Recommended before revisiting §5.1 —
+  clarifies the input-invariant chain.
 - **§1.2 (pre-encode `_preserves_valid` theorems)** — three
   preservation theorems remain.  `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`
   landed (different from `_preserves_valid`); the byte-layer `IsValid`
   preservations for `growEOFWith`, `syncDtAddrTagsInFile`, and
   `layoutForEncoding` are still open.  Reuse `SectionOps` helpers.
-- **§3.5a (allocate fresh PT_LOAD)** unblocks the BSS-heavy binary
-  class that `growEOFWith` currently bails on.  Estimated ~600 LOC
-  including the validator-passing proof.
 - **§4.2** is an independent typed-side completeness item;
   `.verneed` is stored as `.raw` at the byte layer, so the
   byte-roundtrip doesn't depend on it.
@@ -248,33 +266,67 @@ Closed in earlier passes (kept here as cross-reference targets):
 
 Open items:
 
-#### 3.3 `.gnu.hash` rebuild in `rename-dynamic-symbols`
+#### 3.3 `.gnu.hash` rebuild in `rename-dynamic-symbols` — DONE
 
-The current op rejects binaries with `.gnu.hash` (op precondition).
-GNU hash is more complex than SysV (bloom filter + bucket offsets +
-chain tail). Adding it: ~150 LOC on top of the existing SysV rebuild.
+Implemented in commits `da73c51` (rebuild) and `ccc7bc6` (reloc
+remap).  New module `Patchelf/Elf/GnuHashRebuild.lean` mirrors C++
+`rebuildGnuHashTable`: re-bucketizes the hashed dynsym range,
+rewrites bloom/buckets/chain, and reorders dynsym + versym so
+symbols of the same bucket are contiguous (loader range-scan
+requirement).  Returns the dynsym permutation `(firstSymIdx, perm)`.
 
-#### 3.4 `.gnu.version_r` update in `replace-needed`
+`Patchelf/Elf/Ops/RenameDynamicSymbols.lean` exposes
+`gnuHashRebuildOp : ValidElfFile → ValidElfFile × Option (Nat ×
+Array Nat)` as a separate post-pass.  CLI's `renameOnce`
+pipelines `renameDynamicSymbols` → `gnuHashRebuildOp` →
+`Adapter.toElfFile` → `ElfFile.remapRelocs perm` → `encode`.
 
-The `replace-needed` op updates `.dynamic` and grows `.dynstr`
-but doesn't rewrite matching `vn_file` fields in
-`.gnu.version_r`.  Real-world impact minor (dynamic linkers
-resolve versions via Verdef, not vn_file).  Would roughly triple
-the `replaceNeeded_preserves_*` proof size.
+`Patchelf/Elf/RelocRemap.lean` walks SHT_REL (16-byte) and
+SHT_RELA (24-byte) sections by raw bytes; for each entry decodes
+`r_info`, applies the permutation to the high-32-bit symbol
+index, recombines.  Operates on bytes rather than structural
+section types to avoid bloating the central byte roundtrip
+dispatch — relocations stay as `SectionContent.raw`.
 
-#### 3.5a Allocate a fresh PT_LOAD when extension is unsafe
+Tests: shell tests 51 (rename on `.gnu.hash` binary, loader
+accepts rebuilt table) and 52 (rename forces bucket movement,
+relocation targets correctly remap, binary still runs).  Both
+exercise `/tmp/lean-pe-fixtures/hello`, a real glibc-linked
+binary.
 
-`growEOFWith`'s safety gate (`canExtendLastPtLoad`) rejects when
-extending the last PT_LOAD's `filesz`/`memsz` would clobber
-already-allocated BSS or fall outside the existing alignment.  In
-that case, `growEOFWith` falls back to `layoutForEncoding`'s
-unaware repack and the pre-write validator catches the resulting
-non-loadable bytes (exit 5).  C++ patchelf's `rewriteSectionsLibrary`
-allocates a brand-new PT_LOAD by growing the phdr table; that's
-the strictly more general fix and unblocks the BSS-heavy binary
-class (e.g. coreutils `ls`).  Estimated ~600 LOC: phdr-table-grow
-in `growEOFWith` + corresponding splice-pipeline updates +
-preservation argument.
+#### 3.4 `.gnu.version_r` update in `replace-needed` — DONE
+
+Implemented in commit `e2633d2`.
+`Patchelf/Elf/Ops/ReplaceNeeded.lean` exposes
+`VerneedSection.rewriteVnFile`; both `replaceNeededReuse` and
+`replaceNeeded` thread it through.  The grow path passes the OLD
+dynstr to the lookup since old offsets remain valid in the
+appended-to dynstr.
+
+Tests: shell test 50 verifies on a real glibc binary that
+`readelf -V` shows the renamed library name post-rename.
+
+#### 3.5a Allocate a fresh PT_LOAD when extension is unsafe — DESIGN READY
+
+Plan documented in
+[`REWRITE-FRESH-PT-LOAD-DESIGN.md`](REWRITE-FRESH-PT-LOAD-DESIGN.md).
+The doc covers all five layers (file-level layout in `GrowEOF`;
+splice region tracking in `ElfFile`; the
+`_produces_spliceRegionsDisjoint` proof; encoder dispatch; the
+already-decidable validator) plus an estimated ~530 LOC / ~3 days
+for the in-place sub-case.  The harder `relocatePht` sub-case
+adds another ~150 LOC and a day; common-case binaries don't need
+it.
+
+`growEOFWith`'s safety gate (`canExtendLastPtLoad`) currently
+rejects when extending the last PT_LOAD's `filesz`/`memsz` would
+clobber already-allocated BSS or fall outside the existing
+alignment.  In that case, `growEOFWith` falls back to
+`layoutForEncoding`'s unaware repack and the pre-write validator
+catches the resulting non-loadable bytes (exit 5).  C++ patchelf's
+`rewriteSectionsLibrary` allocates a brand-new PT_LOAD by growing
+the phdr table; that's the strictly more general fix and
+unblocks the BSS-heavy binary class (e.g. coreutils `ls`).
 
 #### 3.5b PT_GNU_STACK append when missing
 
@@ -422,15 +474,16 @@ The current `SectionOps.lean` carries:
   `updateSectionContent_{contentAt_none, contentAt_some_ne,
   dynsym_eq, dynstr_eq, interp_eq}`.
 * Index-disjointness: `dynstrIdx_target_ne_of_content_dynamic`,
-  `dynsymIdx_target_ne_of_content_dynamic`,
   `shstrndx_ne_of_content_dynamic_of_dynstr`.
+  (`dynsymIdx_target_ne_of_content_dynamic` was deleted in the
+  2026-05 cleanup pass — zero external callers.)
 
 These are the helpers §1.2's `_preserves_valid` proofs will reuse;
 `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint` already
 exercises a subset of them.  No further action needed unless the
 §1.2 proofs need additional infrastructure.
 
-#### 5.4 Splice/extract simp set + tactic — DONE
+#### 5.4 Splice/extract simp set + tactic — DONE (extended 2026-05)
 
 `Patchelf/Elf/Tactic/SpliceSimproc{Attr,,Test}.lean` provide the
 `[splice_simp]` simp set and a `simp_splice` macro
@@ -440,12 +493,24 @@ The simp set is extensible via `@[splice_simp]`; new
 `readUN_splice_*` or buffer-size lemmas attach without touching the
 tactic file.
 
+**2026-05 extension** (commit `7964eee`): `splice_disch` now also
+rewrites `(writeArray Foo.write arr).size` → `arr.size * <bytes>`
+via per-struct `@[simp]` lemmas in `Schemas.lean`
+(`writeArray_{ProgramHeader,SectionHeader,Symbol,DynEntry,writeU16}_size`),
+plus `Array.size_map` and the per-struct `Layout.{ehdr,phdr,shdr,dynEntry,symEntry}Size`
+constants.  Effect: per-region preservation proofs no longer
+need 4 `let buf0..buf3` aliases plus 4 `hBufNSz` hypotheses just
+to expose buffer sizes to omega.  Four region preservation proofs
+(`readU8_encode_in_{header,phdr,shdr,section}`) collapsed by ~88
+LOC; the discharger is now general infrastructure for future
+region proofs.
+
 Original §5.4 estimate (~800 LOC bucket-1 collapse) was overstated;
-actual delta was ~25 LOC across 3 splice-cascade sites in
-`ByteRoundtrip.lean`.  The remaining bucket-1 LOC is structural
-plumbing (per-section foldl preservation, disjointness extraction
-from `spliceRegionsDisjoint`, buffer-size aliases) that isn't
-splice-cascade-shaped.
+combined original + 2026-05 delta is ~140 LOC across 7
+splice-cascade sites + 4 region proofs in `ByteRoundtrip.lean`.
+The remaining bucket-1 LOC is structural plumbing (per-section
+foldl preservation, disjointness extraction from
+`spliceRegionsDisjoint`) that isn't splice-cascade-shaped.
 
 ---
 
