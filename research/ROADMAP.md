@@ -58,7 +58,9 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
   region / proof / encoder dispatch).  In-place sub-case is
   estimated ~half day; the harder `relocatePht` sub-case for
   phdr-table-pressure ELFs adds another day.  Recommended next
-  pickup for users who want concrete feature progress.
+  pickup for users who want concrete feature progress.  A
+  fresh-agent pickup prompt is at
+  [`PICKUP-PROMPT-FRESH-PT-LOAD.md`](PICKUP-PROMPT-FRESH-PT-LOAD.md).
 - **§1.3a `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` — DONE.**
   `Encoder.lean` exposes the composed theorem.  See §1.3a for details.
   This was intended to unblock §5.1 (op-level Tier D), but a

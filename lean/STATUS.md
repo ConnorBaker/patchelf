@@ -438,7 +438,8 @@ fully-general fix — is left for a follow-up (see ROADMAP §3.5b).
   ~530 LOC, ~3 days for the in-place sub-case, +~150 LOC for the
   `relocatePht` sub-case.  This is the only feature gap that
   blocks a real binary class today (BSS-heavy ELFs like coreutils
-  `ls`).  See ROADMAP §3.5a.
+  `ls`).  See ROADMAP §3.5a.  Fresh-agent pickup prompt at
+  [`../research/PICKUP-PROMPT-FRESH-PT-LOAD.md`](../research/PICKUP-PROMPT-FRESH-PT-LOAD.md).
 
 ### Recent work (2026-05)
 
