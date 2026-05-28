@@ -26,8 +26,16 @@
 > `growEOFWithFreshPtLoad`, `growEOFWithFreshPtLoadReloc`, and
 > the user-facing top-level `growEOFWith_preserves_valid`.  Built
 > on a new `PlaceFold.placeFold_value_witness` abstraction in
-> `LayoutEngine.lean`.  Only `growEOFWith_preserves_loadable` (the
-> deeper `IsLoadable`-level claim) remains open.
+> `LayoutEngine.lean`.
+>
+> **§1.2 `_preserves_loadable` ladder partially landed.**
+> `layoutForEncoding_preserves_loadable` shipped (covers the
+> no-PT_LOAD branch).  Three growEOFWith branches plus the
+> top-level dispatch remain open; they need per-phdr facts about
+> `updatePhdrsAfterMove` analogous to the `relocatePhdr_*` lemmas
+> in place for `layoutForEncoding`.  See
+> [`research/PICKUP-PROMPT-PRESERVES-LOADABLE.md`](../research/PICKUP-PROMPT-PRESERVES-LOADABLE.md)
+> for the handoff.
 >
 > **Tests: 54/54 shell tests passing; 108/108 Lean build jobs;
 > zero `sorry`s.**

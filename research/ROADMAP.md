@@ -24,12 +24,16 @@ forward-looking view.
 > work, but a non-trivial dependent-type obstacle in `Adapter.toElfFile`
 > was discovered during the worked example — see §5.1 for details.
 >
-> Items §1.2 (only `_preserves_loadable` remaining) and §5.1
-> remain open.  §3.5a fully landed (both in-place and relocatePht
-> sub-cases — see below).  §1.1 parser side landed.  §1.2's
-> `_preserves_valid` ladder fully landed (top-level
-> `growEOFWith_preserves_valid` lands by composing four branches);
-> only the load-bearing `growEOFWith_preserves_loadable` remains.
+> Items §1.2 (only `_preserves_loadable` for the three growEOFWith
+> branches + top-level dispatch remaining; `layoutForEncoding`'s
+> branch landed) and §5.1 remain open.  §3.5a fully landed (both
+> in-place and relocatePht sub-cases — see below).  §1.1 parser
+> side landed.  §1.2's `_preserves_valid` ladder fully landed
+> (top-level `growEOFWith_preserves_valid` lands by composing four
+> branches).  `_preserves_loadable` ladder started:
+> `layoutForEncoding_preserves_loadable` ships;
+> `growEOFWith_preserves_loadable` is the canonical pickup
+> ([`PICKUP-PROMPT-PRESERVES-LOADABLE.md`](PICKUP-PROMPT-PRESERVES-LOADABLE.md)).
 >
 > **2026-05 cleanup + feature gap pass landed.** Six commits of
 > mechanical-duplication cleanup (~−260 LOC across CLI, Adapter,
@@ -63,32 +67,32 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 
 **Recommended pickup order:**
 
-- **§3.5a both sub-cases — LANDED.**
-  In-place (`growEOFWithFreshPtLoad`): handles binaries with
-  phdr-table headroom.  Test 53 covers it.
-  RelocatePht (`growEOFWithFreshPtLoadReloc`): moves the phdr
-  table itself to the appended region for binaries packed tight
-  against the first section.  Test 54 covers `coreutils ls`.
-- **§1.3a `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` — DONE.**
-  `Encoder.lean` exposes the composed theorem.  See §1.3a for details.
-  This was intended to unblock §5.1 (op-level Tier D), but a
-  dependent-type obstacle in `Adapter.toElfFile` was discovered when
-  attempting the worked example — see §5.1 for details and three
-  workaround paths.
-- **§1.1 (Parser establishes `IsLoadable`)** is the most natural
-  next pickup *for verification depth*.  Independent of §5.1's
-  obstacle.  Threads the structural input invariants through the
-  parser → `ParsedElf` bridge; the decidable predicate already
-  exists in `Validate.lean`.  Recommended before revisiting §5.1 —
-  clarifies the input-invariant chain.
-- **§1.2 (pre-encode `_preserves_valid` theorems)** — three
-  preservation theorems remain.  `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`
-  landed (different from `_preserves_valid`); the byte-layer `IsValid`
-  preservations for `growEOFWith`, `syncDtAddrTagsInFile`, and
-  `layoutForEncoding` are still open.  Reuse `SectionOps` helpers.
-- **§4.2** is an independent typed-side completeness item;
-  `.verneed` is stored as `.raw` at the byte layer, so the
-  byte-roundtrip doesn't depend on it.
+- **§1.2 `_preserves_loadable` — IN PROGRESS, CANONICAL NEXT PICKUP.**
+  `layoutForEncoding_preserves_loadable` landed; the three
+  `growEOFWith*` branches plus top-level dispatch remain.  Needs
+  per-phdr facts about `updatePhdrsAfterMove` analogous to the
+  `relocatePhdr_*` lemmas now in place for `layoutForEncoding`.
+  Fresh-agent pickup prompt at
+  [`PICKUP-PROMPT-PRESERVES-LOADABLE.md`](PICKUP-PROMPT-PRESERVES-LOADABLE.md).
+  Estimated ~600 LOC, ~1-2 days.
+- **§5.1 op-level Tier D — UNBLOCKED, NON-TRIVIAL.**
+  Each op needs to establish the 5 structural input invariants on
+  its output.  Discovered a dependent-type obstacle in
+  `Adapter.toElfFile` when attempting `setOsAbi` as the worked
+  example — see §5.1 for three documented workaround paths.
+  Recommend revisiting after §1.2 fully closes.
+- **§4.2 trailing-array DSL field kind + `Verneed.write_decode`** —
+  independent typed-side completeness item; `.verneed` is stored
+  as `.raw` at the byte layer, so the byte-roundtrip doesn't
+  depend on it.  See §4.2.
+
+**Recently-closed work** (kept for cross-reference):
+
+- §3.5a (both in-place + relocatePht sub-cases) — LANDED.
+- §1.1 parser side (`Parser.parseLoadable` + `LoadableElfFile`) — LANDED.
+- §1.2 `_preserves_valid` ladder (all 7 byte-layer theorems +
+  top-level `growEOFWith_preserves_valid`) — LANDED.
+- §1.3a `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` — LANDED.
 
 **Patterns to know before touching Tier D / encoder proofs:**
 
