@@ -42,54 +42,48 @@ open Patchelf.Elf (ElfFile)
 @[simp] theorem toElfFile_phdrs (template : ElfFile) (t : ValidElfFile) :
     (toElfFile template t).phdrs = t.phdrs := rfl
 
-/-! ## ofElfFile preservation -/
-
-/-- On successful ofElfFile, t.header = e.header.
+/-! ## ofElfFile preservation
 
     Technique: unfold the do-block via `bind`/`Except.bind`, then
     `split at h` through the 4 levels of nested matches (dynsym
     promotion success + dynsym option + dynamic parse success +
     dynamic option).  Each resulting success case closes with
     `cases h; rfl`; error cases close with `simp_all`. -/
+
+/-- Discharge any `ofElfFile e = .ok t → t.<proj> = <expr>` claim where
+    `<expr>` is a (possibly trivial) function of the do-block's
+    environment.  Each of the four projections below uses this. -/
+syntax "discharge_ofElfFile_proj" : tactic
+macro_rules
+  | `(tactic| discharge_ofElfFile_proj) => `(tactic| (
+      rename_i h
+      simp only [ofElfFile, bind, Except.bind] at h
+      split at h
+      all_goals split at h
+      all_goals (try split at h)
+      all_goals (try split at h)
+      all_goals (first | (cases h; rfl) | simp_all)))
+
+/-- On successful ofElfFile, t.header = e.header. -/
 theorem ofElfFile_header (e : ElfFile) (t : ValidElfFile)
     (h : ofElfFile e = .ok t) : t.header = e.header := by
-  simp only [ofElfFile, bind, Except.bind] at h
-  split at h
-  all_goals split at h
-  all_goals (try split at h)
-  all_goals (try split at h)
-  all_goals (first | (cases h; rfl) | simp_all)
+  discharge_ofElfFile_proj
 
 /-- On successful ofElfFile, t.phdrs = e.phdrs. -/
 theorem ofElfFile_phdrs (e : ElfFile) (t : ValidElfFile)
     (h : ofElfFile e = .ok t) : t.phdrs = e.phdrs := by
-  simp only [ofElfFile, bind, Except.bind] at h
-  split at h
-  all_goals split at h
-  all_goals (try split at h)
-  all_goals (try split at h)
-  all_goals (first | (cases h; rfl) | simp_all)
+  discharge_ofElfFile_proj
 
 /-- Bonus: the typed dynstr field is the byte-layer dynstr wrapped via
     `mkStringSectionOpt` (handles the WellFormed force-termination). -/
 theorem ofElfFile_dynstr (e : ElfFile) (t : ValidElfFile)
     (h : ofElfFile e = .ok t) : t.dynstr = mkStringSectionOpt e.dynstr := by
-  simp only [ofElfFile, bind, Except.bind] at h
-  split at h
-  all_goals split at h
-  all_goals (try split at h)
-  all_goals (try split at h)
-  all_goals (first | (cases h; rfl) | simp_all)
+  discharge_ofElfFile_proj
 
 /-- Bonus: typed versym is the byte-layer versym verbatim. -/
 theorem ofElfFile_versym (e : ElfFile) (t : ValidElfFile)
     (h : ofElfFile e = .ok t) : t.versym = e.versym := by
-  simp only [ofElfFile, bind, Except.bind] at h
-  split at h
-  all_goals split at h
-  all_goals (try split at h)
-  all_goals (try split at h)
-  all_goals (first | (cases h; rfl) | simp_all)
+  discharge_ofElfFile_proj
 
 /-! ## Round-trip composition -/
 

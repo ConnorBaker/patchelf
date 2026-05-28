@@ -295,16 +295,25 @@ def patchDynamicEntries {ds : StringSection} (byteDyn : Array DynEntry)
     header/phdrs from typed as its last step — this shape makes the
     round-trip theorems `(toElfFile t typed).header = typed.header` rfl-provable. -/
 
+/-- Generic optional-section apply: when `e` has section index `idx?` and
+    the typed bundle exposes value `val?`, replace the section's content
+    with `mkContent val`; otherwise leave `e` alone.  Used by every
+    apply except `applyDynstr` (whose dynstr is non-optional) and
+    `applyDynamic` (whose absent-byte-side fallback synthesizes entries). -/
+def applyOpt {α : Type} (e : ElfFile) (idx? : Option Nat) (val? : Option α)
+    (mkContent : α → SectionContent) : ElfFile :=
+  match idx?, val? with
+  | some i, some v => e.updateSectionContent i (mkContent v)
+  | _, _           => e
+
 def applyDynstr (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
   match e.dynstrIdx with
   | none     => e
   | some iDs => e.updateSectionContent iDs (.strtab ⟨typed.dynstr.bytes⟩)
 
 def applyDynsym (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  match e.dynsymIdx, typed.dynsym with
-  | some iDsym, some typedSyms =>
-      e.updateSectionContent iDsym (.dynsym (typedSyms.symbols.map symbolOfTyped))
-  | _, _ => e
+  applyOpt e e.dynsymIdx typed.dynsym fun ts =>
+    .dynsym (ts.symbols.map symbolOfTyped)
 
 def applyDynamic (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
   match e.dynamicIdx, typed.dynamic with
@@ -320,32 +329,23 @@ def applyDynamic (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
   | _, _ => e
 
 def applyVersym (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  match e.versymIdx, typed.versym with
-  | some iVs, some vs => e.updateSectionContent iVs (.versym vs)
-  | _, _ => e
+  applyOpt e e.versymIdx typed.versym .versym
 
 def applySysvHash (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  match e.sysvHashIdx, typed.sysvHash with
-  | some iHsh, some shs =>
-      e.updateSectionContent iHsh (.raw (SysVHashTable.write shs.table))
-  | _, _ => e
+  applyOpt e e.sysvHashIdx typed.sysvHash fun shs =>
+    .raw Layout.ShType.SHT_HASH (by decide) (SysVHashTable.write shs.table)
 
 def applyGnuHash (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  match e.gnuHashIdx, typed.gnuHash with
-  | some iGh, some ghs =>
-      e.updateSectionContent iGh (.raw (GnuHashTable.write ghs.table))
-  | _, _ => e
+  applyOpt e e.gnuHashIdx typed.gnuHash fun ghs =>
+    .raw Layout.ShType.SHT_GNU_HASH (by decide) (GnuHashTable.write ghs.table)
 
 def applyVerneed (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  match e.verneedIdx, typed.verneed with
-  | some iVn, some vn =>
-      e.updateSectionContent iVn (.raw (writeArray Verneed.write vn.entries))
-  | _, _ => e
+  applyOpt e e.verneedIdx typed.verneed fun vn =>
+    .raw Layout.ShType.SHT_GNU_VERNEED (by decide) (writeArray Verneed.write vn.entries)
 
 def applyInterp (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  match e.interpIdx, typed.interp with
-  | some iIn, some ip => e.updateSectionContent iIn (.raw ip.toBytes)
-  | _, _ => e
+  applyOpt e e.interpIdx typed.interp fun ip =>
+    .raw Layout.ShType.SHT_PROGBITS (by decide) ip.toBytes
 
 /-- Apply a ValidElfFile.s contents back onto a byte-layer ElfFile template.
 
