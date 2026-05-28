@@ -46,7 +46,6 @@ public import Patchelf.Elf.Ops.Rpath
 public import Patchelf.Elf.Ops.Soname
 public import Patchelf.Elf.Ops.RemoveRPath
 public import Patchelf.Elf.Ops.RemoveNeeded
-public import Patchelf.Elf.Ops.AddRpathEntry
 public import Patchelf.Elf.Ops.Interpreter
 public import Patchelf.Elf.Ops.ReplaceNeeded
 public import Patchelf.Elf.Ops.ClearSymbolVersion
@@ -330,40 +329,58 @@ def runWith (p : Parsed)
     lifts into the `IO` shape `runWith` expects.  Handlers that need
     intra-handler IO (file reads, FS probes) use the `do` form.
 
-    ### Read-only handlers -/
+    The `printHandler` / `dynHandler` / `noPreHandler` combinators
+    absorb the boilerplate `runWith p fun … => pure <| …` shell. -/
 
-def runPrintOsAbi (p : Parsed) : IO UInt32 :=
-  runWith p fun _ pe => pure (.ok (.print pe.elf.header.ident.osAbi.display))
+/-- A read-only handler emitting a `RunResult` from the parsed ELF. -/
+def printHandler (mk : ParsedElf → RunResult) (p : Parsed) : IO UInt32 :=
+  runWith p fun _ pe => pure (.ok (mk pe))
 
-def runPrintRpath (p : Parsed) : IO UInt32 :=
-  runWith p fun _ pe => pure (.ok (.print (Run.rpathValue pe.elf |>.getD "")))
+/-- Mutating handler dispatching through `runDynOp` (op requires
+    `e.dynamic.isSome`).  `opName` is used in error messages. -/
+def dynHandler (opName : String)
+    (op : Parsed → Options → (tv : Patchelf.Elf.ValidElfFile)
+            → tv.dynamic.isSome → Patchelf.Elf.ValidElfFile)
+    (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => pure <| runDynOp opts opName pe.elf (op p opts)
 
-def runPrintNeeded (p : Parsed) : IO UInt32 :=
-  runWith p fun _ pe =>
-    pure (.ok (.print (String.intercalate "\n" (Run.neededLibs pe.elf))))
+/-- Mutating handler dispatching through `runOpNoPre` (header-only ops). -/
+def noPreHandler
+    (op : Parsed → Options → Patchelf.Elf.ValidElfFile → Patchelf.Elf.ValidElfFile)
+    (p : Parsed) : IO UInt32 :=
+  runWith p fun opts pe => pure <| runOpNoPre opts pe.elf (op p opts)
 
-def runPrintSoname (p : Parsed) : IO UInt32 :=
-  runWith p fun _ pe =>
-    pure (.ok (match Run.sonameValue pe.elf with
-               | none   => .silent
-               | some s => .print s))
+/-! ### Read-only handlers -/
 
-def runPrintExecstack (p : Parsed) : IO UInt32 :=
-  runWith p fun _ pe =>
+def runPrintOsAbi : Parsed → IO UInt32 :=
+  printHandler fun pe => .print pe.elf.header.ident.osAbi.display
+
+def runPrintRpath : Parsed → IO UInt32 :=
+  printHandler fun pe => .print (Run.rpathValue pe.elf |>.getD "")
+
+def runPrintNeeded : Parsed → IO UInt32 :=
+  printHandler fun pe => .print (String.intercalate "\n" (Run.neededLibs pe.elf))
+
+def runPrintSoname : Parsed → IO UInt32 :=
+  printHandler fun pe =>
+    match Run.sonameValue pe.elf with
+    | none   => .silent
+    | some s => .print s
+
+def runPrintExecstack : Parsed → IO UInt32 :=
+  printHandler fun pe =>
     let c : Char :=
       match Run.execstackState pe.elf with
       | some true  => 'X'
       | some false => '-'
       | none       => '?'
-    pure (.ok (.print s!"execstack: {c}"))
+    .print s!"execstack: {c}"
 
-def runPrintInterpreter (p : Parsed) : IO UInt32 :=
-  runWith p fun _ pe =>
-    let s :=
-      match pe.elf.interp.bind Run.readInterpPath with
-      | none    => "(no interpreter)"
-      | some bs => (String.fromUTF8? bs).getD "(interpreter: invalid UTF-8)"
-    pure (.ok (.print s))
+def runPrintInterpreter : Parsed → IO UInt32 :=
+  printHandler fun pe =>
+    .print <| match pe.elf.interp.bind Run.readInterpPath with
+              | none    => "(no interpreter)"
+              | some bs => (String.fromUTF8? bs).getD "(interpreter: invalid UTF-8)"
 
 /-! ### Mutating handlers -/
 
@@ -372,23 +389,19 @@ def runSetOsAbi (p : Parsed) : IO UInt32 :=
     let abi ← parseOsAbi (p.positionalArg! "abi" |>.as! String)
     runOpNoPre opts pe.elf (fun tv => Patchelf.Elf.setOsAbi tv abi)
 
-def runSetExecstack (p : Parsed) : IO UInt32 :=
-  runWith p fun opts pe => pure <|
-    runOpNoPre opts pe.elf (fun tv => Patchelf.Elf.modifyExecstack tv .set)
+def runSetExecstack : Parsed → IO UInt32 :=
+  noPreHandler fun _ _ tv => Patchelf.Elf.modifyExecstack tv .set
 
-def runClearExecstack (p : Parsed) : IO UInt32 :=
-  runWith p fun opts pe => pure <|
-    runOpNoPre opts pe.elf (fun tv => Patchelf.Elf.modifyExecstack tv .clear)
+def runClearExecstack : Parsed → IO UInt32 :=
+  noPreHandler fun _ _ tv => Patchelf.Elf.modifyExecstack tv .clear
 
-def runRemoveRpath (p : Parsed) : IO UInt32 :=
-  runWith p fun opts pe => pure <|
-    runDynOp opts "removeRpath" pe.elf (fun tv h => Patchelf.Elf.removeRpath tv h)
+def runRemoveRpath : Parsed → IO UInt32 :=
+  dynHandler "removeRpath" fun _ _ tv h => Patchelf.Elf.removeRpath tv h
 
-def runSetRpath (p : Parsed) : IO UInt32 :=
-  runWith p fun opts pe =>
-    let path := p.positionalArg! "path" |>.as! String
-    pure <| runDynOp opts "setRpath" pe.elf fun tv h =>
-      Patchelf.Elf.modifyRPath tv opts.forceRpath .set path h
+def runSetRpath : Parsed → IO UInt32 :=
+  dynHandler "setRpath" fun p opts tv h =>
+    Patchelf.Elf.modifyRPath tv opts.forceRpath .set
+      (p.positionalArg! "path" |>.as! String) h
 
 def runAddRpath (p : Parsed) : IO UInt32 :=
   runWith p fun opts pe =>
@@ -436,50 +449,38 @@ def runShrinkRpath (p : Parsed) : IO UInt32 :=
       pure <| runDynOp opts "shrinkRpath" e fun tv h =>
         Patchelf.Elf.modifyRPath tv opts.forceRpath .set composed h
 
-def runAddNeeded (p : Parsed) : IO UInt32 :=
-  runWith p fun opts pe =>
-    let lib := p.positionalArg! "lib" |>.as! String
-    pure <| runDynOp opts "addNeeded" pe.elf fun tv h =>
-      Patchelf.Elf.addNeeded tv lib h
+def runAddNeeded : Parsed → IO UInt32 :=
+  dynHandler "addNeeded" fun p _ tv h =>
+    Patchelf.Elf.addNeeded tv (p.positionalArg! "lib" |>.as! String) h
 
-def runRemoveNeeded (p : Parsed) : IO UInt32 :=
-  runWith p fun opts pe =>
-    let lib := p.positionalArg! "lib" |>.as! String
-    pure <| runDynOp opts "removeNeeded" pe.elf fun tv h =>
-      Patchelf.Elf.removeNeeded tv lib h
+def runRemoveNeeded : Parsed → IO UInt32 :=
+  dynHandler "removeNeeded" fun p _ tv h =>
+    Patchelf.Elf.removeNeeded tv (p.positionalArg! "lib" |>.as! String) h
 
-def runReplaceNeeded (p : Parsed) : IO UInt32 :=
-  runWith p fun opts pe =>
+def runReplaceNeeded : Parsed → IO UInt32 :=
+  dynHandler "replaceNeeded" fun p _ tv h =>
     let oldName := p.positionalArg! "old" |>.as! String
     let newName := p.positionalArg! "new" |>.as! String
-    pure <| runDynOp opts "replaceNeeded" pe.elf fun tv h =>
-      match tv.dynstr.findOffsetOf newName.toUTF8 with
-      | some off => Patchelf.Elf.replaceNeededReuse tv oldName off h
-      | none     => Patchelf.Elf.replaceNeeded tv oldName newName h
+    match tv.dynstr.findOffsetOf newName.toUTF8 with
+    | some off => Patchelf.Elf.replaceNeededReuse tv oldName off h
+    | none     => Patchelf.Elf.replaceNeeded tv oldName newName h
 
-def runSetSoname (p : Parsed) : IO UInt32 :=
-  runWith p fun opts pe =>
-    let name := p.positionalArg! "soname" |>.as! String
-    pure <| runDynOp opts "setSoname" pe.elf fun tv h =>
-      Patchelf.Elf.modifySoname tv .set name h
+def runSetSoname : Parsed → IO UInt32 :=
+  dynHandler "setSoname" fun p _ tv h =>
+    Patchelf.Elf.modifySoname tv .set (p.positionalArg! "soname" |>.as! String) h
 
-def runRemoveSoname (p : Parsed) : IO UInt32 :=
-  runWith p fun opts pe => pure <|
-    runDynOp opts "removeSoname" pe.elf fun tv h =>
-      Patchelf.Elf.modifySoname tv .remove "" h
+def runRemoveSoname : Parsed → IO UInt32 :=
+  dynHandler "removeSoname" fun _ _ tv h => Patchelf.Elf.modifySoname tv .remove "" h
 
-def runSetInterpreter (p : Parsed) : IO UInt32 :=
-  runWith p fun opts pe =>
-    let path := p.positionalArg! "path" |>.as! String
-    pure <| runOpNoPre opts pe.elf fun tv => Patchelf.Elf.setInterpreter tv path
+def runSetInterpreter : Parsed → IO UInt32 :=
+  noPreHandler fun p _ tv =>
+    Patchelf.Elf.setInterpreter tv (p.positionalArg! "path" |>.as! String)
 
-def runAddDebugTag (p : Parsed) : IO UInt32 :=
-  runWith p fun opts pe => pure <|
-    runDynOp opts "addDebugTag" pe.elf fun tv h => Patchelf.Elf.addDebugTag tv h
+def runAddDebugTag : Parsed → IO UInt32 :=
+  dynHandler "addDebugTag" fun _ _ tv h => Patchelf.Elf.addDebugTag tv h
 
-def runNoDefaultLib (p : Parsed) : IO UInt32 :=
-  runWith p fun opts pe => pure <|
-    runDynOp opts "noDefaultLib" pe.elf fun tv h => Patchelf.Elf.noDefaultLib tv h
+def runNoDefaultLib : Parsed → IO UInt32 :=
+  dynHandler "noDefaultLib" fun _ _ tv h => Patchelf.Elf.noDefaultLib tv h
 
 def runClearSymbolVersion (p : Parsed) : IO UInt32 :=
   runWith p fun opts pe => pure do
@@ -624,23 +625,25 @@ def mutatingFlags : Array Flag := #[
     type := Unit }
 ]
 
-/-- Names of subcommands that DON'T accept the mutating flags.
-    Anything not in this list is mutating. -/
-def readOnlySubcommands : List String :=
-  ["print-os-abi", "print-execstack", "print-rpath", "print-needed",
-   "print-soname", "print-interpreter", "validate", "parse"]
+/-- A subcommand is read-only iff its name starts with `print-` or it's
+    one of the inspection-only verbs `validate` / `parse`.  Read-only
+    subcommands DON'T accept mutating flags (`--output`, `--no-validate`,
+    `--page-size`, `--debug`).  Deriving from the name (rather than a
+    parallel string list) means new subcommands get the right treatment
+    automatically — no drift surface. -/
+def isReadOnlyName (name : String) : Bool :=
+  name.startsWith "print-" || name = "validate" || name = "parse"
 
 /-- Extension that injects `mutatingFlags` into every mutating
-    subcommand (i.e. every subcommand whose name isn't in
-    `readOnlySubcommands`).  This avoids 4-line flag repetition in
-    every mutating subcommand's `[Cli|...]` block AND keeps the read-
-    only subcommands clean — passing `--output` to `print-rpath` is
-    a real bug surface (the user probably meant to chain commands
-    differently), so the CLI rejects it with "Unknown flag". -/
+    subcommand.  This avoids 4-line flag repetition in every mutating
+    subcommand's `[Cli|...]` block AND keeps the read-only subcommands
+    clean — passing `--output` to `print-rpath` is a real bug surface
+    (the user probably meant to chain commands differently), so the CLI
+    rejects it with "Unknown flag". -/
 def mutatingFlagsExt : Extension := {
   extend := fun cmd =>
     let augmentedSubs := cmd.subCmds.map fun sub =>
-      if readOnlySubcommands.contains sub.meta.name then sub
+      if isReadOnlyName sub.meta.name then sub
       else
         let existing := sub.meta.flags
         sub.update (flags := existing ++ mutatingFlags)
