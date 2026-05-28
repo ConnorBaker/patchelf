@@ -138,6 +138,23 @@ theorem ElfFile.firstIdxWhereIn_congr
     · have hkb : ¬ k < b.size := by rw [← hSize]; exact hka
       rw [dif_neg hka, dif_neg hkb]
 
+/-- `firstIdxWhereIn` is preserved when updating array `a` at index `i`
+    with `v`, given `p v = false` AND `p (a[i]) = false`.  The update at
+    `i` doesn't affect the result since `i` is a non-matching position in
+    both the original and updated arrays. -/
+theorem ElfFile.firstIdxWhereIn_update_both_false
+    (a : Array Section) (p : Section → Bool)
+    (i : Nat) (hi : i < a.size) (v : Section)
+    (hv : p v = false) (horig : p (a[i]'hi) = false) :
+    firstIdxWhereIn (a.set i v hi) p = firstIdxWhereIn a p :=
+  firstIdxWhereIn_congr _ _ _
+    (by simp [Array.size_set])
+    (fun k ha hb => by
+      by_cases hki : k = i
+      · subst hki
+        simp [Array.getElem_set_self, horig, hv]
+      · simp [Array.getElem_set, Ne.symm hki])
+
 /-- Sections-array field after update. -/
 theorem ElfFile.updateSectionContent_sections (e : ElfFile)
     (i : Nat) (c : SectionContent) (h : i < e.sections.size) :
@@ -167,20 +184,35 @@ theorem ElfFile.updateSectionContent_getElem_self (e : ElfFile)
 
 /-! ## Type / name preservation under updateSectionContent
 
-    `updateSectionContent` only changes `content`; `type` and `name` are
-    preserved at every index.  These projections feed `IsValid` clauses
-    that depend only on those fields. -/
+    `updateSectionContent` changes `content` at index `i`.  Since
+    `Section.type = content.type`, the type at `j ≠ i` is unchanged
+    (same content → same type), and the type at `j = i` becomes `c.type`.
 
-/-- Type preservation at every index. -/
+    For same-constructor updates (e.g. `.dynamic dyn → .dynamic dyn'`),
+    `c.type = original.type` so type appears preserved even at `j = i`.
+    Callers that need the `j = i` case separately use
+    `updateSectionContent_type_self`. -/
+
+/-- Type at `j ≠ i` is preserved: content at `j` is unchanged. -/
 theorem ElfFile.updateSectionContent_type (e : ElfFile)
     (i : Nat) (c : SectionContent) (j : Nat) (hj : j < e.sections.size)
+    (hne : j ≠ i)
     (hj' : j < (e.updateSectionContent i c).sections.size) :
     ((e.updateSectionContent i c).sections[j]'hj').type
       = (e.sections[j]'hj).type := by
-  by_cases hje : j = i
-  · subst hje
-    rw [updateSectionContent_getElem_self _ _ _ hj hj']
-  · rw [updateSectionContent_getElem_ne _ _ _ _ hj hje hj']
+  rw [show (e.updateSectionContent i c).sections[j]'hj'
+        = e.sections[j]'hj from
+    updateSectionContent_getElem_ne _ _ _ _ hj hne hj']
+
+/-- Type at `j = i` becomes `c.type`. -/
+theorem ElfFile.updateSectionContent_type_self (e : ElfFile)
+    (i : Nat) (c : SectionContent) (hi : i < e.sections.size)
+    (hi' : i < (e.updateSectionContent i c).sections.size) :
+    ((e.updateSectionContent i c).sections[i]'hi').type = c.type := by
+  rw [show (e.updateSectionContent i c).sections[i]'hi'
+        = { e.sections[i]'hi with content := c } from
+    updateSectionContent_getElem_self _ _ _ hi hi']
+  rfl
 
 /-- Name preservation at every index. -/
 theorem ElfFile.updateSectionContent_name (e : ElfFile)
@@ -204,31 +236,34 @@ theorem ElfFile.updateSectionContent_offset (e : ElfFile)
     rw [updateSectionContent_getElem_self _ _ _ hj hj']
   · rw [updateSectionContent_getElem_ne _ _ _ _ hj hje hj']
 
-/-- `findUniqueTypeIdx` only looks at types; `updateSectionContent`
-    preserves types so it preserves `findUniqueTypeIdx`. -/
+/-- `findUniqueTypeIdx` is preserved when the update at `i` has the
+    same type as the original (same-constructor update). -/
 theorem ElfFile.updateSectionContent_findUniqueTypeIdx (e : ElfFile)
-    (i : Nat) (c : SectionContent) (ty : Layout.ShType) :
+    (i : Nat) (c : SectionContent) (ty : Layout.ShType)
+    (hTypeEq : ∀ (hi : i < e.sections.size),
+        c.type = (e.sections[i]'hi).type) :
     (e.updateSectionContent i c).findUniqueTypeIdx ty = e.findUniqueTypeIdx ty :=
   firstIdxWhereIn_congr _ _ _ (updateSectionContent_sections_size e i c)
-    (fun k ha hb => by rw [updateSectionContent_type e i c k hb ha])
+    (fun k ha hb => by
+      -- Goal: decide ((updated[k]).type = ty) = decide ((e[k]).type = ty)
+      -- Show the types are equal, then the decides are equal.
+      have hTy : ((e.updateSectionContent i c).sections[k]'ha).type
+               = (e.sections[k]'hb).type := by
+        by_cases hki : k = i
+        · subst hki
+          rw [updateSectionContent_type_self _ _ _ hb ha]
+          exact hTypeEq hb
+        · exact updateSectionContent_type _ _ _ _ hb hki ha
+      simp [hTy])
 
-/-- `dynamicIdx` is preserved by `updateSectionContent`. -/
+/-- `dynamicIdx` is preserved when updating with same-type content.
+    Callers providing `.dynamic newDyn` satisfy `c.type = SHT_DYNAMIC
+    = original.type` (when the original section has `.dynamic` content). -/
 theorem ElfFile.updateSectionContent_dynamicIdx (e : ElfFile)
-    (i : Nat) (c : SectionContent) :
+    (i : Nat) (c : SectionContent)
+    (hTypeEq : ∀ (hi : i < e.sections.size), c.type = (e.sections[i]'hi).type) :
     (e.updateSectionContent i c).dynamicIdx = e.dynamicIdx :=
-  updateSectionContent_findUniqueTypeIdx e i c _
-
-/-- `dynsymIdx` is preserved. -/
-theorem ElfFile.updateSectionContent_dynsymIdx (e : ElfFile)
-    (i : Nat) (c : SectionContent) :
-    (e.updateSectionContent i c).dynsymIdx = e.dynsymIdx :=
-  updateSectionContent_findUniqueTypeIdx e i c _
-
-/-- `versymIdx` is preserved. -/
-theorem ElfFile.updateSectionContent_versymIdx (e : ElfFile)
-    (i : Nat) (c : SectionContent) :
-    (e.updateSectionContent i c).versymIdx = e.versymIdx :=
-  updateSectionContent_findUniqueTypeIdx e i c _
+  updateSectionContent_findUniqueTypeIdx e i c _ hTypeEq
 
 /-- The shstrtab section is unchanged when we update a *different* index.
     `shstrtab` reads the content at `shstrndx`; if the update index is
@@ -268,20 +303,7 @@ theorem ElfFile.updateSectionContent_dynstrIdx (e : ElfFile)
     (e.updateSectionContent i c).dynstrIdx = e.dynstrIdx :=
   updateSectionContent_findIdxByName e i c _ hNe
 
-/-- `interpIdx` is preserved when not updating shstrtab. -/
-theorem ElfFile.updateSectionContent_interpIdx (e : ElfFile)
-    (i : Nat) (c : SectionContent) (hNe : i ≠ e.header.shstrndx.toNat) :
-    (e.updateSectionContent i c).interpIdx = e.interpIdx :=
-  updateSectionContent_findIdxByName e i c _ hNe
-
 /-! ## `contentAt` preservation under disjoint-index updates -/
-
-/-- When the accessor index `j?` is `none`, both sides of the
-    `contentAt` lookup are `none`. -/
-theorem ElfFile.updateSectionContent_contentAt_none (e : ElfFile)
-    (i : Nat) (c : SectionContent) :
-    (e.updateSectionContent i c).contentAt none = e.contentAt none := by
-  rfl
 
 /-- `contentAt` at index `j` is preserved when the update happens at a
     different index (`j ≠ i`).  This is the key building block for
@@ -309,13 +331,33 @@ theorem ElfFile.updateSectionContent_contentAt_some_ne (e : ElfFile)
     fires.  When the update is at a *different* index from the one the
     accessor reads, the accessor's value is unchanged. -/
 
-/-- `dynsym` accessor preserved when iDyn ≠ dynsymIdx-target. -/
+/-- `dynsym` accessor preserved when:
+    (1) i ≠ dynsymIdx-target,
+    (2) c.type ≠ SHT_DYNSYM (update doesn't introduce a new DYNSYM), AND
+    (3) original content at i also has type ≠ SHT_DYNSYM.
+    All practical callers update `.dynamic` content, satisfying (2) and (3). -/
 theorem ElfFile.updateSectionContent_dynsym_eq (e : ElfFile)
     (i : Nat) (c : SectionContent)
+    (hNotDynsym : c.type ≠ Layout.ShType.SHT_DYNSYM)
+    (hOrigNotDynsym : ∀ (hi : i < e.sections.size),
+        (e.sections[i]'hi).type ≠ Layout.ShType.SHT_DYNSYM)
     (hNeIdx : ∀ iSym, e.dynsymIdx = some iSym → i ≠ iSym) :
     (e.updateSectionContent i c).dynsym = e.dynsym := by
   unfold dynsym
-  rw [updateSectionContent_dynsymIdx]
+  have hUpdIdx : (e.updateSectionContent i c).dynsymIdx = e.dynsymIdx := by
+    unfold ElfFile.dynsymIdx ElfFile.findUniqueTypeIdx
+    by_cases hi : i < e.sections.size
+    · -- Rewrite the updated sections array.
+      rw [show (e.updateSectionContent i c).sections =
+              e.sections.set i { e.sections[i]'hi with content := c } hi from
+            updateSectionContent_sections e i c hi]
+      apply firstIdxWhereIn_update_both_false _ _ i hi
+      · -- new element at i has c.type ≠ SHT_DYNSYM
+        simp [Section.type, hNotDynsym]
+      · -- original at i has type ≠ SHT_DYNSYM
+        exact decide_eq_false_iff_not.mpr (hOrigNotDynsym hi)
+    · simp [updateSectionContent, dif_neg hi]
+  rw [hUpdIdx]
   cases hDsi : e.dynsymIdx with
   | none   => rfl
   | some iSym =>
@@ -333,19 +375,6 @@ theorem ElfFile.updateSectionContent_dynstr_eq (e : ElfFile)
   | none   => rfl
   | some iStr =>
       rw [updateSectionContent_contentAt_some_ne _ _ _ _ (Ne.symm (hNeIdx iStr hDsi))]
-
-/-- `interp` accessor preserved analogously. -/
-theorem ElfFile.updateSectionContent_interp_eq (e : ElfFile)
-    (i : Nat) (c : SectionContent)
-    (hShstrNe : i ≠ e.header.shstrndx.toNat)
-    (hNeIdx : ∀ iI, e.interpIdx = some iI → i ≠ iI) :
-    (e.updateSectionContent i c).interp = e.interp := by
-  unfold interp
-  rw [updateSectionContent_interpIdx _ _ _ hShstrNe]
-  cases hII : e.interpIdx with
-  | none  => rfl
-  | some iI =>
-      rw [updateSectionContent_contentAt_some_ne _ _ _ _ (Ne.symm (hNeIdx iI hII))]
 
 /-! ## Disjoint-index facts derived from typed accessors
 
@@ -373,25 +402,6 @@ theorem ElfFile.dynstrIdx_target_ne_of_content_dynamic
   rw [dif_pos hBound] at hDs
   rw [hContent] at hDs
   cases hDs
-
-/-- If `e.dynsym = some syms` and the section at `iDyn` has content
-    `.dynamic dyn`, then iDyn ≠ dynsym's index. -/
-theorem ElfFile.dynsymIdx_target_ne_of_content_dynamic
-    (e : ElfFile) {iDyn : Nat} (hBound : iDyn < e.sections.size)
-    {dyn : Array DynEntry}
-    (hContent : (e.sections[iDyn]'hBound).content = .dynamic dyn)
-    {syms : Array Symbol} (hDsy : e.dynsym = some syms)
-    {iSym : Nat} (hSym : e.dynsymIdx = some iSym) :
-    iSym ≠ iDyn := by
-  intro hEq
-  unfold dynsym at hDsy
-  rw [hSym] at hDsy
-  unfold contentAt at hDsy
-  simp only [Option.bind_some] at hDsy
-  rw [hEq] at hDsy
-  rw [dif_pos hBound] at hDsy
-  rw [hContent] at hDsy
-  cases hDsy
 
 /-- If `e.dynstr = some ds`, then iDyn (with `.dynamic` content) is
     not the shstrndx index — `dynstrIdx` would otherwise be `none`

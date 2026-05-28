@@ -223,41 +223,6 @@ theorem readU8_encode_in_header (e : ElfFile)
   show Reader.readU8 (e.sections.foldl _ buf3) r = Reader.readU8 hdrW r
   rw [hStep1, hStep234]
 
-/-- `readU16` analog of `readU8_encode_in_header`. -/
-theorem readU16_encode_in_header (e : ElfFile)
-    (hSync : syncDtStrszInFile e = e)
-    (hLay : layoutAlreadyValid e = true)
-    (hDisj : e.spliceRegionsDisjoint)
-    (r : Nat) (hr : r + 2 ≤ Layout.ehdrSize) :
-    Reader.readU16 (encode e) r
-      = Reader.readU16 (ElfHeader.write e.header) r := by
-  unfold Reader.readU16
-  rw [readU8_encode_in_header e hSync hLay hDisj r (by omega)]
-  rw [readU8_encode_in_header e hSync hLay hDisj (r + 1) (by omega)]
-
-/-- `readU32` analog. -/
-theorem readU32_encode_in_header (e : ElfFile)
-    (hSync : syncDtStrszInFile e = e)
-    (hLay : layoutAlreadyValid e = true)
-    (hDisj : e.spliceRegionsDisjoint)
-    (r : Nat) (hr : r + 4 ≤ Layout.ehdrSize) :
-    Reader.readU32 (encode e) r
-      = Reader.readU32 (ElfHeader.write e.header) r := by
-  unfold Reader.readU32
-  iterate 4 rw [readU8_encode_in_header e hSync hLay hDisj _ (by omega)]
-
-/-- `readU64` analog. -/
-theorem readU64_encode_in_header (e : ElfFile)
-    (hSync : syncDtStrszInFile e = e)
-    (hLay : layoutAlreadyValid e = true)
-    (hDisj : e.spliceRegionsDisjoint)
-    (r : Nat) (hr : r + 8 ≤ Layout.ehdrSize) :
-    Reader.readU64 (encode e) r
-      = Reader.readU64 (ElfHeader.write e.header) r := by
-  unfold Reader.readU64
-  rw [readU32_encode_in_header e hSync hLay hDisj r (by omega)]
-  rw [readU32_encode_in_header e hSync hLay hDisj (r + 4) (by omega)]
-
 /-- Per-byte preservation: the i-th byte of `(encode e)` agrees with
     the i-th byte of `ElfHeader.write e.header` for `i < ehdrSize`. -/
 theorem getElem_encode_in_header (e : ElfFile)
@@ -656,54 +621,6 @@ theorem readU8_encode_in_phdr (e : ElfFile)
   show Reader.readU8 (e.sections.foldl _ buf3) (phoff + k) = Reader.readU8 phdrW k
   rw [hStep1, hStep23]
 
-/-- `readU16` analog of `readU8_encode_in_phdr`. -/
-theorem readU16_encode_in_phdr (e : ElfFile)
-    (hSync : syncDtStrszInFile e = e)
-    (hLay : layoutAlreadyValid e = true)
-    (hDisj : e.spliceRegionsDisjoint)
-    (k : Nat) (hk : k + 2 ≤ e.phdrs.size * Layout.phdrSize) :
-    Reader.readU16 (encode e) (e.header.phoff.val + k)
-      = Reader.readU16 (writeArray ProgramHeader.write e.phdrs) k := by
-  unfold Reader.readU16
-  rw [readU8_encode_in_phdr e hSync hLay hDisj k (by omega)]
-  rw [show e.header.phoff.val + k + 1 = e.header.phoff.val + (k + 1)
-        from by omega,
-      readU8_encode_in_phdr e hSync hLay hDisj (k + 1) (by omega)]
-
-/-- `readU32` analog. -/
-theorem readU32_encode_in_phdr (e : ElfFile)
-    (hSync : syncDtStrszInFile e = e)
-    (hLay : layoutAlreadyValid e = true)
-    (hDisj : e.spliceRegionsDisjoint)
-    (k : Nat) (hk : k + 4 ≤ e.phdrs.size * Layout.phdrSize) :
-    Reader.readU32 (encode e) (e.header.phoff.val + k)
-      = Reader.readU32 (writeArray ProgramHeader.write e.phdrs) k := by
-  unfold Reader.readU32
-  rw [readU8_encode_in_phdr e hSync hLay hDisj k (by omega)]
-  rw [show e.header.phoff.val + k + 1 = e.header.phoff.val + (k + 1)
-        from by omega,
-      readU8_encode_in_phdr e hSync hLay hDisj (k + 1) (by omega)]
-  rw [show e.header.phoff.val + k + 2 = e.header.phoff.val + (k + 2)
-        from by omega,
-      readU8_encode_in_phdr e hSync hLay hDisj (k + 2) (by omega)]
-  rw [show e.header.phoff.val + k + 3 = e.header.phoff.val + (k + 3)
-        from by omega,
-      readU8_encode_in_phdr e hSync hLay hDisj (k + 3) (by omega)]
-
-/-- `readU64` analog. -/
-theorem readU64_encode_in_phdr (e : ElfFile)
-    (hSync : syncDtStrszInFile e = e)
-    (hLay : layoutAlreadyValid e = true)
-    (hDisj : e.spliceRegionsDisjoint)
-    (k : Nat) (hk : k + 8 ≤ e.phdrs.size * Layout.phdrSize) :
-    Reader.readU64 (encode e) (e.header.phoff.val + k)
-      = Reader.readU64 (writeArray ProgramHeader.write e.phdrs) k := by
-  unfold Reader.readU64
-  rw [readU32_encode_in_phdr e hSync hLay hDisj k (by omega)]
-  rw [show e.header.phoff.val + k + 4 = e.header.phoff.val + (k + 4)
-        from by omega,
-      readU32_encode_in_phdr e hSync hLay hDisj (k + 4) (by omega)]
-
 /-- Per-byte preservation: the i-th byte of `(encode e)` agrees with
     the i-th byte of `writeArray PH.write e.phdrs` when `i ∈ [phoff, phoff + phnum*56)`. -/
 theorem getElem_encode_in_phdr (e : ElfFile)
@@ -952,54 +869,6 @@ theorem readU8_encode_in_shdr (e : ElfFile)
     simp_splice
   show Reader.readU8 (e.sections.foldl _ buf3) (shoff + k) = Reader.readU8 shdrW k
   rw [hStep1, hStep2]
-
-/-- `readU16` analog of `readU8_encode_in_shdr`. -/
-theorem readU16_encode_in_shdr (e : ElfFile)
-    (hSync : syncDtStrszInFile e = e)
-    (hLay : layoutAlreadyValid e = true)
-    (hDisj : e.spliceRegionsDisjoint)
-    (k : Nat) (hk : k + 2 ≤ e.sections.size * Layout.shdrSize) :
-    Reader.readU16 (encode e) (e.header.shoff.val + k)
-      = Reader.readU16 (writeArray SectionHeader.write (e.sections.map toShdr)) k := by
-  unfold Reader.readU16
-  rw [readU8_encode_in_shdr e hSync hLay hDisj k (by omega)]
-  rw [show e.header.shoff.val + k + 1 = e.header.shoff.val + (k + 1)
-        from by omega,
-      readU8_encode_in_shdr e hSync hLay hDisj (k + 1) (by omega)]
-
-/-- `readU32` analog. -/
-theorem readU32_encode_in_shdr (e : ElfFile)
-    (hSync : syncDtStrszInFile e = e)
-    (hLay : layoutAlreadyValid e = true)
-    (hDisj : e.spliceRegionsDisjoint)
-    (k : Nat) (hk : k + 4 ≤ e.sections.size * Layout.shdrSize) :
-    Reader.readU32 (encode e) (e.header.shoff.val + k)
-      = Reader.readU32 (writeArray SectionHeader.write (e.sections.map toShdr)) k := by
-  unfold Reader.readU32
-  rw [readU8_encode_in_shdr e hSync hLay hDisj k (by omega)]
-  rw [show e.header.shoff.val + k + 1 = e.header.shoff.val + (k + 1)
-        from by omega,
-      readU8_encode_in_shdr e hSync hLay hDisj (k + 1) (by omega)]
-  rw [show e.header.shoff.val + k + 2 = e.header.shoff.val + (k + 2)
-        from by omega,
-      readU8_encode_in_shdr e hSync hLay hDisj (k + 2) (by omega)]
-  rw [show e.header.shoff.val + k + 3 = e.header.shoff.val + (k + 3)
-        from by omega,
-      readU8_encode_in_shdr e hSync hLay hDisj (k + 3) (by omega)]
-
-/-- `readU64` analog. -/
-theorem readU64_encode_in_shdr (e : ElfFile)
-    (hSync : syncDtStrszInFile e = e)
-    (hLay : layoutAlreadyValid e = true)
-    (hDisj : e.spliceRegionsDisjoint)
-    (k : Nat) (hk : k + 8 ≤ e.sections.size * Layout.shdrSize) :
-    Reader.readU64 (encode e) (e.header.shoff.val + k)
-      = Reader.readU64 (writeArray SectionHeader.write (e.sections.map toShdr)) k := by
-  unfold Reader.readU64
-  rw [readU32_encode_in_shdr e hSync hLay hDisj k (by omega)]
-  rw [show e.header.shoff.val + k + 4 = e.header.shoff.val + (k + 4)
-        from by omega,
-      readU32_encode_in_shdr e hSync hLay hDisj (k + 4) (by omega)]
 
 /-- Per-byte preservation: the i-th byte of `(encode e)` agrees with
     the i-th byte of `writeArray SectionHeader.write (e.sections.map toShdr)`
@@ -1821,8 +1690,8 @@ theorem decodeRaw_encode_raw (e : ElfFile)
     (i : Nat) (hi : i < e.sections.size)
     (hType_NB : (e.sections[i]'hi).type ≠ ShType.SHT_NOBITS)
     (hType_NL : (e.sections[i]'hi).type ≠ ShType.SHT_NULL)
-    (bs : ByteArray)
-    (hContent : (e.sections[i]'hi).content = .raw bs) :
+    (ty : ShType) (hOk : ty.isStructural = false) (bs : ByteArray)
+    (hContent : (e.sections[i]'hi).content = .raw ty hOk bs) :
     Reader.readBytes (encode e) (e.sections[i]'hi).offset.val
         (e.sections[i]'hi).encodedSize
       = bs := by
@@ -1851,8 +1720,8 @@ theorem decodeRaw_encode_raw (e : ElfFile)
 theorem decodeRaw_encode_null (e : ElfFile)
     (i : Nat) (hi : i < e.sections.size)
     (_hType_NL : (e.sections[i]'hi).type = ShType.SHT_NULL)
-    (bs : ByteArray)
-    (hContent : (e.sections[i]'hi).content = .raw bs)
+    (ty : ShType) (hOk : ty.isStructural = false) (bs : ByteArray)
+    (hContent : (e.sections[i]'hi).content = .raw ty hOk bs)
     (hEmpty : bs.size = 0) :
     Reader.readBytes (encode e) (e.sections[i]'hi).offset.val
         (e.sections[i]'hi).encodedSize
@@ -1928,13 +1797,11 @@ theorem dynamic_eq_some_of_section (e : ElfFile)
         | _                 => none) = some ds
   rw [hContentAt]
 
-/-- Bridge `e.IsValid + sectionsTypeContentMatch + section[i] non-NULL`
-    to the per-section `hDynWF` precondition.  When section i has
-    `.dynamic ds` content, `IsValid.dynamic_wf` (specifically the
-    `dynamicTerminated` clause) gives us:
-      0 < ds.size ∧ DT_NULL bookend ∧ no early null. -/
-theorem isValid_to_hDynWF (e : ElfFile) (hVal : e.IsValid)
-    (hTCM : e.sectionsTypeContentMatch) :
+/-- Bridge: when section i has `.dynamic ds` content, `IsValid.dynamic_wf`
+    gives us the termination properties.  Since `Section.type` is computed
+    from `content`, `type = SHT_DYNAMIC` holds by construction — no external
+    `sectionsTypeContentMatch` predicate needed. -/
+theorem isValid_to_hDynWF (e : ElfFile) (hVal : e.IsValid) :
     ∀ (i : Nat) (h : i < e.sections.size) (ds : Array DynEntry),
       (e.sections[i]'h).content = .dynamic ds →
       ∃ (hSizePos : 0 < ds.size),
@@ -1942,68 +1809,69 @@ theorem isValid_to_hDynWF (e : ElfFile) (hVal : e.IsValid)
         (∀ (j : Nat) (hj : j < ds.size),
           (ds[j]'hj).tag = DynTag.null → j = ds.size - 1) := by
   intros i hi ds hContent
-  -- Get type = SHT_DYNAMIC from the type/content invariant.
-  have hTCMi : ElfFile.Section.typeContentMatchesB (e.sections[i]'hi) = true := by
-    have hAll := hTCM
-    unfold ElfFile.sectionsTypeContentMatch at hAll
-    rw [Array.all_iff_forall] at hAll
-    exact hAll i hi ⟨Nat.zero_le _, hi⟩
-  have hType : (e.sections[i]'hi).type = ShType.SHT_DYNAMIC := by
-    unfold ElfFile.Section.typeContentMatchesB at hTCMi
-    -- Case-split on type via the matchesB unfolding.
-    by_cases hT_NB : (e.sections[i]'hi).type = ShType.SHT_NOBITS
-    · rw [if_pos hT_NB] at hTCMi
-      rw [hContent] at hTCMi; simp at hTCMi
-    rw [if_neg hT_NB] at hTCMi
-    by_cases hT_ST : (e.sections[i]'hi).type = ShType.SHT_STRTAB
-    · rw [if_pos hT_ST] at hTCMi
-      rw [hContent] at hTCMi; simp at hTCMi
-    rw [if_neg hT_ST] at hTCMi
-    by_cases hT_DY : (e.sections[i]'hi).type = ShType.SHT_DYNAMIC
-    · exact hT_DY
-    rw [if_neg hT_DY] at hTCMi
-    by_cases hT_DS : (e.sections[i]'hi).type = ShType.SHT_DYNSYM
-    · rw [if_pos hT_DS] at hTCMi
-      rw [hContent] at hTCMi; simp at hTCMi
-    rw [if_neg hT_DS] at hTCMi
-    by_cases hT_VS : (e.sections[i]'hi).type = ShType.SHT_GNU_VERSYM
-    · rw [if_pos hT_VS] at hTCMi
-      rw [hContent] at hTCMi; simp at hTCMi
-    · rw [if_neg hT_VS] at hTCMi
-      rw [hContent] at hTCMi; simp at hTCMi
-  -- e.dynamic = some ds via the bridge.
+  -- `Section.type` is computed from content: `.dynamic ds .type = SHT_DYNAMIC`.
+  have hType : (e.sections[i]'hi).type = ShType.SHT_DYNAMIC :=
+    by simp [Section.type, SectionContent.type, hContent]
   have hDyn : e.dynamic = some ds :=
     dynamic_eq_some_of_section e hVal.types_distinct.1 i hi hType ds hContent
-  -- Pull the three properties from dynamicTerminated.
-  have hTerm := hVal.dynamic_wf.1
-  exact hTerm ds hDyn
+  exact hVal.dynamic_wf.1 ds hDyn
+
+/-- Decidable type-equality lemmas used by the dispatch arms below.
+    Local (not `@[simp]`) — `simp_section_dispatch` references them
+    explicitly, avoiding global-simp interaction with downstream
+    theorems. -/
+private theorem shtype_eq_NOBITS_self :
+    (ShType.SHT_NOBITS = ShType.SHT_NOBITS) = True := by decide
+private theorem shtype_eq_STRTAB_NOBITS :
+    (ShType.SHT_STRTAB = ShType.SHT_NOBITS) = False := by decide
+private theorem shtype_eq_STRTAB_self :
+    (ShType.SHT_STRTAB = ShType.SHT_STRTAB) = True := by decide
+private theorem shtype_eq_DYNAMIC_NOBITS :
+    (ShType.SHT_DYNAMIC = ShType.SHT_NOBITS) = False := by decide
+private theorem shtype_eq_DYNAMIC_STRTAB :
+    (ShType.SHT_DYNAMIC = ShType.SHT_STRTAB) = False := by decide
+private theorem shtype_eq_DYNAMIC_self :
+    (ShType.SHT_DYNAMIC = ShType.SHT_DYNAMIC) = True := by decide
+private theorem shtype_eq_DYNSYM_NOBITS :
+    (ShType.SHT_DYNSYM = ShType.SHT_NOBITS) = False := by decide
+private theorem shtype_eq_DYNSYM_STRTAB :
+    (ShType.SHT_DYNSYM = ShType.SHT_STRTAB) = False := by decide
+private theorem shtype_eq_DYNSYM_DYNAMIC :
+    (ShType.SHT_DYNSYM = ShType.SHT_DYNAMIC) = False := by decide
+private theorem shtype_eq_DYNSYM_self :
+    (ShType.SHT_DYNSYM = ShType.SHT_DYNSYM) = True := by decide
+private theorem shtype_eq_VERSYM_NOBITS :
+    (ShType.SHT_GNU_VERSYM = ShType.SHT_NOBITS) = False := by decide
+private theorem shtype_eq_VERSYM_STRTAB :
+    (ShType.SHT_GNU_VERSYM = ShType.SHT_STRTAB) = False := by decide
+private theorem shtype_eq_VERSYM_DYNAMIC :
+    (ShType.SHT_GNU_VERSYM = ShType.SHT_DYNAMIC) = False := by decide
+private theorem shtype_eq_VERSYM_DYNSYM :
+    (ShType.SHT_GNU_VERSYM = ShType.SHT_DYNSYM) = False := by decide
+private theorem shtype_eq_VERSYM_self :
+    (ShType.SHT_GNU_VERSYM = ShType.SHT_GNU_VERSYM) = True := by decide
 
 set_option maxHeartbeats 1600000 in
-/-- The unconditional `section_decode` theorem.  Case-splits on
-    `s.type`, dispatches to the matching per-content discharge.
+/-- The unconditional `section_decode` theorem.  Since `Section.type` is
+    now computed from `content`, the dispatch is `match s.content` —
+    no external `sectionsTypeContentMatch` predicate needed.
 
     Preconditions:
       * `syncDtStrszInFile e = e`, `layoutAlreadyValid e = true`,
         `e.spliceRegionsDisjoint`, `e.IsValid` — standard four.
-      * `e.sectionsTypeContentMatch` — type↔content invariant.
-      * `hSizeFit` — each section's encoded size fits in UInt64.
-      * `hNonNull` — only sections[0] is SHT_NULL.
-      * `hDynWF` — for any section with `.dynamic ds` content, ds is
-        non-empty, terminates in DT_NULL, and has no earlier null.
-        Caller can derive this from `e.IsValid.dynamic_wf` once the
-        per-section ↔ e.dynamic bridge is in place; expressed
-        per-section here to avoid the `findUniqueTypeIdx` chase. -/
+      * `hSizeFit` — each section's shdrSize fits in UInt64.
+      * `hNullEmpty` — sections with SHT_NULL type have empty `.raw` content.
+      * `hDynWF` — for `.dynamic ds` content, ds terminates in DT_NULL. -/
 theorem section_decode_encode (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
     (hVal : e.IsValid)
-    (hTCM : e.sectionsTypeContentMatch)
     (hSizeFit : ∀ (i : Nat) (h : i < e.sections.size),
       (e.sections[i]'h).shdrSize < UInt64.size)
     (hNullEmpty : ∀ (i : Nat) (h : i < e.sections.size),
       (e.sections[i]'h).type = ShType.SHT_NULL →
-      ∃ bs, (e.sections[i]'h).content = .raw bs ∧ bs.size = 0)
+      ∃ ty hOk bs, (e.sections[i]'h).content = .raw ty hOk bs ∧ bs.size = 0)
     (hDynWF : ∀ (i : Nat) (h : i < e.sections.size) (ds : Array DynEntry),
       (e.sections[i]'h).content = .dynamic ds →
       ∃ (hSizePos : 0 < ds.size),
@@ -2014,142 +1882,112 @@ theorem section_decode_encode (e : ElfFile)
       Patchelf.Elf.decodeSectionContent (encode e) (toShdr (e.sections[i]'h))
         = (e.sections[i]'h).content := by
   intros i hi
-  -- Compute (toShdr s).type / .offset / .size.val.
-  have hToShdrType : (toShdr (e.sections[i]'hi)).type = (e.sections[i]'hi).type := rfl
   have hToShdrOff : (toShdr (e.sections[i]'hi)).offset = (e.sections[i]'hi).offset := rfl
-  -- (toShdr s).size.val = s.shdrSize.  For non-NOBITS, shdrSize = encodedSize;
-  -- for NOBITS, shdrSize = memSize (handled separately in the NOBITS case).
   have hToShdrSz : (toShdr (e.sections[i]'hi)).size.val
                    = (e.sections[i]'hi).shdrSize := rfl
-  -- Type-content match for this i.
-  have hTCMi : ElfFile.Section.typeContentMatchesB (e.sections[i]'hi) = true := by
-    have hAll := hTCM
-    unfold ElfFile.sectionsTypeContentMatch at hAll
-    rw [Array.all_iff_forall] at hAll
-    exact hAll i hi ⟨Nat.zero_le _, hi⟩
-  -- decodeSectionContent's dispatch.
-  unfold Patchelf.Elf.decodeSectionContent
-  rw [hToShdrType, hToShdrOff, hToShdrSz]
-  -- Case-split on s.type.
-  by_cases hT_NB : (e.sections[i]'hi).type = ShType.SHT_NOBITS
-  · rw [if_pos hT_NB]
-    unfold ElfFile.Section.typeContentMatchesB at hTCMi
-    rw [if_pos hT_NB] at hTCMi
-    match hC : (e.sections[i]'hi).content with
-    | .nobits memSize =>
-      -- decodeSectionContent on NOBITS produces `.nobits sh.size.val`.
-      -- After the `rw [hToShdrSz]` above, the goal has `s.shdrSize` in
-      -- the size slot.  By `s.content = .nobits memSize`, `s.shdrSize = memSize`.
-      show SectionContent.nobits (e.sections[i]'hi).shdrSize
-        = SectionContent.nobits memSize
-      have : (e.sections[i]'hi).shdrSize = memSize := by
-        unfold Section.shdrSize; rw [hC]
-      rw [this]
-    | .raw _      => simp [hC] at hTCMi
-    | .strtab _   => simp [hC] at hTCMi
-    | .dynamic _  => simp [hC] at hTCMi
-    | .dynsym _   => simp [hC] at hTCMi
-    | .versym _   => simp [hC] at hTCMi
-  · rw [if_neg hT_NB]
-    by_cases hT_ST : (e.sections[i]'hi).type = ShType.SHT_STRTAB
-    · rw [if_pos hT_ST]
-      have hT_NL : (e.sections[i]'hi).type ≠ ShType.SHT_NULL := by
-        rw [hT_ST]; decide
-      unfold ElfFile.Section.typeContentMatchesB at hTCMi
-      rw [if_neg hT_NB, if_pos hT_ST] at hTCMi
-      match hC : (e.sections[i]'hi).content with
-      | .strtab st =>
-        have : (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize := by
-          unfold Section.shdrSize; rw [hC]
-        rw [this]
-        rw [decodeStringTable_encode_strtab e hSync hLay hDisj i hi hT_NB hT_NL st hC]
-      | .nobits _   => simp [hC] at hTCMi
-      | .raw _      => simp [hC] at hTCMi
-      | .dynamic _  => simp [hC] at hTCMi
-      | .dynsym _   => simp [hC] at hTCMi
-      | .versym _   => simp [hC] at hTCMi
-    · rw [if_neg hT_ST]
-      by_cases hT_DY : (e.sections[i]'hi).type = ShType.SHT_DYNAMIC
-      · rw [if_pos hT_DY]
-        have hT_NL : (e.sections[i]'hi).type ≠ ShType.SHT_NULL := by
-          rw [hT_DY]; decide
-        unfold ElfFile.Section.typeContentMatchesB at hTCMi
-        rw [if_neg hT_NB, if_neg hT_ST, if_pos hT_DY] at hTCMi
-        match hC : (e.sections[i]'hi).content with
-        | .dynamic ds =>
-          have : (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize := by
-            unfold Section.shdrSize; rw [hC]
-          rw [this]
-          obtain ⟨hDS_size, hDS_lastNull, hDS_noEarly⟩ := hDynWF i hi ds hC
-          rw [decodeDynamic_encode_dynamic e hSync hLay hDisj i hi hT_NB hT_NL
-                ds hC hDS_size hDS_lastNull hDS_noEarly]
-        | .nobits _   => simp [hC] at hTCMi
-        | .raw _      => simp [hC] at hTCMi
-        | .strtab _   => simp [hC] at hTCMi
-        | .dynsym _   => simp [hC] at hTCMi
-        | .versym _   => simp [hC] at hTCMi
-      · rw [if_neg hT_DY]
-        by_cases hT_DS : (e.sections[i]'hi).type = ShType.SHT_DYNSYM
-        · rw [if_pos hT_DS]
-          have hT_NL : (e.sections[i]'hi).type ≠ ShType.SHT_NULL := by
-            rw [hT_DS]; decide
-          unfold ElfFile.Section.typeContentMatchesB at hTCMi
-          rw [if_neg hT_NB, if_neg hT_ST, if_neg hT_DY, if_pos hT_DS] at hTCMi
-          match hC : (e.sections[i]'hi).content with
-          | .dynsym syms =>
-            have : (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize := by
-              unfold Section.shdrSize; rw [hC]
-            rw [this]
-            rw [decodeDynsym_encode_dynsym e hSync hLay hDisj i hi hT_NB hT_NL syms hC]
-          | .nobits _   => simp [hC] at hTCMi
-          | .raw _      => simp [hC] at hTCMi
-          | .strtab _   => simp [hC] at hTCMi
-          | .dynamic _  => simp [hC] at hTCMi
-          | .versym _   => simp [hC] at hTCMi
-        · rw [if_neg hT_DS]
-          by_cases hT_VS : (e.sections[i]'hi).type = ShType.SHT_GNU_VERSYM
-          · rw [if_pos hT_VS]
-            have hT_NL : (e.sections[i]'hi).type ≠ ShType.SHT_NULL := by
-              rw [hT_VS]; decide
-            unfold ElfFile.Section.typeContentMatchesB at hTCMi
-            rw [if_neg hT_NB, if_neg hT_ST, if_neg hT_DY, if_neg hT_DS,
-                if_pos hT_VS] at hTCMi
-            match hC : (e.sections[i]'hi).content with
-            | .versym vs =>
-              have : (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize := by
-                unfold Section.shdrSize; rw [hC]
-              rw [this]
-              rw [decodeVersym_encode_versym e hSync hLay hDisj i hi hT_NB hT_NL vs hC]
-            | .nobits _   => simp [hC] at hTCMi
-            | .raw _      => simp [hC] at hTCMi
-            | .strtab _   => simp [hC] at hTCMi
-            | .dynamic _  => simp [hC] at hTCMi
-            | .dynsym _   => simp [hC] at hTCMi
-          · rw [if_neg hT_VS]
-            -- Default branch: handles both SHT_NULL and other "anything else" types.
-            unfold ElfFile.Section.typeContentMatchesB at hTCMi
-            rw [if_neg hT_NB, if_neg hT_ST, if_neg hT_DY, if_neg hT_DS,
-                if_neg hT_VS] at hTCMi
-            match hC : (e.sections[i]'hi).content with
-            | .raw bs =>
-              have : (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize := by
-                unfold Section.shdrSize; rw [hC]
-              rw [this]
-              by_cases hT_NL_default : (e.sections[i]'hi).type = ShType.SHT_NULL
-              · -- SHT_NULL: use the empty-bs discharge.
-                obtain ⟨bs', hContent', hEmpty'⟩ := hNullEmpty i hi hT_NL_default
-                -- hContent' : content = .raw bs'; hC : content = .raw bs.  So bs = bs'.
-                have hBsEq : bs = bs' := by
-                  rw [hC] at hContent'
-                  injection hContent'
-                subst hBsEq
-                rw [decodeRaw_encode_null e i hi hT_NL_default bs hC hEmpty']
-              · rw [decodeRaw_encode_raw e hSync hLay hDisj i hi hT_NB hT_NL_default bs hC]
-            | .nobits _   => simp [hC] at hTCMi
-            | .strtab _   => simp [hC] at hTCMi
-            | .dynamic _  => simp [hC] at hTCMi
-            | .dynsym _   => simp [hC] at hTCMi
-            | .versym _   => simp [hC] at hTCMi
+  -- Dispatch on `s.content`. In each case, `s.type = s.content.type` by def,
+  -- so the if-guards in `decodeSectionContent` are determined by the content constructor.
+  match hC : (e.sections[i]'hi).content with
+  | .nobits memSize =>
+    have hT_NB_pos : (toShdr (e.sections[i]'hi)).type = ShType.SHT_NOBITS := by
+      simp [hC, SectionContent.type]
+    unfold Patchelf.Elf.decodeSectionContent
+    rw [hToShdrOff, hToShdrSz]
+    simp only [show (toShdr (e.sections[i]'hi)).type = ShType.SHT_NOBITS from hT_NB_pos]
+    simp only [show (ShType.SHT_NOBITS = ShType.SHT_NOBITS) = True from by decide,
+               ↓reduceDIte, if_true]
+    simp [Section.shdrSize, hC]
+  | .strtab st =>
+    have hT_NB : (e.sections[i]'hi).type ≠ ShType.SHT_NOBITS := by
+      simp [Section.type, hC, SectionContent.type] <;> decide
+    have hT_NL : (e.sections[i]'hi).type ≠ ShType.SHT_NULL := by
+      simp [Section.type, hC, SectionContent.type] <;> decide
+    unfold Patchelf.Elf.decodeSectionContent
+    rw [hToShdrOff, hToShdrSz]
+    simp only [show (toShdr (e.sections[i]'hi)).type = ShType.SHT_STRTAB from by
+                 simp [hC, SectionContent.type]]
+    simp only [shtype_eq_STRTAB_NOBITS, shtype_eq_STRTAB_self, ↓reduceDIte]
+    rw [show (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize from by
+          unfold Section.shdrSize; rw [hC]]
+    rw [decodeStringTable_encode_strtab e hSync hLay hDisj i hi hT_NB hT_NL st hC]
+  | .dynamic ds =>
+    have hT_NB : (e.sections[i]'hi).type ≠ ShType.SHT_NOBITS := by
+      simp [Section.type, hC, SectionContent.type] <;> decide
+    have hT_NL : (e.sections[i]'hi).type ≠ ShType.SHT_NULL := by
+      simp [Section.type, hC, SectionContent.type] <;> decide
+    unfold Patchelf.Elf.decodeSectionContent
+    rw [hToShdrOff, hToShdrSz]
+    simp only [show (toShdr (e.sections[i]'hi)).type = ShType.SHT_DYNAMIC from by
+                 simp [hC, SectionContent.type]]
+    simp only [shtype_eq_DYNAMIC_NOBITS, shtype_eq_DYNAMIC_STRTAB,
+               shtype_eq_DYNAMIC_self, ↓reduceDIte]
+    rw [show (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize from by
+          unfold Section.shdrSize; rw [hC]]
+    obtain ⟨hDS_size, hDS_lastNull, hDS_noEarly⟩ := hDynWF i hi ds hC
+    rw [decodeDynamic_encode_dynamic e hSync hLay hDisj i hi hT_NB hT_NL
+          ds hC hDS_size hDS_lastNull hDS_noEarly]
+  | .dynsym syms =>
+    have hT_NB : (e.sections[i]'hi).type ≠ ShType.SHT_NOBITS := by
+      simp [Section.type, hC, SectionContent.type] <;> decide
+    have hT_NL : (e.sections[i]'hi).type ≠ ShType.SHT_NULL := by
+      simp [Section.type, hC, SectionContent.type] <;> decide
+    unfold Patchelf.Elf.decodeSectionContent
+    rw [hToShdrOff, hToShdrSz]
+    simp only [show (toShdr (e.sections[i]'hi)).type = ShType.SHT_DYNSYM from by
+                 simp [hC, SectionContent.type]]
+    simp only [shtype_eq_DYNSYM_NOBITS, shtype_eq_DYNSYM_STRTAB,
+               shtype_eq_DYNSYM_DYNAMIC, shtype_eq_DYNSYM_self, ↓reduceDIte]
+    rw [show (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize from by
+          unfold Section.shdrSize; rw [hC]]
+    rw [decodeDynsym_encode_dynsym e hSync hLay hDisj i hi hT_NB hT_NL syms hC]
+  | .versym vs =>
+    have hT_NB : (e.sections[i]'hi).type ≠ ShType.SHT_NOBITS := by
+      simp [Section.type, hC, SectionContent.type] <;> decide
+    have hT_NL : (e.sections[i]'hi).type ≠ ShType.SHT_NULL := by
+      simp [Section.type, hC, SectionContent.type] <;> decide
+    unfold Patchelf.Elf.decodeSectionContent
+    rw [hToShdrOff, hToShdrSz]
+    simp only [show (toShdr (e.sections[i]'hi)).type = ShType.SHT_GNU_VERSYM from by
+                 simp [hC, SectionContent.type]]
+    simp only [shtype_eq_VERSYM_NOBITS, shtype_eq_VERSYM_STRTAB,
+               shtype_eq_VERSYM_DYNAMIC, shtype_eq_VERSYM_DYNSYM,
+               shtype_eq_VERSYM_self, ↓reduceDIte]
+    rw [show (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize from by
+          unfold Section.shdrSize; rw [hC]]
+    rw [decodeVersym_encode_versym e hSync hLay hDisj i hi hT_NB hT_NL vs hC]
+  | .raw ty hOk bs =>
+    -- ty.isStructural = false → all 5 structural guards fail.
+    -- (toShdr s).type = ty (from SectionContent.type, hC).
+    have hC_ty : (toShdr (e.sections[i]'hi)).type = ty := by
+      simp [hC, SectionContent.type]
+    have hT_NB : ty ≠ ShType.SHT_NOBITS := fun h => by simp [ShType.isStructural, h] at hOk
+    have hT_ST : ty ≠ ShType.SHT_STRTAB := fun h => by simp [ShType.isStructural, h] at hOk
+    have hT_DY : ty ≠ ShType.SHT_DYNAMIC := fun h => by simp [ShType.isStructural, h] at hOk
+    have hT_DS : ty ≠ ShType.SHT_DYNSYM := fun h => by simp [ShType.isStructural, h] at hOk
+    have hT_VS : ty ≠ ShType.SHT_GNU_VERSYM := fun h => by simp [ShType.isStructural, h] at hOk
+    have hT_NB_sec : (e.sections[i]'hi).type ≠ ShType.SHT_NOBITS := by
+      simp [Section.type, hC, SectionContent.type, hT_NB]
+    unfold Patchelf.Elf.decodeSectionContent
+    rw [hToShdrOff, hToShdrSz]
+    simp only [show (toShdr (e.sections[i]'hi)).type = ty from hC_ty]
+    -- ty ≠ SHT_NOBITS/STRTAB/DYNAMIC/DYNSYM/GNU_VERSYM → take else branch for each guard.
+    rw [dif_neg hT_NB, dif_neg hT_ST, dif_neg hT_DY, dif_neg hT_DS, dif_neg hT_VS]
+    rw [show (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize from by
+          unfold Section.shdrSize; rw [hC]]
+    by_cases hT_NL : (e.sections[i]'hi).type = ShType.SHT_NULL
+    · -- SHT_NULL raw.
+      obtain ⟨ty', hOk', bs', hContent', hEmpty'⟩ := hNullEmpty i hi hT_NL
+      rw [hC] at hContent'
+      -- hContent' : .raw ty hOk bs = .raw ty' hOk' bs'.
+      -- Extract bs = bs' via injection (Prop arg hOk is proof-irrelevant).
+      have hBs : bs = bs' := by
+        have := congrArg (fun c : SectionContent =>
+          match c with | .raw _ _ x => x | _ => bs) hContent'
+        simpa using this
+      subst hBs
+      rw [decodeRaw_encode_null e i hi hT_NL ty hOk bs hC hEmpty']
+    · -- Non-NULL raw.
+      rw [decodeRaw_encode_raw e hSync hLay hDisj i hi hT_NB_sec hT_NL ty hOk bs hC]
 
 /-! ## DecodeRoundtripWitness
 
@@ -2231,17 +2069,15 @@ structure EncodePreconditions (e : ElfFile) : Prop where
   spliceDisjoint : e.spliceRegionsDisjoint
   /-- ELF magic + class + data ident bytes are present (per the spec). -/
   identValid : IdentBytesValid e
-  /-- Each section's type matches its content constructor. -/
-  typesMatch : e.sectionsTypeContentMatch
   /-- Each section's shdr size fits in UInt64.  For non-NOBITS this is
       `encodedSize`; for NOBITS this is the declared `memSize`. -/
   sizeFit : ∀ (i : Nat) (h : i < e.sections.size),
     (e.sections[i]'h).shdrSize < UInt64.size
-  /-- SHT_NULL sections (e.g. the conventional sections[0]) have
-      `.raw ByteArray.empty` content. -/
+  /-- SHT_NULL sections have `.raw ty hOk empty` content.
+      (`typesMatch` field removed — construction guarantees alignment.) -/
   nullEmpty : ∀ (i : Nat) (h : i < e.sections.size),
     (e.sections[i]'h).type = ShType.SHT_NULL →
-    ∃ bs, (e.sections[i]'h).content = .raw bs ∧ bs.size = 0
+    ∃ ty hOk bs, (e.sections[i]'h).content = .raw ty hOk bs ∧ bs.size = 0
   /-- ElfHeader's wrap_nat fields fit in UInt64.  Trivially true for
       parser-derived headers (values came from `readU64`). -/
   headerFit_entry : e.header.entry.val < UInt64.size
@@ -2288,9 +2124,9 @@ theorem decodeRoundtripWitness_of_preconditions (e : ElfFile)
       hPre.sizeFit hPre.shdrFit
   section_decode := by
     intros i h
-    have hDynWF := isValid_to_hDynWF e hVal hPre.typesMatch
+    have hDynWF := isValid_to_hDynWF e hVal
     exact section_decode_encode e hPre.syncOk hPre.layoutOk hPre.spliceDisjoint
-      hVal hPre.typesMatch hPre.sizeFit hPre.nullEmpty hDynWF i h
+      hVal hPre.sizeFit hPre.nullEmpty hDynWF i h
 
 /-! ## Master theorem (unconditional)
 
@@ -2305,12 +2141,11 @@ theorem sectionsFromShdrs_eq (e : ElfFile)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
     (hVal : e.IsValid)
-    (hTCM : e.sectionsTypeContentMatch)
     (hSizeFit : ∀ (i : Nat) (h : i < e.sections.size),
       (e.sections[i]'h).shdrSize < UInt64.size)
     (hNullEmpty : ∀ (i : Nat) (h : i < e.sections.size),
       (e.sections[i]'h).type = ShType.SHT_NULL →
-      ∃ bs, (e.sections[i]'h).content = .raw bs ∧ bs.size = 0) :
+      ∃ ty hOk bs, (e.sections[i]'h).content = .raw ty hOk bs ∧ bs.size = 0) :
     sectionsFromShdrs (encode e) (e.sections.map toShdr)
       = e.sections := by
   unfold sectionsFromShdrs
@@ -2323,13 +2158,14 @@ theorem sectionsFromShdrs_eq (e : ElfFile)
     simp only [Function.comp_apply]
     have hi' : i < e.sections.size := by
       rw [Array.size_map] at hi; exact hi
-    have hDynWF := isValid_to_hDynWF e hVal hTCM
-    have hDec := section_decode_encode e hSync hLay hDisj hVal hTCM
+    have hDynWF := isValid_to_hDynWF e hVal
+    have hDec := section_decode_encode e hSync hLay hDisj hVal
                    hSizeFit hNullEmpty hDynWF i hi'
-    -- Goal has decodeSectionContent applied to a structure literal;
-    -- hDec has it applied to `toShdr e.sections[i]`.  These are definitionally
-    -- equal — the structure literal IS toShdr e.sections[i] inlined.
-    show { name := (e.sections[i]'hi').name, type := (e.sections[i]'hi').type,
+    -- Goal: { name := ..., content := decodeSectionContent (encode e) (toShdr s) }
+    -- = e.sections[i]. Since section_decode_encode gives decodeSectionContent = content,
+    -- the result equals the original section.
+    -- Note: Section struct no longer has `type` field; toShdr still works.
+    show { name := (e.sections[i]'hi').name,
            flags := (e.sections[i]'hi').flags, addr := (e.sections[i]'hi').addr,
            offset := (e.sections[i]'hi').offset,
            link := (e.sections[i]'hi').link, info := (e.sections[i]'hi').info,
@@ -2354,7 +2190,7 @@ theorem parse_encode_roundtrip (e : ParsedElf) (hPre : EncodePreconditions e.elf
       shdrs_decode_encode e.elf hPre.syncOk hPre.layoutOk hPre.spliceDisjoint e.isValid
         hPre.sizeFit hPre.shdrFit]
   have hSecs := sectionsFromShdrs_eq e.elf hPre.syncOk hPre.layoutOk hPre.spliceDisjoint
-                  e.isValid hPre.typesMatch hPre.sizeFit hPre.nullEmpty
+                  e.isValid hPre.sizeFit hPre.nullEmpty
   simp only [hSecs]
   have hElfEq :
       ({ header := e.elf.header, phdrs := e.elf.phdrs,
@@ -2409,40 +2245,12 @@ theorem parse_encode_roundtrip_witness (e : ParsedElf)
       * SHT_DYNAMIC → `.dynamic _`
       * SHT_DYNSYM → `.dynsym _`
       * SHT_GNU_VERSYM → `.versym _`
-      * else → `.raw _`
+      * else → `.raw ty hOk _`
 
-    The first 5 lemmas here prove `Section.typeContentMatchesB` for
-    each of the 6 cases; the per-section result composes into
-    `sectionsTypeContentMatch` for any parser output. -/
-
-theorem sectionFromShdr_typeContentMatches (bs : ByteArray) (sh : SectionHeader) :
-    ElfFile.Section.typeContentMatchesB (sectionFromShdr bs sh) = true := by
-  unfold sectionFromShdr ElfFile.Section.typeContentMatchesB decodeSectionContent
-  by_cases hT_NB : sh.type = ShType.SHT_NOBITS
-  · rw [if_pos hT_NB, if_pos hT_NB]
-  · rw [if_neg hT_NB, if_neg hT_NB]
-    by_cases hT_ST : sh.type = ShType.SHT_STRTAB
-    · rw [if_pos hT_ST, if_pos hT_ST]
-    · rw [if_neg hT_ST, if_neg hT_ST]
-      by_cases hT_DY : sh.type = ShType.SHT_DYNAMIC
-      · rw [if_pos hT_DY, if_pos hT_DY]
-      · rw [if_neg hT_DY, if_neg hT_DY]
-        by_cases hT_DS : sh.type = ShType.SHT_DYNSYM
-        · rw [if_pos hT_DS, if_pos hT_DS]
-        · rw [if_neg hT_DS, if_neg hT_DS]
-          by_cases hT_VS : sh.type = ShType.SHT_GNU_VERSYM
-          · rw [if_pos hT_VS, if_pos hT_VS]
-          · rw [if_neg hT_VS, if_neg hT_VS]
-
-/-- Parser output satisfies the `sectionsTypeContentMatch` invariant. -/
-theorem sectionsFromShdrs_typeContentMatch (bs : ByteArray) (shdrs : Array SectionHeader) :
-    (Array.all (sectionsFromShdrs bs shdrs) ElfFile.Section.typeContentMatchesB) = true := by
-  rw [Array.all_iff_forall]
-  intros i hi _
-  unfold sectionsFromShdrs at hi ⊢
-  rw [Array.size_map] at hi
-  rw [Array.getElem_map]
-  exact sectionFromShdr_typeContentMatches bs (shdrs[i]'hi)
+    `sectionFromShdr_typeContentMatches` and `sectionsFromShdrs_typeContentMatch`
+    are deleted: `typeContentMatchesB` / `sectionsTypeContentMatch` are gone.
+    Construction-is-proof: `SectionContent.raw` carries `hOk : ty.isStructural = false`,
+    so parser output is correctly typed by construction. -/
 
 /-! ## `IdentBytesValid` from raw byte facts
 
@@ -2599,7 +2407,7 @@ theorem updateSectionContent_eq_self (e : ElfFile) (iDyn : Nat)
     by_cases hjEq : j = iDyn
     · subst hjEq
       rw [Array.getElem_set_self]
-      rcases hS : sections[j]'h with ⟨name, type, flags, addr, offset, link, info, addralign, entsize, content⟩
+      rcases hS : sections[j]'h with ⟨name, flags, addr, offset, link, info, addralign, entsize, content⟩
       simp only [hS] at heq
       simp only [heq]
     · have hjNe : iDyn ≠ j := fun h => hjEq h.symm
@@ -2800,7 +2608,7 @@ theorem sectionFromShdr_shdrSize_le (bs : ByteArray) (sh : SectionHeader) :
         unfold sectionFromShdr; simp
       rw [hC] at hEq
       unfold decodeSectionContent at hEq
-      rw [if_neg hT_NB] at hEq
+      rw [dif_neg hT_NB] at hEq
       -- decodeSectionContent's residual after stripping NOBITS branch is a
       -- nested 4-way if cascade.  Each branch's body is a non-`.nobits`
       -- constructor, so every concrete value has constructor ≠ `.nobits`.
@@ -2816,7 +2624,7 @@ theorem sectionFromShdr_shdrSize_le (bs : ByteArray) (sh : SectionHeader) :
       unfold Section.shdrSize
       cases hC : (sectionFromShdr bs sh).content with
       | nobits memSize => exact absurd hC (hContentNotNB memSize)
-      | raw _ => rfl
+      | raw _ _ _ => rfl
       | strtab _ => rfl
       | dynamic _ => rfl
       | dynsym _ => rfl
@@ -2828,17 +2636,26 @@ theorem sectionFromShdr_shdrSize_le (bs : ByteArray) (sh : SectionHeader) :
     convention), the content is `.raw <empty bytes>`. -/
 theorem sectionFromShdr_null_empty (bs : ByteArray) (sh : SectionHeader)
     (hT : sh.type = ShType.SHT_NULL) (hSize : sh.size.val = 0) :
-    ∃ rawBs, (sectionFromShdr bs sh).content = .raw rawBs ∧ rawBs.size = 0 := by
-  have hContentEq : (sectionFromShdr bs sh).content
-                  = .raw (Reader.readBytes bs sh.offset.val sh.size.val) := by
+    ∃ ty hOk rawBs,
+      (sectionFromShdr bs sh).content = .raw ty hOk rawBs ∧ rawBs.size = 0 := by
+  -- The parser's decodeSectionContent reaches the `else` branch (sh.type is SHT_NULL,
+  -- which is not structural), producing `.raw sh.type hOk (readBytes ...)`.
+  have hContentEq : ∃ hOk, (sectionFromShdr bs sh).content
+                  = .raw sh.type hOk (Reader.readBytes bs sh.offset.val sh.size.val) := by
+    have _hNB : sh.type ≠ ShType.SHT_NOBITS := by rw [hT]; decide
+    have _hST : sh.type ≠ ShType.SHT_STRTAB := by rw [hT]; decide
+    have _hDY : sh.type ≠ ShType.SHT_DYNAMIC := by rw [hT]; decide
+    have _hDS : sh.type ≠ ShType.SHT_DYNSYM := by rw [hT]; decide
+    have _hVS : sh.type ≠ ShType.SHT_GNU_VERSYM := by rw [hT]; decide
+    have hOk : sh.type.isStructural = false := by
+      unfold ShType.isStructural
+      simp only [Bool.or_eq_false_iff, beq_eq_false_iff_ne]
+      exact ⟨⟨⟨⟨_hNB, _hST⟩, _hDY⟩, _hDS⟩, _hVS⟩
+    refine ⟨hOk, ?_⟩
     unfold sectionFromShdr decodeSectionContent
-    have hNB : sh.type ≠ ShType.SHT_NOBITS := by rw [hT]; decide
-    have hST : sh.type ≠ ShType.SHT_STRTAB := by rw [hT]; decide
-    have hDY : sh.type ≠ ShType.SHT_DYNAMIC := by rw [hT]; decide
-    have hDS : sh.type ≠ ShType.SHT_DYNSYM := by rw [hT]; decide
-    have hVS : sh.type ≠ ShType.SHT_GNU_VERSYM := by rw [hT]; decide
-    simp only [if_neg hNB, if_neg hST, if_neg hDY, if_neg hDS, if_neg hVS]
-  refine ⟨_, hContentEq, ?_⟩
+    simp only [dif_neg _hNB, dif_neg _hST, dif_neg _hDY, dif_neg _hDS, dif_neg _hVS]
+  obtain ⟨hOk, hCEq⟩ := hContentEq
+  refine ⟨sh.type, hOk, _, hCEq, ?_⟩
   unfold Reader.readBytes
   rw [hSize]
   rw [show sh.offset.val + 0 = sh.offset.val from by omega]
@@ -2890,10 +2707,7 @@ theorem encodePreconditions_of_parser
   syncOk := syncDtStrszInFile_eq_id e hCoherent
   spliceDisjoint := hSpliceDisjoint
   identValid := identBytesValid_of_parseHeader_ok bs e hParseHeader
-  typesMatch := by
-    unfold ElfFile.sectionsTypeContentMatch
-    rw [hSections]
-    exact sectionsFromShdrs_typeContentMatch bs shdrs
+  -- `typesMatch` removed: construction guarantees type↔content alignment.
   -- Header fit: header came from `decodeHeader`; every wrap_nat field is
   -- `⟨(readU64 ...).toNat⟩`, and `(u : UInt64).toNat < UInt64.size`.
   headerFit_entry := by
@@ -2987,7 +2801,50 @@ theorem encodePreconditions_of_parser
         congr 1]
       exact this
     rw [hSecEq] at hT ⊢
-    have hType : (shdrs[i]'hShdrI).type = ShType.SHT_NULL := hT
-    exact sectionFromShdr_null_empty bs (shdrs[i]'hShdrI) hType (hShdrNullSize i hShdrI hType)
+    -- `(sectionFromShdr bs sh).type = sh.type` holds for any sh.
+    -- Proof: by case analysis on sh.type in decodeSectionContent —
+    -- each branch produces SectionContent with type = sh.type.
+    -- `(sectionFromShdr bs sh).type = sh.type`: the computed type of the parsed section
+    -- equals the original shdr type.  Proof: match on sh.type and show each
+    -- decodeSectionContent branch produces the matching SectionContent.type.
+    have hSecType_eq : (sectionFromShdr bs (shdrs[i]'hShdrI)).type
+                     = (shdrs[i]'hShdrI).type := by
+      simp only [sectionFromShdr, Section.type]
+      generalize (shdrs[i]'hShdrI) = sh
+      unfold decodeSectionContent
+      rcases Decidable.em (sh.type = ShType.SHT_NOBITS) with h1 | h1
+      · simp [dif_pos h1, SectionContent.type, h1]
+      rcases Decidable.em (sh.type = ShType.SHT_STRTAB) with h2 | h2
+      · -- sh.type = SHT_STRTAB; goal reduces to strtab.type = sh.type.
+        simp only [dif_neg h1, dif_pos h2]
+        simp only [show (ShType.SHT_STRTAB : ShType) = ShType.SHT_STRTAB from rfl,
+                   show ShType.SHT_STRTAB = ShType.SHT_NOBITS ↔ False from by decide,
+                   ↓reduceDIte, if_false, SectionContent.type, h2]
+      rcases Decidable.em (sh.type = ShType.SHT_DYNAMIC) with h3 | h3
+      · simp only [dif_neg h1, dif_neg h2, dif_pos h3]
+        simp only [show ShType.SHT_DYNAMIC = ShType.SHT_NOBITS ↔ False from by decide,
+                   show ShType.SHT_DYNAMIC = ShType.SHT_STRTAB ↔ False from by decide,
+                   show ShType.SHT_DYNAMIC = ShType.SHT_DYNAMIC ↔ True from by decide,
+                   ↓reduceDIte, if_false, if_true, SectionContent.type, h3]
+      rcases Decidable.em (sh.type = ShType.SHT_DYNSYM) with h4 | h4
+      · simp only [dif_neg h1, dif_neg h2, dif_neg h3, dif_pos h4]
+        simp only [show ShType.SHT_DYNSYM = ShType.SHT_NOBITS ↔ False from by decide,
+                   show ShType.SHT_DYNSYM = ShType.SHT_STRTAB ↔ False from by decide,
+                   show ShType.SHT_DYNSYM = ShType.SHT_DYNAMIC ↔ False from by decide,
+                   show ShType.SHT_DYNSYM = ShType.SHT_DYNSYM ↔ True from by decide,
+                   ↓reduceDIte, if_false, if_true, SectionContent.type, h4]
+      rcases Decidable.em (sh.type = ShType.SHT_GNU_VERSYM) with h5 | h5
+      · simp only [dif_neg h1, dif_neg h2, dif_neg h3, dif_neg h4, dif_pos h5]
+        simp only [show ShType.SHT_GNU_VERSYM = ShType.SHT_NOBITS ↔ False from by decide,
+                   show ShType.SHT_GNU_VERSYM = ShType.SHT_STRTAB ↔ False from by decide,
+                   show ShType.SHT_GNU_VERSYM = ShType.SHT_DYNAMIC ↔ False from by decide,
+                   show ShType.SHT_GNU_VERSYM = ShType.SHT_DYNSYM ↔ False from by decide,
+                   show ShType.SHT_GNU_VERSYM = ShType.SHT_GNU_VERSYM ↔ True from by decide,
+                   ↓reduceDIte, if_false, if_true, SectionContent.type, h5]
+      · simp only [dif_neg h1, dif_neg h2, dif_neg h3, dif_neg h4, dif_neg h5,
+                   SectionContent.type]
+    have hShType : (shdrs[i]'hShdrI).type = ShType.SHT_NULL := by
+      rw [← hSecType_eq]; exact hT
+    exact sectionFromShdr_null_empty bs (shdrs[i]'hShdrI) hShType (hShdrNullSize i hShdrI hShType)
 
 end Patchelf.Elf
