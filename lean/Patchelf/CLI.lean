@@ -50,6 +50,8 @@ public import Patchelf.Elf.Ops.Interpreter
 public import Patchelf.Elf.Ops.ReplaceNeeded
 public import Patchelf.Elf.Ops.ClearSymbolVersion
 public import Patchelf.Elf.Ops.RenameDynamicSymbols
+public import Patchelf.Elf.GnuHashRebuild
+public import Patchelf.Elf.RelocRemap
 public import Cli.Basic
 public import Cli.Extensions
 
@@ -524,8 +526,9 @@ def renameOnce (opts : Options) (e : ElfFile) (oldName newName : String) :
     let hOk : Patchelf.Elf.RenameDynamicSymbolsOk tv newName :=
       { hasDynsym := hDs, offsetFits := hFit }
     let tv1 := Patchelf.Elf.renameDynamicSymbols tv oldName newName hOk
-    let (tv2, _perm) := Patchelf.Elf.gnuHashRebuildOp tv1
-    .ok (Patchelf.Elf.encodeWith opts.pageSize (Patchelf.Elf.Adapter.toElfFile e tv2))
+    let (tv2, perm) := Patchelf.Elf.gnuHashRebuildOp tv1
+    let e' := (Patchelf.Elf.Adapter.toElfFile e tv2).remapRelocs perm
+    .ok (Patchelf.Elf.encodeWith opts.pageSize e')
   else throw (Run.badPrecondition "renameDynamicSymbol" "UInt32 offset overflow")
   else throw (Run.badPrecondition "renameDynamicSymbol" "no .dynsym")
 
