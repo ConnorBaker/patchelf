@@ -93,7 +93,7 @@ Multi-op invocations: chain CLI calls via the shell
 The single-process multi-op CLI was retired with the lean4-cli
 migration.
 
-**Test status:** all 52 shell tests in `tests/cases/` pass.
+**Test status:** all 53 shell tests in `tests/cases/` pass.
 
 `/tmp/lean-pe-fixtures/hello` and `/tmp/lean-pe-fixtures/greeter`
 (real glibc-linked binaries) are used by integration tests 50–52
@@ -362,15 +362,25 @@ so segment congruence survives.  `syncDtAddrTagsInFile` rewrites the
 matching DT_* address tags.  `set-rpath` on real ET_DYN binaries
 (e.g. `/usr/bin/hello`) now produces output that runs.
 
-**Residual gap: large-BSS binaries.**  When the last PT_LOAD has
-significant BSS (e.g. coreutils `ls` with ~0x97000 bytes of BSS),
-`canExtendLastPtLoad` rejects the extension because the appended
-region's vaddr would collide with already-allocated BSS.
-`growEOFWith` falls back to `layoutForEncoding`'s repack, which
-produces non-loadable bytes; the pre-write validator
-(`Validate.lean`) catches this and refuses the write with exit 5.
-Allocating a fresh PT_LOAD by growing the phdr table — the
-fully-general fix — is left for a follow-up (see ROADMAP §3.5b).
+**Large-BSS binaries: in-place fresh-PT_LOAD path landed.**  When
+the last PT_LOAD has significant BSS, `canExtendLastPtLoad` rejects
+extension; `growEOFWith` then tries `canAddFreshPtLoad`, which
+accepts when there is room for one more 56-byte phdr entry between
+the original phdr table and the first section.  In that case it
+calls `growEOFWithFreshPtLoad`, which appends a brand-new PT_LOAD
+covering the moved sections at file end (in-place sub-case: phdr
+table stays put, `header.phnum` bumps by 1).  Proven via
+`growEOFWithFreshPtLoad_produces_spliceRegionsDisjoint`, mirror of
+the main-body proof with the extra precondition `canAddFreshPtLoad e
+= true`.  Test: `tests/cases/53-cli-set-rpath-bss-heavy.sh`.
+
+**Residual: `relocatePht` sub-case.**  Binaries like coreutils `ls`
+have NO room before the first section (phdr table packed tight
+against `.note.gnu.build-id`), so `canAddFreshPtLoad` rejects.
+These still fall through to `layoutForEncoding`'s unaware repack and
+get caught by the validator (exit 5).  Fixing this requires moving
+the phdr table itself to the appended region — the C++ patchelf
+`relocatePht` path.  See ROADMAP §3.5a for the follow-up.
 
 ### Priority 1 gaps (verification depth)
 

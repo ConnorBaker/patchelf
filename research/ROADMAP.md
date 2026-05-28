@@ -24,7 +24,8 @@ forward-looking view.
 > work, but a non-trivial dependent-type obstacle in `Adapter.toElfFile`
 > was discovered during the worked example — see §5.1 for details.
 >
-> Items §1.1, §1.2, §3.5a, §5.1 remain open.
+> Items §1.1, §1.2, §3.5a (relocatePht sub-case only), §5.1 remain
+> open.  §3.5a's in-place sub-case landed (see below).
 >
 > **2026-05 cleanup + feature gap pass landed.** Six commits of
 > mechanical-duplication cleanup (~−260 LOC across CLI, Adapter,
@@ -34,8 +35,16 @@ forward-looking view.
 > rebuild + reloc remap), §3.4 (vn_file rewrite in replace-needed),
 > and adding the §3.5a porting plan
 > ([`REWRITE-FRESH-PT-LOAD-DESIGN.md`](REWRITE-FRESH-PT-LOAD-DESIGN.md)).
-> Tests: 49 → 52 shell tests passing.  See ROADMAP §3.3 / §3.4 /
-> §3.5a for current state.
+> See ROADMAP §3.3 / §3.4 / §3.5a for current state.
+>
+> **2026-05 IR migration + §3.5a in-place sub-case landed.**
+> SectionContent IR migration (Section.type derived from content;
+> raw constructor proof-carrying); `EncodePreconditions` shrinks
+> from 11 to 10 fields.  Plus §3.5a's in-place sub-case:
+> `growEOFWithFreshPtLoad` allocates a brand-new PT_LOAD covering
+> moved sections when `canExtendLastPtLoad` rejects but the binary
+> has phdr-table headroom (`canAddFreshPtLoad`).  Tests: 52 → 53
+> shell tests passing.
 
 ---
 
@@ -50,17 +59,20 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 
 **Recommended pickup order:**
 
-- **§3.5a (allocate fresh PT_LOAD) — DESIGN READY, IMPL OPEN.**
-  The only feature gap that blocks a real binary class today
-  (BSS-heavy ELFs like `coreutils ls`).  Complete porting plan in
+- **§3.5a in-place sub-case — LANDED.**
+  `growEOFWithFreshPtLoad` (in `GrowEOF.lean`) handles the case
+  where the binary has phdr-table headroom (room for one more
+  56-byte phdr in the existing slot).  Test 53 covers it.
+- **§3.5a `relocatePht` sub-case — DESIGN READY, IMPL OPEN.**
+  Binaries like coreutils `ls` (phdr table packed tight against
+  `.note.gnu.build-id`) still fall through to `layoutForEncoding`.
+  The fix moves the phdr table itself to the appended region; the
+  C++ analog is `patchelf.cc:848` (`relocatePht = true`).  Plan in
   [`REWRITE-FRESH-PT-LOAD-DESIGN.md`](REWRITE-FRESH-PT-LOAD-DESIGN.md):
-  ~530 LOC, ~3 days, layered work (file-level layout / splice
-  region / proof / encoder dispatch).  In-place sub-case is
-  estimated ~half day; the harder `relocatePht` sub-case for
-  phdr-table-pressure ELFs adds another day.  Recommended next
-  pickup for users who want concrete feature progress.  A
-  fresh-agent pickup prompt is at
-  [`PICKUP-PROMPT-FRESH-PT-LOAD.md`](PICKUP-PROMPT-FRESH-PT-LOAD.md).
+  ~150 LOC, ~1 day on top of the in-place foundation.  See
+  [`PICKUP-PROMPT-FRESH-PT-LOAD.md`](PICKUP-PROMPT-FRESH-PT-LOAD.md)
+  for the original spec; the relocatePht hook now sits in
+  `growEOFWith`'s third branch.
 - **§1.3a `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` — DONE.**
   `Encoder.lean` exposes the composed theorem.  See §1.3a for details.
   This was intended to unblock §5.1 (op-level Tier D), but a
@@ -313,34 +325,51 @@ appended-to dynstr.
 Tests: shell test 50 verifies on a real glibc binary that
 `readelf -V` shows the renamed library name post-rename.
 
-#### 3.5a Allocate a fresh PT_LOAD when extension is unsafe — DESIGN READY
+#### 3.5a Allocate a fresh PT_LOAD when extension is unsafe — IN-PLACE SUB-CASE LANDED
 
 Plan documented in
 [`REWRITE-FRESH-PT-LOAD-DESIGN.md`](REWRITE-FRESH-PT-LOAD-DESIGN.md).
-The doc covers all five layers (file-level layout in `GrowEOF`;
-splice region tracking in `ElfFile`; the
-`_produces_spliceRegionsDisjoint` proof; encoder dispatch; the
-already-decidable validator) plus an estimated ~530 LOC / ~3 days
-for the in-place sub-case.  The harder `relocatePht` sub-case
-adds another ~150 LOC and a day; common-case binaries don't need
-it.
+The in-place sub-case shipped: when `canExtendLastPtLoad` rejects
+(BSS-heavy binary), `growEOFWith` now tries `canAddFreshPtLoad`;
+when that accepts, it calls `growEOFWithFreshPtLoad`, which:
 
-`growEOFWith`'s safety gate (`canExtendLastPtLoad`) currently
-rejects when extending the last PT_LOAD's `filesz`/`memsz` would
-clobber already-allocated BSS or fall outside the existing
-alignment.  In that case, `growEOFWith` falls back to
-`layoutForEncoding`'s unaware repack and the pre-write validator
-catches the resulting non-loadable bytes (exit 5).  C++ patchelf's
-`rewriteSectionsLibrary` allocates a brand-new PT_LOAD by growing
-the phdr table; that's the strictly more general fix and
-unblocks the BSS-heavy binary class (e.g. coreutils `ls`).
+- appends a brand-new PT_LOAD entry to `e.phdrs` covering the
+  appended region `[startOffset, startOffset + appendedBytes)`;
+- bumps `header.phnum` by 1;
+- leaves the original phdr table in place (in-place sub-case).
+
+Proven via `growEOFWithFreshPtLoad_produces_spliceRegionsDisjoint`
+(`GrowEOF.lean`).  Mirror of the main-body proof with one extra
+precondition (`canAddFreshPtLoad e = true`); shows up in the
+`hdr_phdr_disjoint`, `phdr_shdr_disjoint`, and `phdr_sec_disjoint`
+clauses (output's phdr-table region is `(phdrs.size + 1) * phdrSize`
+bytes wide, not `phdrs.size * phdrSize`).
+
+Test: `tests/cases/53-cli-set-rpath-bss-heavy.sh`.  Synthetic ELF
+with last PT_LOAD memsz ≫ filesz, phdr-table headroom, and
+DT_RUNPATH; verifies `set-rpath` succeeds, output's phnum is +1,
+and reparse + print-rpath roundtrip.
+
+**Residual: `relocatePht` sub-case.**  Binaries with phdr table
+packed tight against the first section (e.g. coreutils `ls` —
+phdrs at `[0x40, 0x350)`, `.note.gnu.build-id` starts at `0x350`,
+no room for a 56-byte extension) still fall through to
+`layoutForEncoding`.  The fix requires moving the phdr table
+itself to the appended region.  C++ patchelf calls this
+`relocatePht` (patchelf.cc:848).  Out of scope for this pickup;
+documented in the design doc as the follow-up.
 
 #### 3.5b PT_GNU_STACK append when missing
 
 `set-execstack` on a binary without PT_GNU_STACK phdr is currently
 a no-op (`Ops/Execstack.lean` only maps over existing phdrs);
-C++ appends.  Adding it shares the phdr-table-growth machinery
-with §3.5a and is best done together.
+C++ appends.  The phdr-array-grow machinery from §3.5a is in place
+(`updatePhdrsAfterMove ... none ...` + `.push freshPhdr` is the
+template); appending a PT_GNU_STACK phdr is now mechanically
+similar — just construct a different phdr value (PhType.PT_GNU_STACK
+with PF_R | PF_W, zero offset/size) and bump phnum.  Out of scope
+for the §3.5a pickup; do as a follow-up after §3.5a's
+`relocatePht` sub-case if/when the use case arises.
 
 #### 3.8 Per-clause `ParseError` classification — DONE
 
