@@ -51,7 +51,7 @@ open Patchelf.Elf.Encoder
     the output is empty (NOBITS sections occupy zero file bytes).  -/
 def Section.writeContent (s : Section) : ByteArray :=
   match s.content with
-  | .raw bs      => bs
+  | .raw _ _ bs  => bs
   | .strtab st   => st.bytes
   | .dynamic ds  => writeArray Patchelf.Elf.DynEntry.write ds
   | .dynsym syms => writeArray Patchelf.Elf.Symbol.write syms
@@ -67,6 +67,11 @@ def toShdr (s : Section) : SectionHeader :=
     offset := s.offset, size := ⟨s.shdrSize⟩,
     link := s.link, info := s.info,
     addralign := s.addralign, entsize := s.entsize }
+
+/-- `(toShdr s).type = s.type = s.content.type`. Used to bridge the
+    `decodeSectionContent` if-guards (which check `sh.type`) with
+    `Section.content`'s type information. -/
+@[simp] theorem toShdr_type (s : Section) : (toShdr s).type = s.content.type := rfl
 
 /-- Total encoded file size = max(shoff + shdr table, max(section end)). -/
 def encodedFileSize (e : ElfFile) : Nat :=
@@ -172,12 +177,24 @@ private theorem syncDtStrszInFile_aux_preserves_valid (e : ElfFile)
       e'.sections[iDyn]'h' = { e.sections[iDyn]'hBound with
         content := .dynamic (syncDtStrsz dyn ds.bytes.size.toUInt64) } :=
     fun h' => ElfFile.updateSectionContent_getElem_self e _ _ hBound h'
-  -- Pointwise equality of `Section` types and names — direct
-  -- consumers of `updateSectionContent_{type,name}` from SectionOps.
+  -- iDyn has SHT_DYNAMIC content; derive early since hType/hDsymEq' need it.
+  have hType_iDyn : (e.sections[iDyn]'hBound).type = ShType.SHT_DYNAMIC := by
+    obtain ⟨_, hT⟩ := ElfFile.findUniqueTypeIdx_section_type e _ _ hIdx
+    exact hT
+  -- Pointwise equality of `Section` types and names.
+  -- At iDyn: original = .dynamic dyn, update = .dynamic (syncDtStrsz ...) → both SHT_DYNAMIC.
+  -- At j ≠ iDyn: content unchanged → type unchanged.
   have hType : ∀ (j : Nat) (hj : j < e.sections.size)
       (hj' : j < e'.sections.size),
-      (e'.sections[j]'hj').type = (e.sections[j]'hj).type :=
-    fun j hj hj' => ElfFile.updateSectionContent_type _ _ _ _ hj hj'
+      (e'.sections[j]'hj').type = (e.sections[j]'hj).type := by
+    intro j hj hj'
+    by_cases hji : j = iDyn
+    · subst hji
+      rw [ElfFile.updateSectionContent_type_self _ _ _ hj hj']
+      -- c = .dynamic (syncDtStrsz ...) → c.type = SHT_DYNAMIC
+      -- original = .dynamic dyn → original.type = SHT_DYNAMIC
+      simp only [SectionContent.type, Section.type, hContent]
+    · exact ElfFile.updateSectionContent_type _ _ _ _ hj hji hj'
   have hName : ∀ (j : Nat) (hj : j < e.sections.size)
       (hj' : j < e'.sections.size),
       (e'.sections[j]'hj').name = (e.sections[j]'hj).name :=
@@ -191,23 +208,18 @@ private theorem syncDtStrszInFile_aux_preserves_valid (e : ElfFile)
     intro iStr hStr
     exact (ElfFile.dynstrIdx_target_ne_of_content_dynamic
       e hBound hContent hDs hStr).symm
-  -- iDyn has SHT_DYNAMIC content; any other unique-type lookup
-  -- (SHT_DYNSYM, SHT_GNU_VERSYM, …) finds a section with a different
-  -- type, so the indices can't coincide.  We need this to invoke
-  -- `updateSectionContent_dynsym_eq` for `dynsym_wf` below.
-  have hType_iDyn : (e.sections[iDyn]'hBound).type = ShType.SHT_DYNAMIC := by
-    -- `e.dynamicIdx = some iDyn` ⇒ section at iDyn has type SHT_DYNAMIC.
-    obtain ⟨_, hT⟩ := ElfFile.findUniqueTypeIdx_section_type e _ _ hIdx
-    exact hT
   have hDsymEq' : e'.dynsym = e.dynsym := by
     apply ElfFile.updateSectionContent_dynsym_eq
-    intro iSym hSym hEq
-    -- iDyn = iSym ⇒ section at iDyn has type both SHT_DYNAMIC and
-    -- SHT_DYNSYM, contradiction.
-    subst hEq
-    obtain ⟨_, hT⟩ := ElfFile.findUniqueTypeIdx_section_type e _ _ hSym
-    rw [hType_iDyn] at hT
-    cases hT
+    · -- c.type = SHT_DYNAMIC ≠ SHT_DYNSYM
+      simp [SectionContent.type]; decide
+    · -- original at iDyn: SHT_DYNAMIC ≠ SHT_DYNSYM
+      intro hi
+      simp only [Section.type, hContent, SectionContent.type]; decide
+    · intro iSym hSym hEq
+      subst hEq
+      obtain ⟨_, hT⟩ := ElfFile.findUniqueTypeIdx_section_type e _ _ hSym
+      rw [hType_iDyn] at hT
+      cases hT
   -- Pointwise equality of `Section.contentWellFormedB`: at index iDyn it
   -- changes from `.dynamic dyn` to `.dynamic (syncDtStrsz ...)`, but
   -- WellFormed is preserved via syncDtStrsz_content_wf.
@@ -274,7 +286,8 @@ private theorem syncDtStrszInFile_aux_preserves_valid (e : ElfFile)
   ----------------------------------------
   · -- e'.dynamic = some (syncDtStrsz dyn _).  Reduce both clauses.
     have hIdx' : e'.dynamicIdx = some iDyn := by
-      rw [ElfFile.updateSectionContent_dynamicIdx]; exact hIdx
+      rw [ElfFile.updateSectionContent_dynamicIdx e iDyn _
+        (fun _ => by simp [Section.type, hContent, SectionContent.type])]; exact hIdx
     have hDyn' : e'.dynamic = some (syncDtStrsz dyn ds.bytes.size.toUInt64) := by
       unfold ElfFile.dynamic
       rw [hIdx']
@@ -556,7 +569,7 @@ theorem prepLayoutForEncodeWith_produces_spliceRegionsDisjoint
         phdr_sec_disjoint := hPhdrSec
         shdr_sec_disjoint := hShdrSec }
   · -- Non-trivial path: compose growEOFWith + syncDtAddrTagsInFile.
-    simp only [hLay, ↓reduceIte]
+    simp only [hLay]
     have hGrow := growEOFWith_produces_spliceRegionsDisjoint pageSize? e
       hSection0Null hHeaderPhdr hHeaderShdr hPhdrShdr hHeaderSec hPhdrSec
     exact syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint _ hGrow
@@ -591,7 +604,7 @@ theorem Section_writeContent_size_eq (s : Section) :
     s.writeContent.size = s.encodedSize := by
   unfold Section.writeContent Section.encodedSize
   match s.content with
-  | .raw _ => simp
+  | .raw _ _ _ => simp
   | .strtab _ => simp
   | .dynamic ds =>
     exact writeArray_size_of_uniform DynEntry.write Layout.dynEntrySize

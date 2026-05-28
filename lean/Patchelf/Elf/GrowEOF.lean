@@ -590,7 +590,7 @@ def syncDtAddrEntry (e : ElfFile) (d : DynEntry) : DynEntry :=
 def syncDtAddrTagsInFile (e : ElfFile) : ElfFile :=
   match e.dynamicIdx, e.dynamic with
   | some iDyn, some dyn =>
-      if h : iDyn < e.sections.size then
+      if _h : iDyn < e.sections.size then
         let newDyn := dyn.map (syncDtAddrEntry e)
         e.updateSectionContent iDyn (.dynamic newDyn)
       else e
@@ -715,11 +715,20 @@ theorem syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint
     have hShoffEq : e'.header.shoff = e.header.shoff := by rw [hHdrEq]
     have hPhdrSizeEq : e'.phdrs.size = e.phdrs.size := by rw [hPhdrsEq]
     -- Per-section: type, offset, encodedSize preserved at every j.
+    -- At j = iDyn: original had .dynamic dyn (type SHT_DYNAMIC); update also
+    -- .dynamic (dyn.map f) (type SHT_DYNAMIC). Type unchanged.
+    -- At j ≠ iDyn: content unchanged, type unchanged.
     have hType : ∀ (j : Nat) (hj : j < e.sections.size)
         (hj' : j < e'.sections.size),
         (e'.sections[j]'hj').type = (e.sections[j]'hj).type := by
       intros j hj hj'
-      exact ElfFile.updateSectionContent_type _ _ _ _ hj hj'
+      by_cases hji : j = iDyn
+      · subst hji
+        rw [ElfFile.updateSectionContent_type_self _ _ _ hj hj']
+        -- c = .dynamic (dyn.map f) → c.type = SHT_DYNAMIC
+        -- original = .dynamic dyn → original.type = SHT_DYNAMIC
+        simp only [SectionContent.type, Section.type, hContent]
+      · exact ElfFile.updateSectionContent_type _ _ _ _ hj hji hj'
     have hOffset : ∀ (j : Nat) (hj : j < e.sections.size)
         (hj' : j < e'.sections.size),
         (e'.sections[j]'hj').offset = (e.sections[j]'hj).offset := by

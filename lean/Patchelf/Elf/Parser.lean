@@ -67,24 +67,53 @@ def decodeSectionContent (bs : ByteArray) (sh : SectionHeader) :
     SectionContent :=
   let off := sh.offset.val
   let sz  := sh.size.val
-  if sh.type = ShType.SHT_NOBITS then
+  -- Dispatch on sh.type; each branch produces the matching SectionContent constructor.
+  -- For the raw branch (else), `sh.type.isStructural = false` holds because all 5
+  -- structural types were handled above — we produce the proof via `decide`.
+  if h1 : sh.type = ShType.SHT_NOBITS then
     SectionContent.nobits sz
-  else if sh.type = ShType.SHT_STRTAB then
+  else if h2 : sh.type = ShType.SHT_STRTAB then
     SectionContent.strtab (decodeStringTable bs off sz)
-  else if sh.type = ShType.SHT_DYNAMIC then
-    -- maxCount = section size / entry size
+  else if h3 : sh.type = ShType.SHT_DYNAMIC then
     SectionContent.dynamic (decodeDynamic bs off (sz / Layout.dynEntrySize))
-  else if sh.type = ShType.SHT_DYNSYM then
+  else if h4 : sh.type = ShType.SHT_DYNSYM then
     SectionContent.dynsym (decodeDynsym bs off (sz / Layout.symEntrySize))
-  else if sh.type = ShType.SHT_GNU_VERSYM then
+  else if h5 : sh.type = ShType.SHT_GNU_VERSYM then
     SectionContent.versym (decodeVersym bs off (sz / 2))
   else
-    SectionContent.raw (Reader.readBytes bs off sz)
+    -- All 5 structural-type guards failed: h1..h5 are negation hypotheses.
+    SectionContent.raw sh.type
+      (by
+        unfold ShType.isStructural
+        simp only [Bool.or_eq_false_iff, beq_eq_false_iff_ne]
+        exact ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩)
+      (Reader.readBytes bs off sz)
 
-/-- Build a `Section` from a `SectionHeader` and the underlying bytes. -/
+/-- Decoded content's type matches the original `sh.type`.  By
+    construction every dispatch branch produces a `SectionContent`
+    whose `type` equals the input `sh.type` — for structural branches
+    the hypothesis pins it down; for the `.raw` else branch the
+    constructor stores `sh.type` directly. -/
+@[simp] theorem decodeSectionContent_type (bs : ByteArray) (sh : SectionHeader) :
+    (decodeSectionContent bs sh).type = sh.type := by
+  unfold decodeSectionContent
+  split
+  · simp_all [SectionContent.type]
+  · split
+    · simp_all [SectionContent.type]
+    · split
+      · simp_all [SectionContent.type]
+      · split
+        · simp_all [SectionContent.type]
+        · split
+          · simp_all [SectionContent.type]
+          · simp [SectionContent.type]
+
+/-- Build a `Section` from a `SectionHeader` and the underlying bytes.
+    The `type` field is gone from `Section` — it is now computed from
+    `content` via `SectionContent.type`. -/
 def sectionFromShdr (bs : ByteArray) (sh : SectionHeader) : Section :=
   { name      := sh.name
-    type      := sh.type
     flags     := sh.flags
     addr      := sh.addr
     offset    := sh.offset
@@ -93,6 +122,13 @@ def sectionFromShdr (bs : ByteArray) (sh : SectionHeader) : Section :=
     addralign := sh.addralign
     entsize   := sh.entsize
     content   := decodeSectionContent bs sh }
+
+/-- `(sectionFromShdr bs sh).type = sh.type`. -/
+@[simp] theorem sectionFromShdr_type (bs : ByteArray) (sh : SectionHeader) :
+    (sectionFromShdr bs sh).type = sh.type := by
+  show (sectionFromShdr bs sh).content.type = sh.type
+  unfold sectionFromShdr
+  exact decodeSectionContent_type bs sh
 
 /-- Build the section array from the decoded shdr table. -/
 def sectionsFromShdrs (bs : ByteArray) (shdrs : Array SectionHeader) :

@@ -236,6 +236,14 @@ def SHT_GNU_HASH   : ShType := ⟨0x6ffffff6⟩
 def SHT_GNU_VERNEED : ShType := ⟨0x6ffffffe⟩
 /-- `.gnu.version` (symbol versioning table, `versym`). -/
 def SHT_GNU_VERSYM  : ShType := ⟨0x6fffffff⟩
+
+/-- True iff this `sh_type` value has a dedicated `SectionContent`
+    constructor (`nobits`, `strtab`, `dynamic`, `dynsym`, `versym`).
+    "Structural" types may not appear in `SectionContent.raw`. -/
+def isStructural (ty : ShType) : Bool :=
+  ty == SHT_NOBITS || ty == SHT_STRTAB || ty == SHT_DYNAMIC ||
+  ty == SHT_DYNSYM || ty == SHT_GNU_VERSYM
+
 end ShType
 
 namespace PhType

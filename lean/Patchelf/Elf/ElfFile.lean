@@ -45,7 +45,16 @@ open Patchelf.Elf (ElfHeader ProgramHeader DynEntry DynTag Symbol Verneed
     sections occupy zero file bytes. -/
 
 inductive SectionContent
-  | raw      (bytes : ByteArray)
+  /-- Any section type not modeled structurally.  Carries the ELF
+      `sh_type` and a proof that it is not one of the five structural
+      types (`SHT_NOBITS`, `SHT_STRTAB`, `SHT_DYNAMIC`, `SHT_DYNSYM`,
+      `SHT_GNU_VERSYM`) that have dedicated constructors below.
+      This constraint makes `typeContentMatchesB` vacuously true by
+      construction — every `SectionContent` value is "correctly typed"
+      without any external predicate. -/
+  | raw      (type  : ShType)
+             (hOk   : type.isStructural = false)
+             (bytes : ByteArray)
   | strtab   (st : StringTable)
   | dynamic  (entries : Array DynEntry)
   | dynsym   (syms : Array Symbol)
@@ -60,9 +69,20 @@ inductive SectionContent
 
 namespace SectionContent
 
+/-- The ELF `sh_type` of this content.  By construction, the type
+    is always consistent with the constructor — no external predicate
+    required. -/
+def type : SectionContent → ShType
+  | raw ty _ _  => ty
+  | strtab _    => ShType.SHT_STRTAB
+  | dynamic _   => ShType.SHT_DYNAMIC
+  | dynsym _    => ShType.SHT_DYNSYM
+  | versym _    => ShType.SHT_GNU_VERSYM
+  | nobits _    => ShType.SHT_NOBITS
+
 /-- Well-formedness of the content itself (payload-intrinsic). -/
 def WellFormed : SectionContent → Prop
-  | raw _              => True
+  | raw _ _ _          => True
   | strtab st          => st.WellFormed
   | dynamic entries    =>
       entries.back?.any (fun e => decide (e.tag = DynTag.null)) = true
@@ -87,7 +107,6 @@ end SectionContent
 
 structure Section where
   name      : UInt32       -- shstrtab offset of section name
-  type      : ShType
   flags     : UInt64
   addr      : VirtualAddr
   offset    : FileOffset
@@ -100,11 +119,16 @@ structure Section where
 
 namespace Section
 
+/-- The ELF `sh_type` of this section.  Computed from `content`
+    via `SectionContent.type`; never stored separately.  This
+    guarantees the type↔content invariant holds by construction. -/
+@[inline] def type (s : Section) : ShType := s.content.type
+
 /-- File-encoded byte length of a section's content.  Zero for NOBITS
     (no file bytes), `bs.size` for raw, etc.  -/
 def encodedSize (s : Section) : Nat :=
   match s.content with
-  | .raw bs         => bs.size
+  | .raw _ _ bs     => bs.size
   | .strtab st      => st.bytes.size
   | .dynamic ds     => ds.size * Layout.dynEntrySize
   | .dynsym syms    => syms.size * Layout.symEntrySize
@@ -198,10 +222,7 @@ def contentAt (e : ElfFile) (i : Option Nat) : Option SectionContent :=
     if h : j < e.sections.size then some ((e.sections[j]'h).content)
     else none
 
-/-- Emit a content accessor: `def <name> (e : ElfFile) : Option <ty>`
-    that pattern-matches `e.contentAt e.<idxName>` against the
-    `SectionContent.<ctor>` constructor.  Eight boilerplate accessors
-    (dynamic, dynstr, …, gnuHash) collapse to eight invocations. -/
+/-- Emit a content accessor for single-field constructors. -/
 local elab "section_content_accessor"
     name:ident idxName:ident ctor:ident ":" ty:term : command => do
   let cmd ← `(command|
@@ -211,17 +232,28 @@ local elab "section_content_accessor"
       | _               => none)
   Lean.Elab.Command.elabCommand cmd
 
+/-- Emit a content accessor for the `.raw _ _ bytes` constructor
+    (three-argument form with type + proof + bytes). -/
+local elab "section_content_accessor_raw"
+    name:ident idxName:ident : command => do
+  let cmd ← `(command|
+    def $name (e : ElfFile) : Option ByteArray :=
+      match e.contentAt e.$idxName:ident with
+      | some (.raw _ _ bs) => some bs
+      | _                  => none)
+  Lean.Elab.Command.elabCommand cmd
+
 section_content_accessor dynamic  dynamicIdx  dynamic  : Array DynEntry
 section_content_accessor dynstr   dynstrIdx   strtab   : StringTable
 section_content_accessor dynsym   dynsymIdx   dynsym   : Array Symbol
-section_content_accessor interp   interpIdx   raw      : ByteArray
+section_content_accessor_raw interp   interpIdx
 section_content_accessor versym   versymIdx   versym   : Array UInt16
 -- verneed / sysvHash / gnuHash are stored as `.raw` at the byte
 -- layer (no typed materialization).  The typed-section algebra's
 -- `Adapter.ofElfFile` decodes them on demand.
-section_content_accessor verneedRaw  verneedIdx  raw : ByteArray
-section_content_accessor sysvHashRaw sysvHashIdx raw : ByteArray
-section_content_accessor gnuHashRaw  gnuHashIdx  raw : ByteArray
+section_content_accessor_raw verneedRaw  verneedIdx
+section_content_accessor_raw sysvHashRaw sysvHashIdx
+section_content_accessor_raw gnuHashRaw  gnuHashIdx
 
 /-! ## IsValid -/
 
@@ -270,42 +302,11 @@ def sectionsContentWellFormed (e : ElfFile) : Prop :=
 instance (e : ElfFile) : Decidable e.sectionsContentWellFormed := by
   unfold sectionsContentWellFormed; exact inferInstance
 
-/-- The section's `type` field matches the constructor of its `content`,
-    per the dispatch rules in `Parser.decodeSectionContent`:
-
-      `SHT_NOBITS`     → `.nobits`
-      `SHT_STRTAB`     → `.strtab _`
-      `SHT_DYNAMIC`    → `.dynamic _`
-      `SHT_DYNSYM`     → `.dynsym _`
-      `SHT_GNU_VERSYM` → `.versym _`
-      anything else    → `.raw _`
-
-    Bool-valued for decidability via `decide`.  Invariant of parser
-    output (`sectionFromShdr` constructs `Section` so this always
-    holds).  Required for unconditional `section_decode`: without it,
-    a section with mismatched type and content encodes bytes that the
-    decoder routes to the wrong constructor. -/
-def Section.typeContentMatchesB (s : Section) : Bool :=
-  if s.type = ShType.SHT_NOBITS then
-    match s.content with | .nobits _ => true | _ => false
-  else if s.type = ShType.SHT_STRTAB then
-    match s.content with | .strtab _ => true | _ => false
-  else if s.type = ShType.SHT_DYNAMIC then
-    match s.content with | .dynamic _ => true | _ => false
-  else if s.type = ShType.SHT_DYNSYM then
-    match s.content with | .dynsym _ => true | _ => false
-  else if s.type = ShType.SHT_GNU_VERSYM then
-    match s.content with | .versym _ => true | _ => false
-  else
-    match s.content with | .raw _ => true | _ => false
-
-/-- All sections satisfy the type↔content match.  Required for
-    unconditional `section_decode_encode`. -/
-def sectionsTypeContentMatch (e : ElfFile) : Prop :=
-  e.sections.all Section.typeContentMatchesB = true
-
-instance (e : ElfFile) : Decidable e.sectionsTypeContentMatch := by
-  unfold sectionsTypeContentMatch; exact inferInstance
+-- `typeContentMatchesB` and `sectionsTypeContentMatch` are deleted.
+-- `SectionContent.raw` now carries `hOk : type.isStructural = false`,
+-- so every `Section.type = Section.content.type` is correct by
+-- construction.  The `typesMatch` field in `EncodePreconditions` is
+-- gone; `section_decode_encode` needs no external type-match predicate.
 
 /-- `.dynamic` (if any) terminates in DT_NULL with no earlier null
     entry.  Independent of `.dynstr`'s presence — required for the

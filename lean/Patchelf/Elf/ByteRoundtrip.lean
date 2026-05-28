@@ -1099,10 +1099,10 @@ theorem decodeDynamicLoop_writeArray_step
     (hLastNull : (arr[arr.size - 1]'(by omega)).tag = DynTag.null)
     (hNoEarlyNull : ∀ (j : Nat) (h : j < arr.size),
       (arr[j]'h).tag = DynTag.null → j = arr.size - 1) :
-    ∀ (i : Nat) (hi : i ≤ arr.size - 1),
+    ∀ (i : Nat) (_hi : i ≤ arr.size - 1),
       Decode.decodeDynamicLoop (writeArray DynEntry.write arr) 0
           arr.size i (arr.extract 0 i) = arr := by
-  intro i hi
+  intro i _hi
   -- Strong induction on `arr.size - 1 - i`.
   let n := arr.size - 1 - i
   have hn : arr.size - 1 - i = n := rfl
@@ -1204,7 +1204,7 @@ theorem decodeDynamic_writeArray_eq (ds : Array DynEntry)
   unfold Decode.decodeDynamic
   have hInit : (#[] : Array DynEntry) = ds.extract 0 0 := by
     apply Array.ext
-    · simp [Array.size_extract]
+    · simp
     · intros j hj _
       simp at hj
   rw [hInit]
@@ -1709,17 +1709,13 @@ set_option maxHeartbeats 1600000 in
 
     Preconditions:
       * `syncDtStrszInFile e = e`, `layoutAlreadyValid e = true`,
-        `e.spliceRegionsDisjoint`, `e.IsValid` — standard four.
-      * `hSizeFit` — each section's shdrSize fits in UInt64.
+        `e.spliceRegionsDisjoint` — standard layout/sync invariants.
       * `hNullEmpty` — sections with SHT_NULL type have empty `.raw` content.
       * `hDynWF` — for `.dynamic ds` content, ds terminates in DT_NULL. -/
 theorem section_decode_encode (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
-    (hVal : e.IsValid)
-    (hSizeFit : ∀ (i : Nat) (h : i < e.sections.size),
-      (e.sections[i]'h).shdrSize < UInt64.size)
     (hNullEmpty : ∀ (i : Nat) (h : i < e.sections.size),
       (e.sections[i]'h).type = ShType.SHT_NULL →
       ∃ ty hOk bs, (e.sections[i]'h).content = .raw ty hOk bs ∧ bs.size = 0)
@@ -1745,8 +1741,7 @@ theorem section_decode_encode (e : ElfFile)
     unfold Patchelf.Elf.decodeSectionContent
     rw [hToShdrOff, hToShdrSz]
     simp only [show (toShdr (e.sections[i]'hi)).type = ShType.SHT_NOBITS from hT_NB_pos]
-    simp only [show (ShType.SHT_NOBITS = ShType.SHT_NOBITS) = True from by decide,
-               ↓reduceDIte, if_true]
+    simp only [↓reduceDIte]
     simp [Section.shdrSize, hC]
   | .strtab st =>
     have hT_NB : (e.sections[i]'hi).type ≠ ShType.SHT_NOBITS := by
@@ -1757,7 +1752,7 @@ theorem section_decode_encode (e : ElfFile)
     rw [hToShdrOff, hToShdrSz]
     simp only [show (toShdr (e.sections[i]'hi)).type = ShType.SHT_STRTAB from by
                  simp [hC, SectionContent.type]]
-    simp only [shtype_eq_STRTAB_NOBITS, shtype_eq_STRTAB_self, ↓reduceDIte]
+    simp only [shtype_eq_STRTAB_NOBITS, ↓reduceDIte]
     rw [show (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize from by
           unfold Section.shdrSize; rw [hC]]
     rw [decodeStringTable_encode_strtab e hSync hLay hDisj i hi hT_NB hT_NL st hC]
@@ -1770,8 +1765,7 @@ theorem section_decode_encode (e : ElfFile)
     rw [hToShdrOff, hToShdrSz]
     simp only [show (toShdr (e.sections[i]'hi)).type = ShType.SHT_DYNAMIC from by
                  simp [hC, SectionContent.type]]
-    simp only [shtype_eq_DYNAMIC_NOBITS, shtype_eq_DYNAMIC_STRTAB,
-               shtype_eq_DYNAMIC_self, ↓reduceDIte]
+    simp only [shtype_eq_DYNAMIC_NOBITS, shtype_eq_DYNAMIC_STRTAB, ↓reduceDIte]
     rw [show (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize from by
           unfold Section.shdrSize; rw [hC]]
     obtain ⟨hDS_size, hDS_lastNull, hDS_noEarly⟩ := hDynWF i hi ds hC
@@ -1787,7 +1781,7 @@ theorem section_decode_encode (e : ElfFile)
     simp only [show (toShdr (e.sections[i]'hi)).type = ShType.SHT_DYNSYM from by
                  simp [hC, SectionContent.type]]
     simp only [shtype_eq_DYNSYM_NOBITS, shtype_eq_DYNSYM_STRTAB,
-               shtype_eq_DYNSYM_DYNAMIC, shtype_eq_DYNSYM_self, ↓reduceDIte]
+               shtype_eq_DYNSYM_DYNAMIC, ↓reduceDIte]
     rw [show (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize from by
           unfold Section.shdrSize; rw [hC]]
     rw [decodeDynsym_encode_dynsym e hSync hLay hDisj i hi hT_NB hT_NL syms hC]
@@ -1801,8 +1795,7 @@ theorem section_decode_encode (e : ElfFile)
     simp only [show (toShdr (e.sections[i]'hi)).type = ShType.SHT_GNU_VERSYM from by
                  simp [hC, SectionContent.type]]
     simp only [shtype_eq_VERSYM_NOBITS, shtype_eq_VERSYM_STRTAB,
-               shtype_eq_VERSYM_DYNAMIC, shtype_eq_VERSYM_DYNSYM,
-               shtype_eq_VERSYM_self, ↓reduceDIte]
+               shtype_eq_VERSYM_DYNAMIC, shtype_eq_VERSYM_DYNSYM, ↓reduceDIte]
     rw [show (e.sections[i]'hi).shdrSize = (e.sections[i]'hi).encodedSize from by
           unfold Section.shdrSize; rw [hC]]
     rw [decodeVersym_encode_versym e hSync hLay hDisj i hi hT_NB hT_NL vs hC]
@@ -1977,7 +1970,7 @@ theorem decodeRoundtripWitness_of_preconditions (e : ElfFile)
     intros i h
     have hDynWF := isValid_to_hDynWF e hVal
     exact section_decode_encode e hPre.syncOk hPre.layoutOk hPre.spliceDisjoint
-      hVal hPre.sizeFit hPre.nullEmpty hDynWF i h
+      hPre.nullEmpty hDynWF i h
 
 /-! ## Master theorem (unconditional)
 
@@ -1992,8 +1985,6 @@ theorem sectionsFromShdrs_eq (e : ElfFile)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
     (hVal : e.IsValid)
-    (hSizeFit : ∀ (i : Nat) (h : i < e.sections.size),
-      (e.sections[i]'h).shdrSize < UInt64.size)
     (hNullEmpty : ∀ (i : Nat) (h : i < e.sections.size),
       (e.sections[i]'h).type = ShType.SHT_NULL →
       ∃ ty hOk bs, (e.sections[i]'h).content = .raw ty hOk bs ∧ bs.size = 0) :
@@ -2010,8 +2001,7 @@ theorem sectionsFromShdrs_eq (e : ElfFile)
     have hi' : i < e.sections.size := by
       rw [Array.size_map] at hi; exact hi
     have hDynWF := isValid_to_hDynWF e hVal
-    have hDec := section_decode_encode e hSync hLay hDisj hVal
-                   hSizeFit hNullEmpty hDynWF i hi'
+    have hDec := section_decode_encode e hSync hLay hDisj hNullEmpty hDynWF i hi'
     -- Goal: { name := ..., content := decodeSectionContent (encode e) (toShdr s) }
     -- = e.sections[i]. Since section_decode_encode gives decodeSectionContent = content,
     -- the result equals the original section.
@@ -2041,7 +2031,7 @@ theorem parse_encode_roundtrip (e : ParsedElf) (hPre : EncodePreconditions e.elf
       shdrs_decode_encode e.elf hPre.syncOk hPre.layoutOk hPre.spliceDisjoint e.isValid
         hPre.sizeFit hPre.shdrFit]
   have hSecs := sectionsFromShdrs_eq e.elf hPre.syncOk hPre.layoutOk hPre.spliceDisjoint
-                  e.isValid hPre.sizeFit hPre.nullEmpty
+                  e.isValid hPre.nullEmpty
   simp only [hSecs]
   have hElfEq :
       ({ header := e.elf.header, phdrs := e.elf.phdrs,
@@ -2652,50 +2642,8 @@ theorem encodePreconditions_of_parser
         congr 1]
       exact this
     rw [hSecEq] at hT ⊢
-    -- `(sectionFromShdr bs sh).type = sh.type` holds for any sh.
-    -- Proof: by case analysis on sh.type in decodeSectionContent —
-    -- each branch produces SectionContent with type = sh.type.
-    -- `(sectionFromShdr bs sh).type = sh.type`: the computed type of the parsed section
-    -- equals the original shdr type.  Proof: match on sh.type and show each
-    -- decodeSectionContent branch produces the matching SectionContent.type.
-    have hSecType_eq : (sectionFromShdr bs (shdrs[i]'hShdrI)).type
-                     = (shdrs[i]'hShdrI).type := by
-      simp only [sectionFromShdr, Section.type]
-      generalize (shdrs[i]'hShdrI) = sh
-      unfold decodeSectionContent
-      rcases Decidable.em (sh.type = ShType.SHT_NOBITS) with h1 | h1
-      · simp [dif_pos h1, SectionContent.type, h1]
-      rcases Decidable.em (sh.type = ShType.SHT_STRTAB) with h2 | h2
-      · -- sh.type = SHT_STRTAB; goal reduces to strtab.type = sh.type.
-        simp only [dif_neg h1, dif_pos h2]
-        simp only [show (ShType.SHT_STRTAB : ShType) = ShType.SHT_STRTAB from rfl,
-                   show ShType.SHT_STRTAB = ShType.SHT_NOBITS ↔ False from by decide,
-                   ↓reduceDIte, if_false, SectionContent.type, h2]
-      rcases Decidable.em (sh.type = ShType.SHT_DYNAMIC) with h3 | h3
-      · simp only [dif_neg h1, dif_neg h2, dif_pos h3]
-        simp only [show ShType.SHT_DYNAMIC = ShType.SHT_NOBITS ↔ False from by decide,
-                   show ShType.SHT_DYNAMIC = ShType.SHT_STRTAB ↔ False from by decide,
-                   show ShType.SHT_DYNAMIC = ShType.SHT_DYNAMIC ↔ True from by decide,
-                   ↓reduceDIte, if_false, if_true, SectionContent.type, h3]
-      rcases Decidable.em (sh.type = ShType.SHT_DYNSYM) with h4 | h4
-      · simp only [dif_neg h1, dif_neg h2, dif_neg h3, dif_pos h4]
-        simp only [show ShType.SHT_DYNSYM = ShType.SHT_NOBITS ↔ False from by decide,
-                   show ShType.SHT_DYNSYM = ShType.SHT_STRTAB ↔ False from by decide,
-                   show ShType.SHT_DYNSYM = ShType.SHT_DYNAMIC ↔ False from by decide,
-                   show ShType.SHT_DYNSYM = ShType.SHT_DYNSYM ↔ True from by decide,
-                   ↓reduceDIte, if_false, if_true, SectionContent.type, h4]
-      rcases Decidable.em (sh.type = ShType.SHT_GNU_VERSYM) with h5 | h5
-      · simp only [dif_neg h1, dif_neg h2, dif_neg h3, dif_neg h4, dif_pos h5]
-        simp only [show ShType.SHT_GNU_VERSYM = ShType.SHT_NOBITS ↔ False from by decide,
-                   show ShType.SHT_GNU_VERSYM = ShType.SHT_STRTAB ↔ False from by decide,
-                   show ShType.SHT_GNU_VERSYM = ShType.SHT_DYNAMIC ↔ False from by decide,
-                   show ShType.SHT_GNU_VERSYM = ShType.SHT_DYNSYM ↔ False from by decide,
-                   show ShType.SHT_GNU_VERSYM = ShType.SHT_GNU_VERSYM ↔ True from by decide,
-                   ↓reduceDIte, if_false, if_true, SectionContent.type, h5]
-      · simp only [dif_neg h1, dif_neg h2, dif_neg h3, dif_neg h4, dif_neg h5,
-                   SectionContent.type]
     have hShType : (shdrs[i]'hShdrI).type = ShType.SHT_NULL := by
-      rw [← hSecType_eq]; exact hT
+      rw [← sectionFromShdr_type bs (shdrs[i]'hShdrI)]; exact hT
     exact sectionFromShdr_null_empty bs (shdrs[i]'hShdrI) hShType (hShdrNullSize i hShdrI hShType)
 
 end Patchelf.Elf
