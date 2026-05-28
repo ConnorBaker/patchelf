@@ -592,20 +592,17 @@ theorem extract_encode_eq_phdrs_writer (e : ElfFile)
       = writeArray ProgramHeader.write e.phdrs := by
   have hEncSz : (encode e).size = encodedFileSize e := by
     rw [encode_size_eq]; show encodedFileSize _ = _; rw [hSync]; simp [hLay]
-  have hPhdrWSz : (writeArray ProgramHeader.write e.phdrs).size
-                  = e.phdrs.size * Layout.phdrSize :=
-    writeArray_size_of_uniform ProgramHeader.write Layout.phdrSize
-            ProgramHeader.write_size e.phdrs
   have hPhdrEnd : e.header.phoff.val + e.phdrs.size * Layout.phdrSize
                   ≤ encodedFileSize e := phdr_end_le_encodedFileSize e
   apply ByteArray.ext_getElem
-  · rw [ByteArray.size_extract, hEncSz, hPhdrWSz]; omega
+  · simp only [ByteArray.size_extract, hEncSz, writeArray_ProgramHeader_size]; omega
   · intros i hi _
     rw [ByteArray.size_extract, hEncSz] at hi
     have hi' : i < e.phdrs.size * Layout.phdrSize := by omega
     simp only [ByteArray.getElem_extract]
     exact getElem_encode_in_phdr e hSync hLay hDisj i hi'
-      (by rw [hEncSz]; omega) (by rw [hPhdrWSz]; exact hi')
+      (by rw [hEncSz]; omega)
+      (by simp only [writeArray_ProgramHeader_size]; exact hi')
 
 /-- Per-element decoder bridge: decoding the i-th window of
     `writeArray PH.write arr` recovers `arr[i]`.  Composes
@@ -621,13 +618,10 @@ theorem decodePhdr_writeArray_at_index (arr : Array ProgramHeader)
     (hFitAlign : (arr[i]'hi).align.val < UInt64.size) :
     Decode.decodePhdr (writeArray ProgramHeader.write arr) (i * Layout.phdrSize)
       = arr[i]'hi := by
-  have hWaSz : (writeArray ProgramHeader.write arr).size = arr.size * Layout.phdrSize :=
-    writeArray_size_of_uniform ProgramHeader.write Layout.phdrSize
-            ProgramHeader.write_size arr
   -- Window-form decoder.
   have hFit : i * Layout.phdrSize + Layout.phdrSize
               ≤ (writeArray ProgramHeader.write arr).size := by
-    rw [hWaSz]
+    simp only [writeArray_ProgramHeader_size]
     have : i + 1 ≤ arr.size := hi
     have := Nat.mul_le_mul_right Layout.phdrSize this
     rw [Nat.succ_mul] at this; omega
@@ -692,27 +686,22 @@ theorem phdrs_decode_encode (e : ElfFile)
   have hPhdrEnd : e.header.phoff.val + e.phdrs.size * Layout.phdrSize
                   ≤ (encode e).size := by
     rw [hEncSz]; exact phdr_end_le_encodedFileSize e
-  have hWinFit : e.header.phoff.val + i * 56 + 56 ≤ (encode e).size := by
-    have hSucc : i + 1 ≤ e.phdrs.size := hi
+  have hPhdrSz : Layout.phdrSize = 56 := rfl
+  have hInner : i * 56 + 56 ≤ e.phdrs.size * Layout.phdrSize := by
     have hMul : (i + 1) * 56 ≤ e.phdrs.size * 56 :=
-      Nat.mul_le_mul_right _ hSucc
+      Nat.mul_le_mul_right _ (hi : i + 1 ≤ e.phdrs.size)
     rw [Nat.succ_mul] at hMul
-    have hPhdrSz : Layout.phdrSize = 56 := rfl
-    rw [hEncSz]; have hEnd := phdr_end_le_encodedFileSize e
-    rw [hPhdrSz] at hEnd; omega
+    rw [hPhdrSz]; omega
+  have hWinFit : e.header.phoff.val + i * 56 + 56 ≤ (encode e).size := by
+    have hEnd := phdr_end_le_encodedFileSize e
+    rw [hPhdrSz] at hEnd hInner
+    rw [hEncSz]; omega
   -- Step 1: decodePhdr_eq_slice → window form.
   rw [decodePhdr_eq_slice (encode e) (e.header.phoff.val + i * 56) hWinFit]
   -- Step 2: bridge encoder-window to writeArray-window via extract_extract_window.
   -- Outer phdr extract = writeArray; inner i-th element window from outer.
   have hOuter : e.header.phoff.val + e.phdrs.size * Layout.phdrSize
                 ≤ (encode e).size := hPhdrEnd
-  have hInner : i * 56 + 56 ≤ e.phdrs.size * Layout.phdrSize := by
-    have hSucc : i + 1 ≤ e.phdrs.size := hi
-    have hMul : (i + 1) * 56 ≤ e.phdrs.size * 56 :=
-      Nat.mul_le_mul_right _ hSucc
-    rw [Nat.succ_mul] at hMul
-    have hPhdrSz : Layout.phdrSize = 56 := rfl
-    rw [hPhdrSz]; omega
   have hEEW := ByteArray.extract_extract_window (encode e) e.header.phoff.val
                   (e.phdrs.size * Layout.phdrSize) (i * 56) 56 hOuter hInner
   -- hEEW : ((encode e).extract phoff (phoff + phnum*56)).extract (i*56) (i*56+56)
@@ -820,20 +809,19 @@ theorem extract_encode_eq_shdrs_writer (e : ElfFile)
       = writeArray SectionHeader.write (e.sections.map toShdr) := by
   have hEncSz : (encode e).size = encodedFileSize e := by
     rw [encode_size_eq]; show encodedFileSize _ = _; rw [hSync]; simp [hLay]
-  have hShdrWSz : (writeArray SectionHeader.write (e.sections.map toShdr)).size
-                  = e.sections.size * Layout.shdrSize := by
-    rw [writeArray_size_of_uniform SectionHeader.write Layout.shdrSize
-            SectionHeader.write_size, Array.size_map]
   have hShdrEnd : e.header.shoff.val + e.sections.size * Layout.shdrSize
                   ≤ encodedFileSize e := shdr_end_le_encodedFileSize e
   apply ByteArray.ext_getElem
-  · rw [ByteArray.size_extract, hEncSz, hShdrWSz]; omega
+  · simp only [ByteArray.size_extract, hEncSz, writeArray_SectionHeader_size,
+               Array.size_map]
+    omega
   · intros i hi _
     rw [ByteArray.size_extract, hEncSz] at hi
     have hi' : i < e.sections.size * Layout.shdrSize := by omega
     simp only [ByteArray.getElem_extract]
     exact getElem_encode_in_shdr e hSync hLay hDisj i hi'
-      (by rw [hEncSz]; omega) (by rw [hShdrWSz]; exact hi')
+      (by rw [hEncSz]; omega)
+      (by simp only [writeArray_SectionHeader_size, Array.size_map]; exact hi')
 
 set_option maxHeartbeats 800000 in
 /-- The shdr-table decoder on `encode e` recovers the shdr-projection
@@ -881,24 +869,19 @@ theorem shdrs_decode_encode (e : ElfFile)
   have hShdrEnd : e.header.shoff.val + e.sections.size * Layout.shdrSize
                   ≤ (encode e).size := by
     rw [hEncSz]; exact shdr_end_le_encodedFileSize e
-  have hWinFit : e.header.shoff.val + i * 64 + 64 ≤ (encode e).size := by
-    have hSucc : i + 1 ≤ e.sections.size := hi
+  have hShdrSz : Layout.shdrSize = 64 := rfl
+  have hInner : i * 64 + 64 ≤ e.sections.size * Layout.shdrSize := by
     have hMul : (i + 1) * 64 ≤ e.sections.size * 64 :=
-      Nat.mul_le_mul_right _ hSucc
+      Nat.mul_le_mul_right _ (hi : i + 1 ≤ e.sections.size)
     rw [Nat.succ_mul] at hMul
-    have hShdrSz : Layout.shdrSize = 64 := rfl
-    rw [hEncSz]; have hEnd := shdr_end_le_encodedFileSize e
-    rw [hShdrSz] at hEnd; omega
+    rw [hShdrSz]; omega
+  have hWinFit : e.header.shoff.val + i * 64 + 64 ≤ (encode e).size := by
+    have hEnd := shdr_end_le_encodedFileSize e
+    rw [hShdrSz] at hEnd hInner
+    rw [hEncSz]; omega
   rw [decodeShdr_eq_slice (encode e) (e.header.shoff.val + i * 64) hWinFit]
   have hOuter : e.header.shoff.val + e.sections.size * Layout.shdrSize
                 ≤ (encode e).size := hShdrEnd
-  have hInner : i * 64 + 64 ≤ e.sections.size * Layout.shdrSize := by
-    have hSucc : i + 1 ≤ e.sections.size := hi
-    have hMul : (i + 1) * 64 ≤ e.sections.size * 64 :=
-      Nat.mul_le_mul_right _ hSucc
-    rw [Nat.succ_mul] at hMul
-    have hShdrSz : Layout.shdrSize = 64 := rfl
-    rw [hShdrSz]; omega
   have hEEW := ByteArray.extract_extract_window (encode e) e.header.shoff.val
                   (e.sections.size * Layout.shdrSize) (i * 64) 64 hOuter hInner
   rw [show (e.header.shoff.val + i * 64 + 64 : Nat)
@@ -1027,18 +1010,20 @@ theorem readBytes_writeContent_eq (s : Section)
     show s.writeContent[0 + j]'_ = s.writeContent[j]'_
     congr 1; omega
 
-/-- Reading bytes from `(encode e)` at section i's region recovers
-    `s_i.writeContent`, given the standard preconditions and section i
-    being non-NOBITS/non-NULL. -/
-theorem readBytes_encode_in_section (e : ElfFile)
+/-- Extract over section i's region of `(encode e)` recovers
+    `s_i.writeContent`.  The per-element bridges in
+    `decodeDynamic_encode_dynamic` and `decodeDynsym_encode_dynsym`
+    use this to thread an `extract_extract_window` rewrite through the
+    section payload. -/
+theorem extract_encode_eq_section_writeContent (e : ElfFile)
     (hSync : syncDtStrszInFile e = e)
     (hLay : layoutAlreadyValid e = true)
     (hDisj : e.spliceRegionsDisjoint)
     (i : Nat) (hi : i < e.sections.size)
     (hType_NB : (e.sections[i]'hi).type ≠ ShType.SHT_NOBITS)
     (hType_NL : (e.sections[i]'hi).type ≠ ShType.SHT_NULL) :
-    Reader.readBytes (encode e) (e.sections[i]'hi).offset.val
-        (e.sections[i]'hi).encodedSize
+    (encode e).extract (e.sections[i]'hi).offset.val
+        ((e.sections[i]'hi).offset.val + (e.sections[i]'hi).encodedSize)
       = (e.sections[i]'hi).writeContent := by
   have hEncSz : (encode e).size = encodedFileSize e := by
     rw [encode_size_eq]; show encodedFileSize _ = _; rw [hSync]; simp [hLay]
@@ -1049,7 +1034,6 @@ theorem readBytes_encode_in_section (e : ElfFile)
   have hWcSz : (e.sections[i]'hi).writeContent.size
               = (e.sections[i]'hi).encodedSize :=
     Section_writeContent_size_eq _
-  unfold Reader.readBytes
   apply ByteArray.ext_getElem
   · rw [ByteArray.size_extract, hWcSz]; omega
   · intros j hj _
@@ -1061,6 +1045,22 @@ theorem readBytes_encode_in_section (e : ElfFile)
     unfold Reader.readU8 at hRd
     rw [dif_pos (by omega), dif_pos (by rw [hWcSz]; exact hjN)] at hRd
     exact hRd
+
+/-- Reading bytes from `(encode e)` at section i's region recovers
+    `s_i.writeContent`.  Wraps `extract_encode_eq_section_writeContent`
+    via `Reader.readBytes`'s `extract`-based unfolding. -/
+theorem readBytes_encode_in_section (e : ElfFile)
+    (hSync : syncDtStrszInFile e = e)
+    (hLay : layoutAlreadyValid e = true)
+    (hDisj : e.spliceRegionsDisjoint)
+    (i : Nat) (hi : i < e.sections.size)
+    (hType_NB : (e.sections[i]'hi).type ≠ ShType.SHT_NOBITS)
+    (hType_NL : (e.sections[i]'hi).type ≠ ShType.SHT_NULL) :
+    Reader.readBytes (encode e) (e.sections[i]'hi).offset.val
+        (e.sections[i]'hi).encodedSize
+      = (e.sections[i]'hi).writeContent := by
+  unfold Reader.readBytes
+  exact extract_encode_eq_section_writeContent e hSync hLay hDisj i hi hType_NB hType_NL
 
 /-! ## Forward roundtrip for `decodeDynamic`
 
@@ -1076,12 +1076,9 @@ theorem decodeDynEntry_writeArray_at_index (arr : Array DynEntry)
     (i : Nat) (hi : i < arr.size) :
     Decode.decodeDynEntry (writeArray DynEntry.write arr) (i * Layout.dynEntrySize)
       = arr[i]'hi := by
-  have hWaSz : (writeArray DynEntry.write arr).size = arr.size * Layout.dynEntrySize :=
-    writeArray_size_of_uniform DynEntry.write Layout.dynEntrySize
-            DynEntry.write_size arr
   have hDynSz : Layout.dynEntrySize = 16 := rfl
   have hFitBy16 : i * Layout.dynEntrySize + 16 ≤ (writeArray DynEntry.write arr).size := by
-    rw [hWaSz]
+    simp only [writeArray_DynEntry_size]
     have hSucc : i + 1 ≤ arr.size := hi
     have hMul : (i + 1) * 16 ≤ arr.size * 16 := Nat.mul_le_mul_right _ hSucc
     rw [Nat.succ_mul] at hMul
@@ -1321,33 +1318,8 @@ theorem decodeDynamic_encode_dynamic (e : ElfFile)
       have hSucc : j + 1 ≤ ds.size := hj
       have hMul : (j + 1) * 16 ≤ ds.size * 16 := Nat.mul_le_mul_right _ hSucc
       rw [Nat.succ_mul] at hMul; omega
-    have hExtSection : (encode e).extract (e.sections[i]'hi).offset.val
-        ((e.sections[i]'hi).offset.val + (e.sections[i]'hi).encodedSize)
-        = (e.sections[i]'hi).writeContent := by
-      apply ByteArray.ext_getElem
-      · rw [ByteArray.size_extract, hWcSz]
-        have hEncSz : (encode e).size = encodedFileSize e := by
-          rw [encode_size_eq]; show encodedFileSize _ = _; rw [hSync]; simp [hLay]
-        rw [hEncSz]
-        have := section_end_le_encodedFileSize e i hi hType_NB hType_NL
-        omega
-      · intros r hr _
-        have hEncSz : (encode e).size = encodedFileSize e := by
-          rw [encode_size_eq]; show encodedFileSize _ = _; rw [hSync]; simp [hLay]
-        rw [ByteArray.size_extract, hEncSz] at hr
-        have hrSec : r < (e.sections[i]'hi).encodedSize := by
-          have := section_end_le_encodedFileSize e i hi hType_NB hType_NL
-          omega
-        rw [ByteArray.getElem_extract]
-        have hRd := readU8_encode_in_section e hSync hLay hDisj i hi
-                      hType_NB hType_NL r hrSec
-        unfold Reader.readU8 at hRd
-        rw [dif_pos (by
-              rw [hEncSz]
-              have := section_end_le_encodedFileSize e i hi hType_NB hType_NL
-              omega),
-            dif_pos (by rw [hWcSz]; exact hrSec)] at hRd
-        exact hRd
+    have hExtSection := extract_encode_eq_section_writeContent e hSync hLay hDisj
+                          i hi hType_NB hType_NL
     have hEEW := ByteArray.extract_extract_window (encode e)
                     (e.sections[i]'hi).offset.val
                     (e.sections[i]'hi).encodedSize (j * 16) 16 hOuter hInner
@@ -1361,8 +1333,7 @@ theorem decodeDynamic_encode_dynamic (e : ElfFile)
     rw [show 0 + j * Layout.dynEntrySize = j * Layout.dynEntrySize from by omega]
     have hWaFit : j * Layout.dynEntrySize + Layout.dynEntrySize
                 ≤ (writeArray DynEntry.write ds).size := by
-      rw [writeArray_size_of_uniform DynEntry.write Layout.dynEntrySize
-            DynEntry.write_size]
+      simp only [writeArray_DynEntry_size]
       have hSucc : j + 1 ≤ ds.size := hj
       have hMul : (j + 1) * Layout.dynEntrySize ≤ ds.size * Layout.dynEntrySize :=
         Nat.mul_le_mul_right _ hSucc
@@ -1388,12 +1359,9 @@ theorem decodeSym_writeArray_at_index (arr : Array Symbol)
     (i : Nat) (hi : i < arr.size) :
     Decode.decodeSym (writeArray Symbol.write arr) (i * Layout.symEntrySize)
       = arr[i]'hi := by
-  have hWaSz : (writeArray Symbol.write arr).size = arr.size * Layout.symEntrySize :=
-    writeArray_size_of_uniform Symbol.write Layout.symEntrySize
-            Symbol.write_size arr
   have hSymSz : Layout.symEntrySize = 24 := rfl
   have hFitBy24 : i * Layout.symEntrySize + 24 ≤ (writeArray Symbol.write arr).size := by
-    rw [hWaSz]
+    simp only [writeArray_Symbol_size]
     have hSucc : i + 1 ≤ arr.size := hi
     have hMul : (i + 1) * 24 ≤ arr.size * 24 :=
       Nat.mul_le_mul_right _ hSucc
@@ -1513,37 +1481,8 @@ theorem decodeDynsym_encode_dynsym (e : ElfFile)
     rw [decodeSym_eq_slice (encode e)
           ((e.sections[i]'hi).offset.val + j * 24) hWinFit]
     -- Step 2: bridge encoder window → s.writeContent window.
-    have hWcSz : (e.sections[i]'hi).writeContent.size
-                 = (e.sections[i]'hi).encodedSize :=
-      Section_writeContent_size_eq _
-    -- Build extract_encode_eq_section_writer (specialized to this section).
-    have hExtSection : (encode e).extract (e.sections[i]'hi).offset.val
-        ((e.sections[i]'hi).offset.val + (e.sections[i]'hi).encodedSize)
-        = (e.sections[i]'hi).writeContent := by
-      apply ByteArray.ext_getElem
-      · rw [ByteArray.size_extract, hWcSz]
-        have hEncSz : (encode e).size = encodedFileSize e := by
-          rw [encode_size_eq]; show encodedFileSize _ = _; rw [hSync]; simp [hLay]
-        rw [hEncSz]
-        have := section_end_le_encodedFileSize e i hi hType_NB hType_NL
-        omega
-      · intros r hr _
-        have hEncSz : (encode e).size = encodedFileSize e := by
-          rw [encode_size_eq]; show encodedFileSize _ = _; rw [hSync]; simp [hLay]
-        rw [ByteArray.size_extract, hEncSz] at hr
-        have hrSec : r < (e.sections[i]'hi).encodedSize := by
-          have := section_end_le_encodedFileSize e i hi hType_NB hType_NL
-          omega
-        rw [ByteArray.getElem_extract]
-        have hRd := readU8_encode_in_section e hSync hLay hDisj i hi
-                      hType_NB hType_NL r hrSec
-        unfold Reader.readU8 at hRd
-        rw [dif_pos (by
-              rw [hEncSz]
-              have := section_end_le_encodedFileSize e i hi hType_NB hType_NL
-              omega),
-            dif_pos (by rw [hWcSz]; exact hrSec)] at hRd
-        exact hRd
+    have hExtSection := extract_encode_eq_section_writeContent e hSync hLay hDisj
+                          i hi hType_NB hType_NL
     -- extract_extract_window: bridge encoder element-window to
     -- writeArray element-window.
     have hOuter : (e.sections[i]'hi).offset.val
