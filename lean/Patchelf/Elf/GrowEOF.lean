@@ -589,14 +589,128 @@ def retargetPtPhdr (phdrs : Array Patchelf.Elf.ProgramHeader)
               , memsz := ⟨newSize⟩ }
     else ph
 
--- (Forward-looking: `updatePhdrsAfterMove`-specific per-phdr facts
---  for PT_LOAD / PT_INTERP / PT_DYNAMIC are needed for
---  `growEOFWithMainBody_preserves_loadable`.  Phase L1 (covering
---  `layoutForEncoding`) lands on the simpler `relocatePhdr` infrastructure
---  in `LayoutEngine.lean`; the analog for `updatePhdrsAfterMove` requires
---  more case-bash because the `if i = lastIdx` branch interacts with
---  the PT_INTERP / PT_DYNAMIC type tests.  Picking up under §1.2
---  follow-up.)
+/-! ## `updatePhdrsAfterMove` per-phdr facts
+
+    These mirror the `relocatePhdr_*` family in `LayoutEngine.lean` but
+    handle `updatePhdrsAfterMove`'s extra nesting: the `if i = lastIdx`
+    branch updates `filesz`/`memsz` (preserving type/offset/vaddr/align),
+    which then crosses the PT_INTERP / PT_DYNAMIC type tests.  The proof
+    threads the type identity through by `subst`-ing the `i = lastIdx`
+    witness (eliminating `lastIdx := i` so the input phdr at index `i`
+    survives) rather than rewriting it (which trips the dependent motive).
+    These feed the three `growEOFWith*_preserves_loadable` theorems. -/
+
+/-- For PT_LOAD phdrs, `updatePhdrsAfterMove` preserves type/offset/vaddr/align
+    (only filesz/memsz may change via the lastIdx update).  PT_LOAD is neither
+    PT_INTERP nor PT_DYNAMIC, so both retargeting tests fall through. -/
+theorem updatePhdrsAfterMove_pt_load_offset_vaddr_align
+    (phdrs : Array Patchelf.Elf.ProgramHeader)
+    (lastIdx? : Option Nat) (newLastFilesz newLastMemsz : Nat)
+    (interpIdx? dynamicIdx? : Option Nat)
+    (newSections : Array Section)
+    (i : Nat)
+    (hi : i < (updatePhdrsAfterMove phdrs lastIdx? newLastFilesz newLastMemsz
+                interpIdx? dynamicIdx? newSections).size)
+    (hiE : i < phdrs.size)
+    (hPhT : (phdrs[i]'hiE).type = PhType.PT_LOAD) :
+    let outPh := (updatePhdrsAfterMove phdrs lastIdx? newLastFilesz newLastMemsz
+                    interpIdx? dynamicIdx? newSections)[i]'hi
+    outPh.type = (phdrs[i]'hiE).type ∧
+    outPh.offset = (phdrs[i]'hiE).offset ∧
+    outPh.vaddr = (phdrs[i]'hiE).vaddr ∧
+    outPh.align = (phdrs[i]'hiE).align := by
+  simp only
+  unfold updatePhdrsAfterMove
+  rw [Array.getElem_mapIdx]
+  have hNI : (phdrs[i]'hiE).type ≠ PhType.PT_INTERP := by rw [hPhT]; decide
+  have hND : (phdrs[i]'hiE).type ≠ PhType.PT_DYNAMIC := by rw [hPhT]; decide
+  cases lastIdx? with
+  | none =>
+    refine ⟨?_, ?_, ?_, ?_⟩ <;> simp only [if_neg hNI, if_neg hND]
+  | some lastIdx =>
+    by_cases hLI : i = lastIdx
+    · subst hLI
+      refine ⟨?_, ?_, ?_, ?_⟩ <;> simp only [↓reduceIte, if_neg hNI, if_neg hND]
+    · refine ⟨?_, ?_, ?_, ?_⟩ <;> simp only [if_neg hLI, if_neg hNI, if_neg hND]
+
+/-- For PT_INTERP phdrs with a valid interpIdx, `updatePhdrsAfterMove`'s output
+    offset is `newSections[interpIdx].offset` (the retargeted section's offset). -/
+theorem updatePhdrsAfterMove_pt_interp
+    (phdrs : Array Patchelf.Elf.ProgramHeader)
+    (lastIdx? : Option Nat) (newLastFilesz newLastMemsz : Nat)
+    {interpIdx? : Option Nat} (dynamicIdx? : Option Nat)
+    (newSections : Array Section)
+    (i : Nat)
+    (hi : i < (updatePhdrsAfterMove phdrs lastIdx? newLastFilesz newLastMemsz
+                interpIdx? dynamicIdx? newSections).size)
+    (hiE : i < phdrs.size)
+    (hPhT : (phdrs[i]'hiE).type = PhType.PT_INTERP)
+    {iS : Nat} (hIdx : interpIdx? = some iS) (hS : iS < newSections.size) :
+    ((updatePhdrsAfterMove phdrs lastIdx? newLastFilesz newLastMemsz
+        interpIdx? dynamicIdx? newSections)[i]'hi).offset
+      = (newSections[iS]'hS).offset := by
+  subst hIdx
+  unfold updatePhdrsAfterMove
+  rw [Array.getElem_mapIdx]
+  cases lastIdx? with
+  | none =>
+    rw [if_pos hPhT]
+    simp only [hS, ↓reduceDIte]
+  | some lastIdx =>
+    by_cases hLI : i = lastIdx
+    · subst hLI
+      simp only [↓reduceIte]
+      rw [if_pos hPhT]
+      simp only [hS, ↓reduceDIte]
+    · simp only [if_neg hLI]
+      rw [if_pos hPhT]
+      simp only [hS, ↓reduceDIte]
+
+/-- For PT_DYNAMIC phdrs with a valid dynamicIdx, `updatePhdrsAfterMove`'s output
+    offset is `newSections[dynamicIdx].offset`.  PT_DYNAMIC ≠ PT_INTERP, so the
+    first retargeting test falls through to the PT_DYNAMIC branch. -/
+theorem updatePhdrsAfterMove_pt_dynamic
+    (phdrs : Array Patchelf.Elf.ProgramHeader)
+    (lastIdx? : Option Nat) (newLastFilesz newLastMemsz : Nat)
+    (interpIdx? : Option Nat) {dynamicIdx? : Option Nat}
+    (newSections : Array Section)
+    (i : Nat)
+    (hi : i < (updatePhdrsAfterMove phdrs lastIdx? newLastFilesz newLastMemsz
+                interpIdx? dynamicIdx? newSections).size)
+    (hiE : i < phdrs.size)
+    (hPhT : (phdrs[i]'hiE).type = PhType.PT_DYNAMIC)
+    {iS : Nat} (hIdx : dynamicIdx? = some iS) (hS : iS < newSections.size) :
+    ((updatePhdrsAfterMove phdrs lastIdx? newLastFilesz newLastMemsz
+        interpIdx? dynamicIdx? newSections)[i]'hi).offset
+      = (newSections[iS]'hS).offset := by
+  subst hIdx
+  unfold updatePhdrsAfterMove
+  rw [Array.getElem_mapIdx]
+  have hNI : (phdrs[i]'hiE).type ≠ PhType.PT_INTERP := by rw [hPhT]; decide
+  cases lastIdx? with
+  | none =>
+    rw [if_neg hNI, if_pos hPhT]
+    simp only [hS, ↓reduceDIte]
+  | some lastIdx =>
+    by_cases hLI : i = lastIdx
+    · subst hLI
+      simp only [↓reduceIte]
+      rw [if_neg hNI, if_pos hPhT]
+      simp only [hS, ↓reduceDIte]
+    · simp only [if_neg hLI]
+      rw [if_neg hNI, if_pos hPhT]
+      simp only [hS, ↓reduceDIte]
+
+/-- `updatePhdrsAfterMove` preserves the array size (it's a `mapIdx`). -/
+@[simp] theorem updatePhdrsAfterMove_size
+    (phdrs : Array Patchelf.Elf.ProgramHeader)
+    (lastIdx? : Option Nat) (newLastFilesz newLastMemsz : Nat)
+    (interpIdx? dynamicIdx? : Option Nat)
+    (newSections : Array Section) :
+    (updatePhdrsAfterMove phdrs lastIdx? newLastFilesz newLastMemsz
+        interpIdx? dynamicIdx? newSections).size = phdrs.size := by
+  unfold updatePhdrsAfterMove
+  exact Array.size_mapIdx
 
 /-! ## Main entry point -/
 
