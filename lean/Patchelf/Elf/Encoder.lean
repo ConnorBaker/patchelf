@@ -590,6 +590,59 @@ theorem prepLayoutForEncode_produces_spliceRegionsDisjoint (e : ElfFile)
   prepLayoutForEncodeWith_produces_spliceRegionsDisjoint none e
     hSection0Null hHeaderPhdr hHeaderShdr hPhdrShdr hHeaderSec hPhdrSec
 
+/-- The encoder's layout pre-pass preserves `IsLoadable`.
+
+    Composition of `growEOFWith_preserves_loadable` (the layout move) and
+    `syncDtAddrTagsInFile_preserves_loadable` (the DT_* address rewrite)
+    for the non-trivial branch; the fast-path branch is the identity.
+    Completes the §1.2 `_preserves_loadable` ladder at the pipeline level:
+    the encoder's full layout pre-pass takes a loadable input to a loadable
+    output.
+
+    Preconditions: `hLoad` (input loadability) + `(e.phdrs.size + 1) <
+    UInt16.size` (fresh-PT_LOAD phnum bump) + the structural disjointness
+    invariants (feed each `growEOFWith` branch's `sections_nonoverlapping`)
+    + `e.dynstr = some ds` (yields `iDyn ≠ shstrndx` for the
+    `syncDtAddrTagsInFile` post-pass).  All parser-derivable for real
+    ELFs. -/
+theorem prepLayoutForEncodeWith_preserves_loadable
+    (pageSize? : Option Nat) (e : ElfFile)
+    (hLoad : e.IsLoadable)
+    (hPhdrFit : (e.phdrs.size + 1) < UInt16.size)
+    (hSection0Null : ∀ (h : 0 < e.sections.size),
+      (e.sections[0]'h).type = ShType.SHT_NULL)
+    (hHeaderPhdr : e.headerPhdrDisjoint)
+    (hHeaderSec  : e.headerSectionDisjoint)
+    (hPhdrSec    : e.phdrSectionDisjoint)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (prepLayoutForEncodeWith pageSize? e).IsLoadable := by
+  unfold prepLayoutForEncodeWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]; exact hLoad
+  · simp only [hLay]
+    have hGrow : (growEOFWith pageSize? e).IsLoadable :=
+      growEOFWith_preserves_loadable pageSize? e hLoad hPhdrFit
+        hSection0Null hHeaderPhdr hHeaderSec hPhdrSec
+    have hGrowDs : (growEOFWith pageSize? e).dynstr = some ds := by
+      rw [growEOFWith_dynstr]; exact hDs
+    exact syncDtAddrTagsInFile_preserves_loadable _ hGrow hGrowDs
+
+/-- `prepLayoutForEncode` (auto-detected page size) preserves `IsLoadable`.
+    Specialization of `prepLayoutForEncodeWith_preserves_loadable` with
+    `pageSize? = none`. -/
+theorem prepLayoutForEncode_preserves_loadable (e : ElfFile)
+    (hLoad : e.IsLoadable)
+    (hPhdrFit : (e.phdrs.size + 1) < UInt16.size)
+    (hSection0Null : ∀ (h : 0 < e.sections.size),
+      (e.sections[0]'h).type = ShType.SHT_NULL)
+    (hHeaderPhdr : e.headerPhdrDisjoint)
+    (hHeaderSec  : e.headerSectionDisjoint)
+    (hPhdrSec    : e.phdrSectionDisjoint)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (prepLayoutForEncode e).IsLoadable :=
+  prepLayoutForEncodeWith_preserves_loadable none e hLoad hPhdrFit
+    hSection0Null hHeaderPhdr hHeaderSec hPhdrSec hDs
+
 /-! ## Sizes match: writeContent.size = encodedSize.
 
     The encoder's per-section splice writes `s.writeContent` at offset

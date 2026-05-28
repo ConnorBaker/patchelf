@@ -1701,6 +1701,128 @@ theorem syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint
       rw [hType _ hjE hj, hOffset _ hjE hj, hSize _ hjE hj]
       exact hOrig
 
+/-! ## `syncDtAddrTagsInFile` preserves `IsLoadable`
+
+    The second pre-encode pass either is a no-op or rewrites only the
+    `.dynamic` section's content via a same-size `Array.map`.  So `phdrs`
+    is preserved verbatim, `sections.size` and per-section
+    `(type, offset, encodedSize)` are preserved at every index, and
+    `interpIdx`/`dynamicIdx` are preserved.  The four `IsLoadable` clauses
+    transport directly: the three phdr-driven clauses use the literal
+    `phdrs` preservation, and `sections_nonoverlapping` transports the
+    per-section facts.  The `dynstr` precondition (as in
+    `syncDtAddrTagsInFile_preserves_valid`) yields `iDyn ≠ shstrndx`,
+    needed for `interpIdx` preservation. -/
+
+/-- Per-section `offset` preserved (every index: `{ s with content }`). -/
+theorem syncDtAddrTagsInFile_sections_offset (e : ElfFile) (j : Nat)
+    (hj : j < (syncDtAddrTagsInFile e).sections.size) (hjE : j < e.sections.size) :
+    ((syncDtAddrTagsInFile e).sections[j]'hj).offset = (e.sections[j]'hjE).offset := by
+  rcases syncDtAddrTagsInFile_cases e with hEq | ⟨iDyn, hLt, dyn, hContent, hEq⟩
+  · simp only [hEq]
+  · simp only [hEq] at hj ⊢
+    exact ElfFile.updateSectionContent_offset e iDyn _ j hjE hj
+
+/-- Per-section `type` preserved (the `Array.map` keeps `.dynamic`, so even
+    at `iDyn` the type is unchanged). -/
+theorem syncDtAddrTagsInFile_sections_type (e : ElfFile) (j : Nat)
+    (hj : j < (syncDtAddrTagsInFile e).sections.size) (hjE : j < e.sections.size) :
+    ((syncDtAddrTagsInFile e).sections[j]'hj).type = (e.sections[j]'hjE).type := by
+  rcases syncDtAddrTagsInFile_cases e with hEq | ⟨iDyn, hLt, dyn, hContent, hEq⟩
+  · simp only [hEq]
+  · simp only [hEq] at hj ⊢
+    by_cases hji : j = iDyn
+    · subst hji
+      rw [ElfFile.updateSectionContent_type_self e j _ hjE hj]
+      simp [SectionContent.type, Section.type, hContent]
+    · exact ElfFile.updateSectionContent_type e iDyn _ j hjE hji hj
+
+/-- Per-section `encodedSize` preserved (same-size `Array.map`). -/
+theorem syncDtAddrTagsInFile_sections_encodedSize (e : ElfFile) (j : Nat)
+    (hj : j < (syncDtAddrTagsInFile e).sections.size) (hjE : j < e.sections.size) :
+    ((syncDtAddrTagsInFile e).sections[j]'hj).encodedSize = (e.sections[j]'hjE).encodedSize := by
+  rcases syncDtAddrTagsInFile_cases e with hEq | ⟨iDyn, hLt, dyn, hContent, hEq⟩
+  · simp only [hEq]
+  · simp only [hEq] at hj ⊢
+    exact updateSectionContent_dynamic_map_encodedSize_eq e iDyn hLt dyn hContent
+      (syncDtAddrEntry e) j hjE hj
+
+/-- `interpIdx` preserved (needs `iDyn ≠ shstrndx` from the dynstr witness). -/
+theorem syncDtAddrTagsInFile_interpIdx (e : ElfFile)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (syncDtAddrTagsInFile e).interpIdx = e.interpIdx := by
+  rcases syncDtAddrTagsInFile_cases e with hEq | ⟨iDyn, hLt, dyn, hContent, hEq⟩
+  · rw [hEq]
+  · rw [hEq]
+    have hShstrNe : iDyn ≠ e.header.shstrndx.toNat :=
+      ElfFile.shstrndx_ne_of_content_dynamic_of_dynstr e hLt hContent hDs
+    exact ElfFile.updateSectionContent_findIdxByName e iDyn _ _ hShstrNe
+
+/-- `dynamicIdx` preserved (the updated content is still `.dynamic`). -/
+theorem syncDtAddrTagsInFile_dynamicIdx (e : ElfFile) :
+    (syncDtAddrTagsInFile e).dynamicIdx = e.dynamicIdx := by
+  rcases syncDtAddrTagsInFile_cases e with hEq | ⟨iDyn, hLt, dyn, hContent, hEq⟩
+  · rw [hEq]
+  · rw [hEq]
+    exact ElfFile.updateSectionContent_dynamicIdx e iDyn _ (by
+      intro hi; simp [SectionContent.type, Section.type, hContent])
+
+/-- `syncDtAddrTagsInFile` preserves `IsLoadable`.  Same `dynstr`
+    precondition as `_preserves_valid` (yields `iDyn ≠ shstrndx`). -/
+theorem syncDtAddrTagsInFile_preserves_loadable (e : ElfFile) (hLoad : e.IsLoadable)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (syncDtAddrTagsInFile e).IsLoadable := by
+  have hPhdrs := syncDtAddrTagsInFile_phdrs e
+  have hSecSz := syncDtAddrTagsInFile_sections_size e
+  refine
+    { toIsValid := syncDtAddrTagsInFile_preserves_valid e hLoad.toIsValid hDs
+      sections_nonoverlapping := ?_
+      pt_interp_agrees := ?_
+      pt_dynamic_agrees := ?_
+      segment_congruent := ?_ }
+  · intro i hi j hj hNe
+    have hiE : i < e.sections.size := by rw [hSecSz] at hi; exact hi
+    have hjE : j < e.sections.size := by rw [hSecSz] at hj; exact hj
+    have hTi := syncDtAddrTagsInFile_sections_type e i hi hiE
+    have hTj := syncDtAddrTagsInFile_sections_type e j hj hjE
+    have hOi := syncDtAddrTagsInFile_sections_offset e i hi hiE
+    have hOj := syncDtAddrTagsInFile_sections_offset e j hj hjE
+    have hSi := syncDtAddrTagsInFile_sections_encodedSize e i hi hiE
+    have hSj := syncDtAddrTagsInFile_sections_encodedSize e j hj hjE
+    have hBase := hLoad.sections_nonoverlapping i hiE j hjE hNe
+    simp only [hTi, hTj, hOi, hOj, hSi, hSj]
+    exact hBase
+  · unfold ElfFile.ptInterpAgreement
+    rw [syncDtAddrTagsInFile_interpIdx e hDs]
+    cases hI : e.interpIdx with
+    | none => trivial
+    | some iS =>
+      intro hLt iPh hPh hPhT
+      simp only [hPhdrs] at hPh hPhT ⊢
+      have hSecLtE : iS < e.sections.size := by rw [hSecSz] at hLt; exact hLt
+      rw [syncDtAddrTagsInFile_sections_offset e iS hLt hSecLtE]
+      have hBase := hLoad.pt_interp_agrees
+      unfold ElfFile.ptInterpAgreement at hBase
+      rw [hI] at hBase
+      exact hBase hSecLtE iPh hPh hPhT
+  · unfold ElfFile.ptDynamicAgreement
+    rw [syncDtAddrTagsInFile_dynamicIdx e]
+    cases hD : e.dynamicIdx with
+    | none => trivial
+    | some iS =>
+      intro hLt iPh hPh hPhT
+      simp only [hPhdrs] at hPh hPhT ⊢
+      have hSecLtE : iS < e.sections.size := by rw [hSecSz] at hLt; exact hLt
+      rw [syncDtAddrTagsInFile_sections_offset e iS hLt hSecLtE]
+      have hBase := hLoad.pt_dynamic_agrees
+      unfold ElfFile.ptDynamicAgreement at hBase
+      rw [hD] at hBase
+      exact hBase hSecLtE iPh hPh hPhT
+  · unfold ElfFile.segmentCongruence
+    intro iPh hPh hPhT
+    simp only [hPhdrs] at hPh hPhT ⊢
+    exact hLoad.segment_congruent iPh hPh hPhT
+
 /-! ## `growEOFWith` produces `spliceRegionsDisjoint` -/
 
 /-- Sanity lemma: the `stale` array built inside `growEOFWith` indexes
@@ -4071,5 +4193,36 @@ theorem growEOFWith_preserves_loadable (pageSize? : Option Nat) (e : ElfFile)
           show (growEOFWithFreshPtLoadReloc pageSize? e).IsLoadable
           exact growEOFWithFreshPtLoadReloc_preserves_loadable pageSize? e hLoad hPhdrFit
             hHeaderSec
+
+/-- `growEOFWith` preserves `dynstr` — composes the four branches'
+    `_dynstr` lemmas via the same 5-way dispatch.  Lets the pipeline-level
+    `prepLayoutForEncodeWith_preserves_loadable` thread the `dynstr`
+    precondition through `growEOFWith` to `syncDtAddrTagsInFile`. -/
+@[simp] theorem growEOFWith_dynstr (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWith pageSize? e).dynstr = e.dynstr := by
+  unfold growEOFWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]
+  · simp only [hLay]
+    cases hLast : lastPtLoadIdx e.phdrs with
+    | none =>
+      simp
+    | some lastIdx =>
+      simp only []
+      by_cases hExt : (canExtendLastPtLoad e
+        (roundUp (currentFileEnd e)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (roundUp (maxPtLoadVaddrEnd e.phdrs)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs)
+        lastIdx) = true
+      · simp only [hExt, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+        exact growEOFWithMainBody_dynstr pageSize? e lastIdx
+      · simp only [hExt, Bool.not_false, ↓reduceIte]
+        by_cases hAdd : canAddFreshPtLoad e = true
+        · simp only [hAdd, ↓reduceIte]
+          exact growEOFWithFreshPtLoad_dynstr pageSize? e
+        · simp only [hAdd, Bool.false_eq_true, ↓reduceIte]
+          exact growEOFWithFreshPtLoadReloc_dynstr pageSize? e
 
 end Patchelf.Elf
