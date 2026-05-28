@@ -400,7 +400,8 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   loader-coherence failures.  Op-level `_preserves_loadable`
   theorems remain open; pick up under §1.2.
 - **Pre-encode passes — `_preserves_valid` partially landed.**
-  `syncDtStrszInFile_preserves_valid` (`Encoder.lean`) and
+  `syncDtStrszInFile_preserves_valid` (`Encoder.lean`),
+  `syncDtAddrTagsInFile_preserves_valid` (`GrowEOF.lean`), and
   `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`
   (`GrowEOF.lean`) landed.  `growEOFWith_preserves_valid` /
   `_preserves_loadable` and `layoutForEncoding_preserves_valid` are

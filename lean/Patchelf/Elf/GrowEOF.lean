@@ -700,6 +700,312 @@ def syncDtAddrTagsInFile (e : ElfFile) : ElfFile :=
       else e
   | _, _ => e
 
+/-! ## `syncDtAddrEntry` invariants
+
+    `syncDtAddrEntry` only ever rewrites `d.value` on entries whose
+    `tag.isAddressTag = true`.  None of the four string-ref tags
+    (`needed`, `soname`, `rpath`, `runpath`) are address tags, so
+    `value` is unchanged on string-ref entries — this is the key
+    fact that lets `syncDtAddrTagsInFile_preserves_valid` reuse the
+    `dynsym_wf` argument from `syncDtStrszInFile`. -/
+
+theorem syncDtAddrEntry_tag (e : ElfFile) (d : DynEntry) :
+    (syncDtAddrEntry e d).tag = d.tag := by
+  unfold syncDtAddrEntry
+  by_cases hAT : d.tag.isAddressTag
+  · rw [if_pos hAT]
+    cases addrTagTarget e d.tag <;> rfl
+  · rw [if_neg hAT]
+
+theorem syncDtAddrEntry_isStringRef (e : ElfFile) (d : DynEntry) :
+    (syncDtAddrEntry e d).isStringRef = d.isStringRef := by
+  unfold DynEntry.isStringRef
+  rw [syncDtAddrEntry_tag]
+
+/-- On string-ref entries (DT_NEEDED / DT_SONAME / DT_RPATH /
+    DT_RUNPATH — none of which are address tags), `syncDtAddrEntry`
+    is the identity. -/
+theorem syncDtAddrEntry_value_of_stringRef (e : ElfFile) (d : DynEntry)
+    (hSR : d.isStringRef = true) :
+    (syncDtAddrEntry e d).value = d.value := by
+  unfold syncDtAddrEntry
+  rw [DynEntry.isStringRef_iff] at hSR
+  by_cases hAT : d.tag.isAddressTag = true
+  · -- Address tag and string-ref are mutually exclusive — derive False.
+    exfalso
+    unfold DynTag.isAddressTag at hAT
+    rcases hSR with h | h | h | h <;> rw [h] at hAT <;> cases hAT
+  · simp only [Bool.not_eq_true] at hAT
+    rw [if_neg]
+    intro h; rw [h] at hAT; cases hAT
+
+/-- `syncDtAddrEntry` preserves `back?`'s `.tag = DT_NULL` check. -/
+theorem syncDtAddr_back_null (e : ElfFile) (dyn : Array DynEntry) :
+    (dyn.map (syncDtAddrEntry e)).back?.any
+        (fun e => decide (e.tag = DynTag.null)) =
+      dyn.back?.any (fun e => decide (e.tag = DynTag.null)) := by
+  rw [Array.back?_map]
+  cases hb : dyn.back? with
+  | none   => simp
+  | some d => simp [syncDtAddrEntry_tag]
+
+/-- `syncDtAddrEntry`-mapping preserves `SectionContent.dynamic _`'s
+    WellFormed. -/
+theorem syncDtAddr_content_wf (e : ElfFile) (dyn : Array DynEntry)
+    (h : (SectionContent.dynamic dyn).WellFormed) :
+    (SectionContent.dynamic (dyn.map (syncDtAddrEntry e))).WellFormed := by
+  show Option.any _ (dyn.map (syncDtAddrEntry e)).back? = true
+  rw [syncDtAddr_back_null]
+  exact h
+
+/-! ## `syncDtAddrTagsInFile` preserves byte-layer `IsValid`
+
+    Mirrors `syncDtStrszInFile_aux_preserves_valid` in
+    `Encoder.lean`.  The key facts:
+      * `syncDtAddrEntry` preserves `.tag` (always).
+      * Hence the `.dynamic` array's `back?` and DT_NULL position are
+        preserved.
+      * `.value` is unchanged on string-ref entries, so
+        `dynamicStringRefsValid` survives.
+      * Every other section's `Section` value is unchanged.
+
+    Like `syncDtStrszInFile_aux_preserves_valid`, requires
+    `e.dynstr = some ds`.  Concretely: we need to know
+    `iDyn ≠ shstrndx` so `updateSectionContent_dynstr_eq` /
+    `updateSectionContent_shstrtab` apply.  The dynstr witness gives
+    that via `shstrndx_ne_of_content_dynamic_of_dynstr`.  Real
+    callers (encoder pipeline post-`growEOFWith`) always supply
+    dynstr; the outer wrapper handles the `dynstr = none`
+    degenerate case via `syncDtAddrTagsInFile_cases`. -/
+
+private theorem syncDtAddrTagsInFile_aux_preserves_valid (e : ElfFile)
+    (hVal : e.IsValid) (ds : StringTable) (dyn : Array DynEntry) (iDyn : Nat)
+    (hDs : e.dynstr = some ds)
+    (hDyn : e.dynamic = some dyn) (hIdx : e.dynamicIdx = some iDyn)
+    (hBound : iDyn < e.sections.size) :
+    (e.updateSectionContent iDyn
+      (SectionContent.dynamic (dyn.map (syncDtAddrEntry e)))).IsValid := by
+  -- Recover the section's content from `e.dynamic = some dyn`.
+  have hContent : (e.sections[iDyn]'hBound).content = .dynamic dyn := by
+    have hCa : e.contentAt e.dynamicIdx = some (.dynamic dyn) := by
+      unfold ElfFile.dynamic at hDyn
+      split at hDyn <;> first | (cases hDyn; assumption) | cases hDyn
+    rw [hIdx] at hCa
+    unfold ElfFile.contentAt at hCa
+    simp only [Option.bind_some, dif_pos hBound] at hCa
+    exact Option.some.inj hCa
+  let e' := e.updateSectionContent iDyn
+    (SectionContent.dynamic (dyn.map (syncDtAddrEntry e)))
+  show e'.IsValid
+  have hHeader : e'.header = e.header := by simp [e']
+  have hPhdrs : e'.phdrs = e.phdrs := by simp [e']
+  have hSecSize : e'.sections.size = e.sections.size := by simp [e']
+  have hBound' : iDyn < e'.sections.size := by simp [hSecSize, hBound]
+  have hOther : ∀ (j : Nat) (hj : j < e.sections.size) (_ : j ≠ iDyn)
+      (hj' : j < e'.sections.size),
+      e'.sections[j]'hj' = e.sections[j]'hj :=
+    fun j hj hne hj' =>
+      ElfFile.updateSectionContent_getElem_ne e _ _ _ hj hne hj'
+  have hSelf : ∀ (h' : iDyn < e'.sections.size),
+      e'.sections[iDyn]'h' = { e.sections[iDyn]'hBound with
+        content := .dynamic (dyn.map (syncDtAddrEntry e)) } :=
+    fun h' => ElfFile.updateSectionContent_getElem_self e _ _ hBound h'
+  have hType_iDyn : (e.sections[iDyn]'hBound).type = ShType.SHT_DYNAMIC := by
+    obtain ⟨_, hT⟩ := ElfFile.findUniqueTypeIdx_section_type e _ _ hIdx
+    exact hT
+  have hType : ∀ (j : Nat) (hj : j < e.sections.size)
+      (hj' : j < e'.sections.size),
+      (e'.sections[j]'hj').type = (e.sections[j]'hj).type := by
+    intro j hj hj'
+    by_cases hji : j = iDyn
+    · subst hji
+      rw [ElfFile.updateSectionContent_type_self _ _ _ hj hj']
+      simp only [SectionContent.type, Section.type, hContent]
+    · exact ElfFile.updateSectionContent_type _ _ _ _ hj hji hj'
+  have hName : ∀ (j : Nat) (hj : j < e.sections.size)
+      (hj' : j < e'.sections.size),
+      (e'.sections[j]'hj').name = (e.sections[j]'hj).name :=
+    fun j hj hj' => ElfFile.updateSectionContent_name _ _ _ _ hj hj'
+  -- shstrndx-disjointness from `e.dynstr = some ds` + iDyn's content.
+  have hShstrNe : iDyn ≠ e.header.shstrndx.toNat :=
+    ElfFile.shstrndx_ne_of_content_dynamic_of_dynstr e hBound hContent hDs
+  -- Typed accessors at non-iDyn indices are preserved.
+  have hDsEq' : e'.dynstr = e.dynstr := by
+    apply ElfFile.updateSectionContent_dynstr_eq _ _ _ hShstrNe
+    intro iStr hStr
+    exact (ElfFile.dynstrIdx_target_ne_of_content_dynamic
+      e hBound hContent hDs hStr).symm
+  have hDsymEq' : e'.dynsym = e.dynsym := by
+    apply ElfFile.updateSectionContent_dynsym_eq
+    · simp [SectionContent.type]; decide
+    · intro hi
+      simp only [Section.type, hContent, SectionContent.type]; decide
+    · intro iSym hSym hEq
+      subst hEq
+      obtain ⟨_, hT⟩ := ElfFile.findUniqueTypeIdx_section_type e _ _ hSym
+      rw [hType_iDyn] at hT
+      cases hT
+  -- Pointwise equality of `Section.contentWellFormedB`.
+  have hContentWFB : ∀ (j : Nat) (hj : j < e.sections.size)
+      (hj' : j < e'.sections.size),
+      ElfFile.Section.contentWellFormedB (e'.sections[j]'hj') =
+        ElfFile.Section.contentWellFormedB (e.sections[j]'hj) := by
+    intros j hj hj'
+    by_cases hjEq : j = iDyn
+    · subst hjEq; rw [hSelf hj']
+      unfold ElfFile.Section.contentWellFormedB
+      simp only [hContent]
+      have hWF : (SectionContent.dynamic dyn).WellFormed ↔
+          (SectionContent.dynamic (dyn.map (syncDtAddrEntry e))).WellFormed := by
+        constructor
+        · exact syncDtAddr_content_wf _ _
+        · intro h
+          show Option.any _ dyn.back? = true
+          rw [← syncDtAddr_back_null e]; exact h
+      simp [hWF]
+    · rw [hOther j hj hjEq hj']
+  have hStrtabWFB : ∀ (j : Nat) (hj : j < e.sections.size)
+      (hj' : j < e'.sections.size),
+      ElfFile.Section.strtabWellFormedB (e'.sections[j]'hj') =
+        ElfFile.Section.strtabWellFormedB (e.sections[j]'hj) := by
+    intros j hj hj'
+    by_cases hjEq : j = iDyn
+    · subst hjEq; rw [hSelf hj']
+      unfold ElfFile.Section.strtabWellFormedB
+      simp only [hContent]
+    · rw [hOther j hj hjEq hj']
+  -- The 8 IsValid clauses.
+  refine
+    { header_counts := ?_, sections_wf := ?_, strtabs_wf := ?_,
+      dynamic_wf := ?_, dynsym_wf := ?_, content_wf := ?_,
+      types_distinct := ?_, names_unique := ?_ }
+  ----------------------------------------
+  -- header_counts
+  ----------------------------------------
+  · obtain ⟨h1, h2, h3, h4, h5⟩ := hVal.header_counts
+    refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> simp [hHeader, hPhdrs, hSecSize, h1, h2, h3, h4, h5]
+  ----------------------------------------
+  -- sections_wf
+  ----------------------------------------
+  · intro h0
+    have h0' : 0 < e.sections.size := by simpa [hSecSize] using h0
+    rw [hType 0 h0' h0]
+    exact hVal.sections_wf h0'
+  ----------------------------------------
+  -- strtabs_wf
+  ----------------------------------------
+  · have hAll := hVal.strtabs_wf
+    show e'.sections.all _ = true
+    unfold ElfFile.strtabsWellFormed at hAll
+    rw [Array.all_eq_true] at hAll ⊢
+    intro j hj
+    have hjE : j < e.sections.size := by simpa [hSecSize] using hj
+    rw [hStrtabWFB j hjE hj]
+    exact hAll j hjE
+  ----------------------------------------
+  -- dynamic_wf
+  ----------------------------------------
+  · have hIdx' : e'.dynamicIdx = some iDyn := by
+      rw [ElfFile.updateSectionContent_dynamicIdx e iDyn _
+        (fun _ => by simp [Section.type, hContent, SectionContent.type])]; exact hIdx
+    have hDyn' : e'.dynamic = some (dyn.map (syncDtAddrEntry e)) := by
+      unfold ElfFile.dynamic
+      rw [hIdx']
+      simp only [ElfFile.contentAt, Option.bind_some, dif_pos hBound']
+      rw [hSelf hBound']
+    refine ⟨?_, ?_⟩
+    · -- dynamicTerminated.
+      intro d hd
+      rw [hDyn'] at hd
+      cases hd
+      have ⟨hSize, hBack, hUnique⟩ := hVal.dynamic_wf.1 dyn hDyn
+      have hSizeEq : (dyn.map (syncDtAddrEntry e)).size = dyn.size := Array.size_map ..
+      refine ⟨hSizeEq ▸ hSize, ?_, ?_⟩
+      · -- (dyn.map _)[size - 1].tag = .null
+        simp only [Array.size_map]
+        rw [Array.getElem_map, syncDtAddrEntry_tag]
+        exact hBack
+      · -- uniqueness of DT_NULL position
+        intros i hi hT
+        rw [hSizeEq] at hi
+        rw [Array.getElem_map, syncDtAddrEntry_tag] at hT
+        rw [hSizeEq]
+        exact hUnique i hi hT
+    · -- dynamicStringRefsValid.
+      intro d ds' hd hds'
+      rw [hDyn'] at hd
+      cases hd
+      rw [hDsEq'] at hds'
+      rw [hDs] at hds'
+      cases hds'
+      have hOrig := hVal.dynamic_wf.2 dyn ds hDyn hDs
+      intros i hi hSR
+      rw [show (dyn.map (syncDtAddrEntry e)).size = dyn.size from
+            Array.size_map ..] at hi
+      rw [Array.getElem_map]
+      rw [Array.getElem_map] at hSR
+      rw [syncDtAddrEntry_isStringRef] at hSR
+      rw [syncDtAddrEntry_value_of_stringRef _ _ hSR]
+      exact hOrig i hi hSR
+  ----------------------------------------
+  -- dynsym_wf
+  ----------------------------------------
+  · intros syms ds' hSyms hDs'
+    have hOrigSyms : e.dynsym = some syms := hDsymEq' ▸ hSyms
+    have hOrigDs   : e.dynstr = some ds'  := hDsEq'   ▸ hDs'
+    exact hVal.dynsym_wf syms ds' hOrigSyms hOrigDs
+  ----------------------------------------
+  -- content_wf
+  ----------------------------------------
+  · have hAll := hVal.content_wf
+    show e'.sections.all _ = true
+    unfold ElfFile.sectionsContentWellFormed at hAll
+    rw [Array.all_eq_true] at hAll ⊢
+    intro j hj
+    have hjE : j < e.sections.size := by simpa [hSecSize] using hj
+    rw [hContentWFB j hjE hj]
+    exact hAll j hjE
+  ----------------------------------------
+  -- types_distinct
+  ----------------------------------------
+  · obtain ⟨h1, h2, h3, h4, h5, h6⟩ := hVal.types_distinct
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> {
+      intros i hi j hj hi_t hj_t
+      have hiE : i < e.sections.size := by simpa [hSecSize] using hi
+      have hjE : j < e.sections.size := by simpa [hSecSize] using hj
+      rw [hType i hiE hi] at hi_t
+      rw [hType j hjE hj] at hj_t
+      first
+      | exact h1 i hiE j hjE hi_t hj_t
+      | exact h2 i hiE j hjE hi_t hj_t
+      | exact h3 i hiE j hjE hi_t hj_t
+      | exact h4 i hiE j hjE hi_t hj_t
+      | exact h5 i hiE j hjE hi_t hj_t
+      | exact h6 i hiE j hjE hi_t hj_t
+    }
+  ----------------------------------------
+  -- names_unique
+  ----------------------------------------
+  · unfold ElfFile.namedSectionsUnique
+    rw [ElfFile.updateSectionContent_shstrtab _ _ _ hShstrNe]
+    cases hSt : e.shstrtab with
+    | none => trivial
+    | some st =>
+        obtain ⟨h1, h2⟩ := by
+          have := hVal.names_unique
+          unfold ElfFile.namedSectionsUnique at this
+          rw [hSt] at this; exact this
+        constructor <;> {
+          intros i hi j hj hi_n hj_n
+          have hiE : i < e.sections.size := by simpa [hSecSize] using hi
+          have hjE : j < e.sections.size := by simpa [hSecSize] using hj
+          rw [hName i hiE hi] at hi_n
+          rw [hName j hjE hj] at hj_n
+          first
+          | exact h1 i hiE j hjE hi_n hj_n
+          | exact h2 i hiE j hjE hi_n hj_n
+        }
+
 /-! ## `syncDtAddrTagsInFile` field preservation
 
     `syncDtAddrTagsInFile` either returns `e` unchanged or replaces
@@ -723,7 +1029,6 @@ theorem syncDtAddrTagsInFile_cases (e : ElfFile) :
   unfold syncDtAddrTagsInFile
   cases hI : e.dynamicIdx with
   | none =>
-    -- The match on (none, _) returns e.
     cases e.dynamic <;> exact Or.inl rfl
   | some iDyn =>
     cases hD : e.dynamic with
@@ -731,8 +1036,7 @@ theorem syncDtAddrTagsInFile_cases (e : ElfFile) :
     | some dyn =>
       by_cases hLt : iDyn < e.sections.size
       · refine Or.inr ⟨iDyn, hLt, dyn, ?_, ?_⟩
-        · -- e.dynamic = some dyn ⇒ e.sections[iDyn].content = .dynamic dyn.
-          unfold ElfFile.dynamic at hD
+        · unfold ElfFile.dynamic at hD
           rw [hI] at hD
           unfold ElfFile.contentAt at hD
           simp only [Option.bind_some] at hD
@@ -745,9 +1049,43 @@ theorem syncDtAddrTagsInFile_cases (e : ElfFile) :
           | dynsym _ => simp at hD
           | versym _ => simp at hD
           | nobits _ => simp at hD
-        · -- After cases, the goal is `match some iDyn, some dyn with ... = ...`.
-          simp only [dif_pos hLt]
+        · simp only [dif_pos hLt]
       · refine Or.inl ?_; simp only [dif_neg hLt]
+
+/-- `syncDtAddrTagsInFile` preserves the byte-layer `IsValid` invariant
+    when the input has a `.dynstr` section.  Companion to
+    `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`; together
+    they cover both invariant families.  Mirrors
+    `syncDtStrszInFile_preserves_valid` (which has the same dynstr
+    precondition for the same reason).
+
+    The dynstr precondition is needed because `iDyn ≠ shstrndx` is
+    only derivable from the dynstr witness — `IsValid` alone doesn't
+    force shstrndx to point at a strtab, so the section at shstrndx
+    could in principle be the SHT_DYNAMIC section we are mutating.
+    Real ELFs always satisfy the precondition (any binary with
+    `.dynamic` has `.dynstr`); the runtime-decidable validator
+    catches the pathological case at write time. -/
+theorem syncDtAddrTagsInFile_preserves_valid (e : ElfFile) (hVal : e.IsValid)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (syncDtAddrTagsInFile e).IsValid := by
+  rcases syncDtAddrTagsInFile_cases e with hEq | ⟨iDyn, hLt, dyn, hContent, hEq⟩
+  · rw [hEq]; exact hVal
+  · rw [hEq]
+    have hType : (e.sections[iDyn]'hLt).type = ShType.SHT_DYNAMIC := by
+      simp [Section.type, hContent, SectionContent.type]
+    have hIdx : e.dynamicIdx = some iDyn := by
+      unfold ElfFile.dynamicIdx
+      rcases hVal.types_distinct with ⟨h1, _, _, _, _, _⟩
+      exact ElfFile.findUniqueTypeIdx_eq_some e ShType.SHT_DYNAMIC
+              iDyn hLt hType h1
+    have hDyn : e.dynamic = some dyn := by
+      unfold ElfFile.dynamic
+      rw [hIdx]
+      unfold ElfFile.contentAt
+      simp only [Option.bind_some, dif_pos hLt]
+      rw [hContent]
+    exact syncDtAddrTagsInFile_aux_preserves_valid e hVal ds dyn iDyn hDs hDyn hIdx hLt
 
 @[simp] theorem syncDtAddrTagsInFile_header (e : ElfFile) :
     (syncDtAddrTagsInFile e).header = e.header := by

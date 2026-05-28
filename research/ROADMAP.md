@@ -148,23 +148,21 @@ under §1.2.
 #### 1.2 Pre-encode passes: `_preserves_valid` theorems
 
 **Status:** `syncDtStrszInFile_preserves_valid` (`Encoder.lean`)
-landed.  Three byte-layer `IsValid` preservations remain:
+and `syncDtAddrTagsInFile_preserves_valid` (`GrowEOF.lean`) landed.
+Two byte-layer `IsValid` preservations remain:
 
 - `growEOFWith_preserves_valid` — offsets change, shoff changes,
   last PT_LOAD `filesz`/`memsz` extend, PT_INTERP/PT_DYNAMIC track
   moved sections.  None of the 8 IsValid clauses depend on offsets;
   the deeper claim — `_preserves_loadable` — is more interesting
   and the actual point of `growEOF` existing.
-- `syncDtAddrTagsInFile_preserves_valid` — rewrites `.dynamic`'s
-  DT_STRTAB/SYMTAB/HASH/GNU_HASH/VERNEED/VERSYM/JMPREL/REL/RELA
-  entries' `value` to section addresses; `dynamic_wf`'s string-ref
-  predicate isn't an address tag, so it survives by the same
-  argument as `syncDtStrszInFile`.
-  (Note: a related but distinct theorem,
-  `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`
-  (`GrowEOF.lean`), already landed as part of §1.3a.  The 7-clause
-  `spliceRegionsDisjoint` and the 8-clause `IsValid` are independent
-  predicates — neither implies the other.)
+- `syncDtAddrTagsInFile_preserves_valid` — DONE.
+  `Patchelf/Elf/GrowEOF.lean`.  Mirrors
+  `syncDtStrszInFile_preserves_valid`'s structure (aux + outer
+  wrapper), with `e.dynstr = some ds` as a precondition (needed to
+  derive `iDyn ≠ shstrndx` — `IsValid` alone doesn't force shstrndx
+  to point at a strtab).  Real ELFs always satisfy the precondition;
+  the runtime validator catches pathological inputs.
 - `layoutForEncoding_preserves_valid` — the BSS-collision fallback;
   same shape as `growEOFWith` but doesn't preserve PT_LOAD coverage.
 
