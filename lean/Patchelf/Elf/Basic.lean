@@ -519,6 +519,46 @@ structure Symbol where
   st_size   : UInt64
   deriving Repr
 
+/-- A parsed REL entry (ELF64 `Elf64_Rel`, 16 bytes).
+
+    Byte layout:
+      r_offset : UInt64 (offset 0)
+      r_info   : UInt64 (offset 8)   -- symbol idx (high 32) | type (low 32)
+
+    The `r_info` field encodes BOTH the relocation type (low 32 bits)
+    and the dynsym index (high 32 bits).  Renames that reorder dynsym
+    must rewrite `r_info` for every relocation that referenced a moved
+    symbol — see `Ops/RenameDynamicSymbols.lean`. -/
+structure Rel where
+  r_offset : UInt64
+  r_info   : UInt64
+  deriving Repr
+
+/-- A parsed RELA entry (ELF64 `Elf64_Rela`, 24 bytes).  Same as Rel
+    plus an explicit addend. -/
+structure Rela where
+  r_offset : UInt64
+  r_info   : UInt64
+  r_addend : UInt64
+  deriving Repr
+
+namespace Rel
+/-- Extract the symbol index from `r_info` (ELF64: high 32 bits). -/
+@[inline] def symIdx (r : Rel) : UInt32 := (r.r_info >>> 32).toUInt32
+/-- Extract the relocation type from `r_info` (ELF64: low 32 bits). -/
+@[inline] def relType (r : Rel) : UInt32 := r.r_info.toUInt32
+/-- Reconstruct `r_info` with a new symbol index, preserving relocation type. -/
+@[inline] def withSymIdx (r : Rel) (sym : UInt32) : Rel :=
+  { r with r_info := (sym.toUInt64 <<< 32) ||| r.relType.toUInt64 }
+end Rel
+
+namespace Rela
+@[inline] def symIdx (r : Rela) : UInt32 := (r.r_info >>> 32).toUInt32
+@[inline] def relType (r : Rela) : UInt32 := r.r_info.toUInt32
+@[inline] def withSymIdx (r : Rela) (sym : UInt32) : Rela :=
+  { r with r_info := (sym.toUInt64 <<< 32) ||| r.relType.toUInt64 }
+end Rela
+
 /-- A parsed `.gnu.version_r` auxiliary entry (ELF64 `Elf64_Vernaux`, 16 bytes).
     Byte layout:
       vna_hash  : UInt32 (offset 0)
