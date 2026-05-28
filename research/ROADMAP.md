@@ -24,8 +24,8 @@ forward-looking view.
 > work, but a non-trivial dependent-type obstacle in `Adapter.toElfFile`
 > was discovered during the worked example — see §5.1 for details.
 >
-> Items §1.1, §1.2, §3.5a (relocatePht sub-case only), §5.1 remain
-> open.  §3.5a's in-place sub-case landed (see below).
+> Items §1.1, §1.2, §5.1 remain open.  §3.5a fully landed (both
+> in-place and relocatePht sub-cases — see below).
 >
 > **2026-05 cleanup + feature gap pass landed.** Six commits of
 > mechanical-duplication cleanup (~−260 LOC across CLI, Adapter,
@@ -37,14 +37,14 @@ forward-looking view.
 > ([`REWRITE-FRESH-PT-LOAD-DESIGN.md`](REWRITE-FRESH-PT-LOAD-DESIGN.md)).
 > See ROADMAP §3.3 / §3.4 / §3.5a for current state.
 >
-> **2026-05 IR migration + §3.5a in-place sub-case landed.**
+> **2026-05 IR migration + §3.5a fully landed.**
 > SectionContent IR migration (Section.type derived from content;
 > raw constructor proof-carrying); `EncodePreconditions` shrinks
-> from 11 to 10 fields.  Plus §3.5a's in-place sub-case:
-> `growEOFWithFreshPtLoad` allocates a brand-new PT_LOAD covering
-> moved sections when `canExtendLastPtLoad` rejects but the binary
-> has phdr-table headroom (`canAddFreshPtLoad`).  Tests: 52 → 53
-> shell tests passing.
+> from 11 to 10 fields.  Plus §3.5a complete: in-place
+> (`growEOFWithFreshPtLoad`) + relocatePht
+> (`growEOFWithFreshPtLoadReloc`) sub-cases.  Empirically verified
+> on coreutils `ls` (the canonical relocatePht-class binary).
+> Tests: 52 → 54 shell tests passing.
 
 ---
 
@@ -59,20 +59,12 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 
 **Recommended pickup order:**
 
-- **§3.5a in-place sub-case — LANDED.**
-  `growEOFWithFreshPtLoad` (in `GrowEOF.lean`) handles the case
-  where the binary has phdr-table headroom (room for one more
-  56-byte phdr in the existing slot).  Test 53 covers it.
-- **§3.5a `relocatePht` sub-case — DESIGN READY, IMPL OPEN.**
-  Binaries like coreutils `ls` (phdr table packed tight against
-  `.note.gnu.build-id`) still fall through to `layoutForEncoding`.
-  The fix moves the phdr table itself to the appended region; the
-  C++ analog is `patchelf.cc:848` (`relocatePht = true`).  Plan in
-  [`REWRITE-FRESH-PT-LOAD-DESIGN.md`](REWRITE-FRESH-PT-LOAD-DESIGN.md):
-  ~150 LOC, ~1 day on top of the in-place foundation.  See
-  [`PICKUP-PROMPT-FRESH-PT-LOAD.md`](PICKUP-PROMPT-FRESH-PT-LOAD.md)
-  for the original spec; the relocatePht hook now sits in
-  `growEOFWith`'s third branch.
+- **§3.5a both sub-cases — LANDED.**
+  In-place (`growEOFWithFreshPtLoad`): handles binaries with
+  phdr-table headroom.  Test 53 covers it.
+  RelocatePht (`growEOFWithFreshPtLoadReloc`): moves the phdr
+  table itself to the appended region for binaries packed tight
+  against the first section.  Test 54 covers `coreutils ls`.
 - **§1.3a `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` — DONE.**
   `Encoder.lean` exposes the composed theorem.  See §1.3a for details.
   This was intended to unblock §5.1 (op-level Tier D), but a
@@ -325,51 +317,56 @@ appended-to dynstr.
 Tests: shell test 50 verifies on a real glibc binary that
 `readelf -V` shows the renamed library name post-rename.
 
-#### 3.5a Allocate a fresh PT_LOAD when extension is unsafe — IN-PLACE SUB-CASE LANDED
+#### 3.5a Allocate a fresh PT_LOAD when extension is unsafe — DONE
 
 Plan documented in
 [`REWRITE-FRESH-PT-LOAD-DESIGN.md`](REWRITE-FRESH-PT-LOAD-DESIGN.md).
-The in-place sub-case shipped: when `canExtendLastPtLoad` rejects
-(BSS-heavy binary), `growEOFWith` now tries `canAddFreshPtLoad`;
-when that accepts, it calls `growEOFWithFreshPtLoad`, which:
+Both sub-cases shipped:
 
-- appends a brand-new PT_LOAD entry to `e.phdrs` covering the
-  appended region `[startOffset, startOffset + appendedBytes)`;
-- bumps `header.phnum` by 1;
-- leaves the original phdr table in place (in-place sub-case).
+**In-place** (`growEOFWithFreshPtLoad`): when `canExtendLastPtLoad`
+rejects (BSS-heavy binary) AND `canAddFreshPtLoad` accepts (room
+for one more phdr in the existing slot):
 
-Proven via `growEOFWithFreshPtLoad_produces_spliceRegionsDisjoint`
-(`GrowEOF.lean`).  Mirror of the main-body proof with one extra
-precondition (`canAddFreshPtLoad e = true`); shows up in the
-`hdr_phdr_disjoint`, `phdr_shdr_disjoint`, and `phdr_sec_disjoint`
-clauses (output's phdr-table region is `(phdrs.size + 1) * phdrSize`
-bytes wide, not `phdrs.size * phdrSize`).
+- append a brand-new PT_LOAD entry to `e.phdrs` covering
+  `[startOffset, startOffset + appendedBytes)`;
+- bump `header.phnum` by 1;
+- leave the original phdr table in place.
 
-Test: `tests/cases/53-cli-set-rpath-bss-heavy.sh`.  Synthetic ELF
-with last PT_LOAD memsz ≫ filesz, phdr-table headroom, and
-DT_RUNPATH; verifies `set-rpath` succeeds, output's phnum is +1,
-and reparse + print-rpath roundtrip.
+Proven via `growEOFWithFreshPtLoad_produces_spliceRegionsDisjoint`.
+Test: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (synthetic).
 
-**Residual: `relocatePht` sub-case.**  Binaries with phdr table
-packed tight against the first section (e.g. coreutils `ls` —
-phdrs at `[0x40, 0x350)`, `.note.gnu.build-id` starts at `0x350`,
-no room for a 56-byte extension) still fall through to
-`layoutForEncoding`.  The fix requires moving the phdr table
-itself to the appended region.  C++ patchelf calls this
-`relocatePht` (patchelf.cc:848).  Out of scope for this pickup;
-documented in the design doc as the follow-up.
+**RelocatePht** (`growEOFWithFreshPtLoadReloc`): when there is no
+in-place room (`canAddFreshPtLoad` rejects), move the phdr table
+itself to the appended region:
+
+- new layout in the appended region:
+  `[startOffset, startOffset + phtSize)` — relocated phdr table,
+  `[startOffset + phtSize, ...)` — moved sections;
+- new PT_LOAD covers BOTH (`filesz = memsz = phtSize + appendedBytes`);
+- update `header.phoff = startOffset`, `header.phnum = phdrs.size + 1`;
+- retarget the PT_PHDR program header via `retargetPtPhdr`
+  (without this, glibc's `ld.so` miscomputes the load base and
+  segfaults at the first relocation).
+
+Proven via `growEOFWithFreshPtLoadReloc_produces_spliceRegionsDisjoint`.
+Crucially, this proof needs no extra precondition beyond the
+standard structural input invariants — the relocated phdr region
+sits at `[startOffset, ...)` past `currentFileEnd`, so verbatim-section
+disjointness comes directly from `currentFileEnd_ge_section_end`.
+
+Test: `tests/cases/54-cli-set-rpath-relocate-pht.sh` (real
+`coreutils ls`; canonical relocatePht-class binary, with the phdr
+table packed tight against `.note.gnu.build-id`).
 
 #### 3.5b PT_GNU_STACK append when missing
 
 `set-execstack` on a binary without PT_GNU_STACK phdr is currently
 a no-op (`Ops/Execstack.lean` only maps over existing phdrs);
-C++ appends.  The phdr-array-grow machinery from §3.5a is in place
-(`updatePhdrsAfterMove ... none ...` + `.push freshPhdr` is the
-template); appending a PT_GNU_STACK phdr is now mechanically
-similar — just construct a different phdr value (PhType.PT_GNU_STACK
-with PF_R | PF_W, zero offset/size) and bump phnum.  Out of scope
-for the §3.5a pickup; do as a follow-up after §3.5a's
-`relocatePht` sub-case if/when the use case arises.
+C++ appends.  The phdr-array-grow machinery from §3.5a is now
+fully in place — appending a PT_GNU_STACK phdr is mechanically
+similar to `freshPtLoad`: just construct a different phdr value
+(PhType.PT_GNU_STACK with PF_R | PF_W, zero offset/size) and bump
+phnum.  Pick up if/when the use case arises.
 
 #### 3.8 Per-clause `ParseError` classification — DONE
 

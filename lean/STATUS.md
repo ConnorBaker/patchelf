@@ -93,7 +93,7 @@ Multi-op invocations: chain CLI calls via the shell
 The single-process multi-op CLI was retired with the lean4-cli
 migration.
 
-**Test status:** all 53 shell tests in `tests/cases/` pass.
+**Test status:** all 54 shell tests in `tests/cases/` pass.
 
 `/tmp/lean-pe-fixtures/hello` and `/tmp/lean-pe-fixtures/greeter`
 (real glibc-linked binaries) are used by integration tests 50–52
@@ -362,25 +362,29 @@ so segment congruence survives.  `syncDtAddrTagsInFile` rewrites the
 matching DT_* address tags.  `set-rpath` on real ET_DYN binaries
 (e.g. `/usr/bin/hello`) now produces output that runs.
 
-**Large-BSS binaries: in-place fresh-PT_LOAD path landed.**  When
-the last PT_LOAD has significant BSS, `canExtendLastPtLoad` rejects
-extension; `growEOFWith` then tries `canAddFreshPtLoad`, which
-accepts when there is room for one more 56-byte phdr entry between
-the original phdr table and the first section.  In that case it
-calls `growEOFWithFreshPtLoad`, which appends a brand-new PT_LOAD
-covering the moved sections at file end (in-place sub-case: phdr
-table stays put, `header.phnum` bumps by 1).  Proven via
-`growEOFWithFreshPtLoad_produces_spliceRegionsDisjoint`, mirror of
-the main-body proof with the extra precondition `canAddFreshPtLoad e
-= true`.  Test: `tests/cases/53-cli-set-rpath-bss-heavy.sh`.
+**Large-BSS binaries: full coverage.**  When `canExtendLastPtLoad`
+rejects (BSS-heavy last PT_LOAD), `growEOFWith` now dispatches to
+one of two fresh-PT_LOAD strategies:
 
-**Residual: `relocatePht` sub-case.**  Binaries like coreutils `ls`
-have NO room before the first section (phdr table packed tight
-against `.note.gnu.build-id`), so `canAddFreshPtLoad` rejects.
-These still fall through to `layoutForEncoding`'s unaware repack and
-get caught by the validator (exit 5).  Fixing this requires moving
-the phdr table itself to the appended region — the C++ patchelf
-`relocatePht` path.  See ROADMAP §3.5a for the follow-up.
+* **In-place** (`growEOFWithFreshPtLoad`): when `canAddFreshPtLoad`
+  accepts (room for one more 56-byte phdr in the existing slot),
+  append a brand-new PT_LOAD covering the moved sections.  Phdr
+  table stays put; `header.phnum` bumps by 1.  Proven via
+  `growEOFWithFreshPtLoad_produces_spliceRegionsDisjoint`.
+* **Relocate-PHT** (`growEOFWithFreshPtLoadReloc`): when there is
+  no in-place room (phdr table packed tight against the first
+  section, e.g. coreutils `ls` with `.note.gnu.build-id` at
+  `0x350` immediately after the phdr table), move the phdr table
+  itself to the appended region.  Updates `header.phoff`,
+  retargets the PT_PHDR program header, allocates a new PT_LOAD
+  covering both the relocated phdrs and the moved sections.
+  Proven via `growEOFWithFreshPtLoadReloc_produces_spliceRegionsDisjoint`
+  — crucially, this needs no precondition beyond the standard
+  structural input invariants, since the relocated phdr region
+  sits past `currentFileEnd` by construction.
+
+Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
+`tests/cases/54-cli-set-rpath-relocate-pht.sh` (real `coreutils ls`).
 
 ### Priority 1 gaps (verification depth)
 

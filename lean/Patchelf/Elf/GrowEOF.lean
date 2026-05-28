@@ -413,6 +413,26 @@ def updatePhdrsAfterMove (phdrs : Array Patchelf.Elf.ProgramHeader)
       | none => phLast
     else phLast
 
+/-- Retarget every PT_PHDR program header to a new (offset, vaddr,
+    size) tuple.  Used by `growEOFWithFreshPtLoadReloc` to keep the
+    PT_PHDR phdr in agreement with the new `e_phoff` after the phdr
+    table is moved to the appended region.
+
+    PT_PHDR is informational — the kernel reads `e_phoff` directly to
+    find phdrs at exec — but glibc's `ld.so` consults PT_PHDR to
+    derive the load base.  Without this update, dynamic loading
+    miscomputes the base and segfaults at the first relocation. -/
+def retargetPtPhdr (phdrs : Array Patchelf.Elf.ProgramHeader)
+    (newOff newVaddr newSize : Nat) : Array Patchelf.Elf.ProgramHeader :=
+  phdrs.map fun ph =>
+    if ph.type = PhType.PT_PHDR then
+      { ph with offset := ⟨newOff⟩
+              , vaddr := ⟨newVaddr⟩
+              , paddr := ⟨newVaddr⟩
+              , filesz := ⟨newSize⟩
+              , memsz := ⟨newSize⟩ }
+    else ph
+
 /-! ## Main entry point -/
 
 /-- Is it safe to extend the last PT_LOAD to cover a new region starting at
@@ -527,13 +547,11 @@ def growEOFWith (pageSize? : Option Nat) (e : ElfFile) : ElfFile :=
     | some lastIdx =>
       if !canExtendLastPtLoad e startOffset startPage alignStartPage lastIdx then
         -- Can't extend the last PT_LOAD (huge BSS or wrong alignment).
-        -- Try the fresh-PT_LOAD-allocation path.  If even that fails
-        -- (no room in the phdr-bearing region), fall through to
-        -- `layoutForEncoding`'s unaware repack — the validator will
-        -- reject the resulting non-loadable bytes at write time.
+        -- Try the fresh-PT_LOAD-allocation path; if there's no room in
+        -- the existing phdr slot, fall through to `relocatePht` (move
+        -- the phdr table itself to the appended region).
         if canAddFreshPtLoad e then
-          -- Inline body of `growEOFWithFreshPtLoad pageSize? e` — see
-          -- the named alias below for the proof companion.
+          -- In-place sub-case: inline body of `growEOFWithFreshPtLoad pageSize? e`.
           let stale : Array Bool := Array.ofFn (n := e.sections.size) fun i =>
             sectionStale e i.val i.isLt
           let placed := appendStaleSections e.sections stale startOffset startPage
@@ -549,7 +567,28 @@ def growEOFWith (pageSize? : Option Nat) (e : ElfFile) : ElfFile :=
                           , phnum := (e.phdrs.size + 1).toUInt16 }
           { header := newHeader, phdrs := newPhdrs, sections := newSections }
         else
-          layoutForEncoding e
+          -- relocatePht sub-case: inline body of
+          -- `growEOFWithFreshPtLoadReloc pageSize? e`.
+          let phtSize := (e.phdrs.size + 1) * Layout.phdrSize
+          let secStartOffset := startOffset + phtSize
+          let secStartPage := startPage + phtSize
+          let stale : Array Bool := Array.ofFn (n := e.sections.size) fun i =>
+            sectionStale e i.val i.isLt
+          let placed := appendStaleSections e.sections stale secStartOffset secStartPage
+          let newSections := placed.1
+          let appendedBytes := placed.2
+          let totalAppendBytes := phtSize + appendedBytes
+          let newShoff := roundUp (startOffset + totalAppendBytes) 8
+          let retargetedPhdrs := updatePhdrsAfterMove e.phdrs none 0 0
+                                e.interpIdx e.dynamicIdx newSections
+          let phdrRetargeted := retargetPtPhdr retargetedPhdrs startOffset startPage phtSize
+          let newPhdrs := phdrRetargeted.push
+            (freshPtLoad startOffset startPage totalAppendBytes alignStartPage)
+          let newHeader : Patchelf.Elf.ElfHeader :=
+            { e.header with phoff := ⟨startOffset⟩
+                          , shoff := ⟨newShoff⟩
+                          , phnum := (e.phdrs.size + 1).toUInt16 }
+          { header := newHeader, phdrs := newPhdrs, sections := newSections }
       else
         -- Identify stale sections.
         let stale : Array Bool := Array.ofFn (n := e.sections.size) fun i =>
@@ -1094,10 +1133,9 @@ theorem canAddFreshPtLoad_pair_disjoint (e : ElfFile)
     (BSS-heavy binaries like coreutils `ls`) AND `canAddFreshPtLoad`
     accepts (room for one more phdr in the existing slot).
 
-    The harder `relocatePht` sub-case (move the phdr table to the
-    appended region) is documented in the design doc but not
-    implemented; binaries that need it will continue to fall through
-    to `layoutForEncoding`. -/
+    For binaries with the phdr table packed tight against the first
+    section (no in-place room), the `relocatePht` companion below
+    moves the phdr table itself to the appended region. -/
 def growEOFWithFreshPtLoad (pageSize? : Option Nat) (e : ElfFile) : ElfFile :=
   let detectedAlign := maxPtLoadAlign e.phdrs
   let alignStartPage :=
@@ -1122,6 +1160,63 @@ def growEOFWithFreshPtLoad (pageSize? : Option Nat) (e : ElfFile) : ElfFile :=
   -- Bump phnum so `headerCountsConsistent` survives.
   let newHeader : Patchelf.Elf.ElfHeader :=
     { e.header with shoff := ⟨newShoff⟩
+                  , phnum := (e.phdrs.size + 1).toUInt16 }
+  { header := newHeader, phdrs := newPhdrs, sections := newSections }
+
+/-- `growEOFWith` fresh-PT_LOAD-allocation construction
+    (`relocatePht` sub-case: the phdr table itself moves to the
+    appended region).  Used when the binary has no room for one
+    more phdr at the original location — i.e., `canExtendLastPtLoad`
+    rejects AND `canAddFreshPtLoad` rejects.  Mirrors the C++
+    `rewriteSectionsLibrary` `relocatePht = true` branch
+    (`patchelf.cc:848`).
+
+    Layout in the appended region:
+      `[startOffset, startOffset + phtSize)`              — relocated phdr table
+      `[startOffset + phtSize, startOffset + phtSize + appendedBytes)` — moved sections
+
+    The new PT_LOAD covers BOTH (`filesz = memsz = phtSize +
+    appendedBytes`).  `header.phoff` is updated to `startOffset`;
+    `header.phnum` becomes `phdrs.size + 1`.  This dispatches
+    `appendStaleSections` with a base offset shifted by `phtSize`
+    so the moved sections sit just past the relocated phdrs.
+
+    Note: ELF spec doesn't constrain `e_phoff`'s location — kernel
+    loaders read it directly to find the program headers.  Modern
+    kernels (post-2022) accept arbitrary phoff; older kernels had
+    a bug requiring phoff near the file start.  C++ patchelf accepts
+    the older-kernel breakage as the price of generality. -/
+def growEOFWithFreshPtLoadReloc (pageSize? : Option Nat) (e : ElfFile) : ElfFile :=
+  let detectedAlign := maxPtLoadAlign e.phdrs
+  let alignStartPage :=
+    match pageSize? with
+    | some n => max n detectedAlign
+    | none   => detectedAlign
+  let startPage := roundUp (maxPtLoadVaddrEnd e.phdrs) alignStartPage
+  let startOffset := roundUp (currentFileEnd e) alignStartPage
+  let phtSize := (e.phdrs.size + 1) * Layout.phdrSize
+  -- Place stale sections starting AFTER the relocated phdr table.
+  let secStartOffset := startOffset + phtSize
+  let secStartPage := startPage + phtSize
+  let stale : Array Bool := Array.ofFn (n := e.sections.size) fun i =>
+    sectionStale e i.val i.isLt
+  let placed := appendStaleSections e.sections stale secStartOffset secStartPage
+  let newSections := placed.1
+  let appendedBytes := placed.2
+  let totalAppendBytes := phtSize + appendedBytes
+  let newShoff := roundUp (startOffset + totalAppendBytes) 8
+  -- Retarget PT_INTERP / PT_DYNAMIC for moved sections, then PT_PHDR
+  -- to point at the relocated phdr table.
+  let retargetedPhdrs := updatePhdrsAfterMove e.phdrs none 0 0
+                        e.interpIdx e.dynamicIdx newSections
+  let phdrRetargeted := retargetPtPhdr retargetedPhdrs startOffset startPage phtSize
+  -- Append the new PT_LOAD covering both the relocated phdrs and the
+  -- moved sections.
+  let newPhdrs := phdrRetargeted.push
+    (freshPtLoad startOffset startPage totalAppendBytes alignStartPage)
+  let newHeader : Patchelf.Elf.ElfHeader :=
+    { e.header with phoff := ⟨startOffset⟩
+                  , shoff := ⟨newShoff⟩
                   , phnum := (e.phdrs.size + 1).toUInt16 }
   { header := newHeader, phdrs := newPhdrs, sections := newSections }
 
@@ -1494,6 +1589,223 @@ theorem growEOFWithFreshPtLoad_produces_spliceRegionsDisjoint
             ≤ startOffset + appendedBytes := hPlace.2.2
       omega
 
+/-- The `relocatePht` construction satisfies `spliceRegionsDisjoint`.
+    Crucially, this needs NO precondition beyond the standard structural
+    input invariants — `canAddFreshPtLoad` is not required.  The reason:
+    the relocated phdr table sits at `[startOffset, startOffset + phtSize)`,
+    past `currentFileEnd`, so it's automatically disjoint from every
+    verbatim section by `currentFileEnd_ge_section_end`.  By contrast,
+    the in-place sub-case keeps the phdr table within the original file
+    body and needs `canAddFreshPtLoad` to discharge phdr-vs-section
+    disjointness.
+
+    `hHeaderSec` is still needed for the `hdr_sec_disjoint` clause on
+    verbatim sections (this is the standard parser-output invariant
+    `headerSectionDisjoint`, independent of the layout strategy). -/
+theorem growEOFWithFreshPtLoadReloc_produces_spliceRegionsDisjoint
+    (pageSize? : Option Nat) (e : ElfFile)
+    (hHeaderSec  : e.headerSectionDisjoint) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).spliceRegionsDisjoint := by
+  unfold growEOFWithFreshPtLoadReloc
+  let detectedAlign := maxPtLoadAlign e.phdrs
+  let alignStartPage :=
+    match pageSize? with
+    | some n => max n detectedAlign
+    | none   => detectedAlign
+  let startPage := roundUp (maxPtLoadVaddrEnd e.phdrs) alignStartPage
+  let startOffset := roundUp (currentFileEnd e) alignStartPage
+  let phtSize := (e.phdrs.size + 1) * Layout.phdrSize
+  let secStartOffset := startOffset + phtSize
+  let secStartPage := startPage + phtSize
+  let stale : Array Bool := Array.ofFn (n := e.sections.size) fun i =>
+    sectionStale e i.val i.isLt
+  let placed := appendStaleSections e.sections stale secStartOffset secStartPage
+  let newSections := placed.1
+  let appendedBytes := placed.2
+  let totalAppendBytes := phtSize + appendedBytes
+  let newShoff := roundUp (startOffset + totalAppendBytes) 8
+  -- Witnesses: same shape as in-place, but with shifted base offset.
+  have hSpec : PlaceFold.TransformSpec
+      (appendTransform secStartOffset secStartPage) secStartOffset :=
+    appendTransform_transformSpec _ _
+  have hCurrLeStart : currentFileEnd e ≤ startOffset := le_roundUp _ _
+  have hCurrLeSecStart : currentFileEnd e ≤ secStartOffset :=
+    Nat.le_trans hCurrLeStart (Nat.le_add_right _ _)
+  have hStaleEq : ∀ (i : Nat) (hi : i < e.sections.size),
+      stale[i]?.getD false = sectionStale e i hi :=
+    fun i hi => stale_ofFn_eq_sectionStale e i hi
+  have hVerb : PlaceFold.VerbatimWitness (appendVerbatim stale) secStartOffset e.sections :=
+    appendVerbatim_witness e secStartOffset hCurrLeSecStart stale hStaleEq
+  have hSizeEq : newSections.size = e.sections.size :=
+    PlaceFold.size_eq _ _
+  have hCursorFloor : (0 : Nat) ≤ appendedBytes := PlaceFold.cursor_floor _ _
+  -- newShoff bounds.
+  have hStartLeShoff : startOffset ≤ newShoff :=
+    Nat.le_trans (Nat.le_add_right _ _) (le_roundUp _ _)
+  have hEhdrLeStart : Layout.ehdrSize ≤ startOffset :=
+    Nat.le_trans (currentFileEnd_ge_ehdr e) hCurrLeStart
+  -- per-entry placement.
+  have hPlacement : ∀ (j : Nat) (hj : j < newSections.size),
+      PlaceFold.Placement (appendVerbatim stale) secStartOffset e.sections 0 placed j := by
+    intros j hj
+    have hjS : j < e.sections.size := hSizeEq ▸ hj
+    exact PlaceFold.placeFold_placement hSpec e.sections 0 hVerb j hjS
+  -- pairwise non-overlap.
+  have hPair : ∀ (j j' : Nat) (hj : j < newSections.size) (hj' : j' < newSections.size),
+      j ≠ j' → PlaceFold.PairDisjoint placed j j' := by
+    intros j j' hj hj' hNe
+    have hjS : j < e.sections.size := hSizeEq ▸ hj
+    have hj'S : j' < e.sections.size := hSizeEq ▸ hj'
+    exact PlaceFold.placeFold_pairDisjoint hSpec e.sections 0 hVerb j j' hjS hj'S hNe
+  -- Output's phdrs.size: retargetPtPhdr is `Array.map`, preserves size.
+  have hRetSize : (updatePhdrsAfterMove e.phdrs none 0 0
+                  e.interpIdx e.dynamicIdx newSections).size = e.phdrs.size := by
+    unfold updatePhdrsAfterMove
+    exact Array.size_mapIdx
+  have hRetargetSize :
+      (retargetPtPhdr (updatePhdrsAfterMove e.phdrs none 0 0
+        e.interpIdx e.dynamicIdx newSections) startOffset startPage phtSize).size
+        = e.phdrs.size := by
+    unfold retargetPtPhdr
+    rw [Array.size_map, hRetSize]
+  have hOutPhdrsSize :
+      ((retargetPtPhdr (updatePhdrsAfterMove e.phdrs none 0 0
+        e.interpIdx e.dynamicIdx newSections) startOffset startPage phtSize).push
+        (freshPtLoad startOffset startPage totalAppendBytes alignStartPage)).size
+        = e.phdrs.size + 1 := by
+    rw [Array.size_push]; rw [hRetargetSize]
+  -- Build all 7 clauses.
+  refine
+    { sections_disjoint := ?_
+      hdr_phdr_disjoint := ?_
+      hdr_shdr_disjoint := ?_
+      phdr_shdr_disjoint := ?_
+      hdr_sec_disjoint := ?_
+      phdr_sec_disjoint := ?_
+      shdr_sec_disjoint := ?_ }
+  · -- sections_disjoint: from hPair.
+    intros j hj j' hj' hNe
+    have hjN : j < newSections.size := hj
+    have hj'N : j' < newSections.size := hj'
+    exact hPair j j' hjN hj'N hNe hjN hj'N
+  · -- hdr_phdr_disjoint: output's phoff = startOffset ≥ ehdrSize.
+    show IntervalDisjoint 0 Layout.ehdrSize startOffset
+      (startOffset + _ * Layout.phdrSize)
+    rw [hOutPhdrsSize]
+    -- ehdrSize ≤ startOffset (from currentFileEnd_ge_ehdr + currentFileEnd ≤ startOffset).
+    exact Or.inl hEhdrLeStart
+  · -- hdr_shdr_disjoint: newShoff ≥ ehdrSize.
+    show IntervalDisjoint 0 Layout.ehdrSize _ _
+    refine Or.inl ?_
+    show Layout.ehdrSize ≤ newShoff
+    exact Nat.le_trans hEhdrLeStart hStartLeShoff
+  · -- phdr_shdr_disjoint: phdr table at [startOffset, startOffset + phtSize),
+    -- shdr table at newShoff = roundUp(startOffset + phtSize + appendedBytes, 8).
+    -- phdr table end = startOffset + (phdrs.size+1)*phdrSize = startOffset + phtSize.
+    -- newShoff ≥ startOffset + phtSize + appendedBytes ≥ startOffset + phtSize.
+    show IntervalDisjoint startOffset _ _ _
+    rw [hOutPhdrsSize]
+    refine Or.inl ?_
+    show startOffset + (e.phdrs.size + 1) * Layout.phdrSize ≤ newShoff
+    -- newShoff = roundUp(startOffset + totalAppendBytes, 8); totalAppendBytes = phtSize + appendedBytes.
+    have hTotalLeShoff : startOffset + totalAppendBytes ≤ newShoff := le_roundUp _ _
+    -- phtSize unfolds to (phdrs.size + 1) * phdrSize; totalAppendBytes = phtSize + appendedBytes.
+    show startOffset + (e.phdrs.size + 1) * Layout.phdrSize ≤ newShoff
+    have hPhtLe : startOffset + phtSize ≤ startOffset + totalAppendBytes := by
+      show startOffset + phtSize ≤ startOffset + (phtSize + appendedBytes)
+      omega
+    exact Nat.le_trans hPhtLe hTotalLeShoff
+  · -- hdr_sec_disjoint: same shape as in-place; needs hHeaderSec for verbatim.
+    intros j hj
+    have hjN : j < newSections.size := hj
+    have hPl := hPlacement j hjN
+    rcases hPl.offset_or with hVerbJ | hPlace
+    · have hjS : j < e.sections.size := hSizeEq ▸ hjN
+      rcases hHeaderSec j hjS with h | h | hID
+      · exact Or.inl (hPl.type_eq.trans h)
+      · exact Or.inr (Or.inl (hPl.type_eq.trans h))
+      · refine Or.inr (Or.inr ?_)
+        have hOffJ : (newSections[j]'hjN).offset.val = (e.sections[j]'hjS).offset.val := by
+          rw [hVerbJ.2]
+        have hSzJ : (newSections[j]'hjN).encodedSize = (e.sections[j]'hjS).encodedSize :=
+          hPl.size_eq
+        unfold IntervalDisjoint
+        unfold IntervalDisjoint at hID
+        rw [hOffJ, hSzJ]
+        exact hID
+    · -- Placed: section.offset ≥ secStartOffset = startOffset + phtSize ≥ ehdrSize.
+      refine Or.inr (Or.inr (Or.inl ?_))
+      show Layout.ehdrSize ≤ (newSections[j]'hjN).offset.val
+      have h1 : secStartOffset + 0 ≤ (newSections[j]'hjN).offset.val := hPlace.2.1
+      omega
+  · -- phdr_sec_disjoint: extended phdr region is [startOffset, startOffset + phtSize).
+    -- Verbatim sections: their range ≤ currentFileEnd ≤ startOffset (NO need for
+    --   canAddFreshPtLoad — that's the whole point of relocate).
+    -- Placed sections: range starts at secStartOffset = startOffset + phtSize, past
+    --   the new phdr table.
+    intros j hj
+    have hjN : j < newSections.size := hj
+    have hPl := hPlacement j hjN
+    show ((newSections[j]'hjN).type = _ ∨ _)
+    rw [hOutPhdrsSize]
+    rcases hPl.offset_or with hVerbJ | hPlace
+    · have hjS : j < e.sections.size := hSizeEq ▸ hjN
+      rcases currentFileEnd_ge_section_end e j hjS with h | h | hLe
+      · exact Or.inl (hPl.type_eq.trans h)
+      · exact Or.inr (Or.inl (hPl.type_eq.trans h))
+      · -- file range ≤ currentFileEnd ≤ startOffset = phdr-region start.
+        refine Or.inr (Or.inr ?_)
+        have hOffJ : (newSections[j]'hjN).offset.val = (e.sections[j]'hjS).offset.val := by
+          rw [hVerbJ.2]
+        have hSzJ : (newSections[j]'hjN).encodedSize = (e.sections[j]'hjS).encodedSize :=
+          hPl.size_eq
+        rw [hOffJ, hSzJ]
+        -- IntervalDisjoint startOffset _ s.offset (s.offset + s.encodedSize).
+        -- Goal: s.offset + s.encodedSize ≤ startOffset (right disjunct).
+        refine Or.inr ?_
+        exact Nat.le_trans hLe hCurrLeStart
+    · -- Placed: section.offset ≥ secStartOffset = startOffset + phtSize, so
+      --   startOffset + phtSize ≤ section.offset → phdr region ends at-or-before
+      --   section start.
+      refine Or.inr (Or.inr (Or.inl ?_))
+      show startOffset + (e.phdrs.size + 1) * Layout.phdrSize ≤ (newSections[j]'hjN).offset.val
+      have h1 : secStartOffset + 0 ≤ (newSections[j]'hjN).offset.val := hPlace.2.1
+      -- secStartOffset = startOffset + phtSize = startOffset + (phdrs.size + 1) * phdrSize.
+      omega
+  · -- shdr_sec_disjoint: section ranges ≤ either currentFileEnd (verbatim) or
+    --   secStartOffset + appendedBytes = startOffset + phtSize + appendedBytes
+    --   ≤ newShoff (placed).
+    intros j hj
+    have hjN : j < newSections.size := hj
+    have hPl := hPlacement j hjN
+    rcases hPl.offset_or with hVerbJ | hPlace
+    · have hjS : j < e.sections.size := hSizeEq ▸ hjN
+      rcases currentFileEnd_ge_section_end e j hjS with h | h | hLe
+      · exact Or.inl (hPl.type_eq.trans h)
+      · exact Or.inr (Or.inl (hPl.type_eq.trans h))
+      · refine Or.inr (Or.inr (Or.inr ?_))
+        show (newSections[j]'hjN).offset.val + (newSections[j]'hjN).encodedSize ≤ newShoff
+        have hOffJ : (newSections[j]'hjN).offset.val = (e.sections[j]'hjS).offset.val := by
+          rw [hVerbJ.2]
+        have hSzJ : (newSections[j]'hjN).encodedSize = (e.sections[j]'hjS).encodedSize :=
+          hPl.size_eq
+        rw [hOffJ, hSzJ]
+        exact Nat.le_trans hLe (Nat.le_trans hCurrLeStart hStartLeShoff)
+    · -- Placed: range ≤ secStartOffset + appendedBytes = startOffset + phtSize + appendedBytes ≤ newShoff.
+      refine Or.inr (Or.inr (Or.inr ?_))
+      show (newSections[j]'hjN).offset.val + (newSections[j]'hjN).encodedSize ≤ newShoff
+      have hRange : (newSections[j]'hjN).offset.val + (newSections[j]'hjN).encodedSize
+            ≤ secStartOffset + appendedBytes := hPlace.2.2
+      -- newShoff = roundUp(startOffset + totalAppendBytes, 8) ≥ startOffset + totalAppendBytes
+      --         = startOffset + phtSize + appendedBytes = secStartOffset + appendedBytes.
+      have hTotalLeShoff : startOffset + totalAppendBytes ≤ newShoff := le_roundUp _ _
+      -- secStartOffset = startOffset + phtSize, totalAppendBytes = phtSize + appendedBytes.
+      show (newSections[j]'hjN).offset.val + (newSections[j]'hjN).encodedSize ≤ newShoff
+      have : secStartOffset + appendedBytes ≤ startOffset + totalAppendBytes := by
+        show startOffset + phtSize + appendedBytes ≤ startOffset + (phtSize + appendedBytes)
+        omega
+      exact Nat.le_trans hRange (Nat.le_trans this hTotalLeShoff)
+
 /-- `growEOFWith` produces a layout where all 7 splice regions are
     pairwise disjoint.  The output is suitable as the input to `encode`'s
     splice cascade.
@@ -1555,6 +1867,8 @@ theorem growEOFWith_produces_spliceRegionsDisjoint (pageSize? : Option Nat) (e :
           exact growEOFWithFreshPtLoad_produces_spliceRegionsDisjoint pageSize? e
             hAdd hHeaderSec
         · simp only [hAdd, Bool.false_eq_true, ↓reduceIte]
-          exact layoutForEncoding_produces_spliceRegionsDisjoint e hSection0Null hHeaderPhdr
+          show (growEOFWithFreshPtLoadReloc pageSize? e).spliceRegionsDisjoint
+          exact growEOFWithFreshPtLoadReloc_produces_spliceRegionsDisjoint pageSize? e
+            hHeaderSec
 
 end Patchelf.Elf
