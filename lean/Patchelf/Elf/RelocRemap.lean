@@ -59,7 +59,7 @@ def remapRelBytes (firstSymIdx : Nat) (perm : Array Nat) (bs : ByteArray) : Byte
   while i < n do
     let off := i * 16
     -- Read r_info at off+8.
-    if hOff : off + 16 ≤ out.size then
+    if _hOff : off + 16 ≤ out.size then
       let rInfo := Reader.readU64 out (off + 8)
       let new := rewriteRInfo firstSymIdx perm rInfo
       -- Splice 8 bytes of new r_info at off+8.
@@ -76,7 +76,7 @@ def remapRelaBytes (firstSymIdx : Nat) (perm : Array Nat) (bs : ByteArray) : Byt
   let mut i : Nat := 0
   while i < n do
     let off := i * 24
-    if hOff : off + 24 ≤ out.size then
+    if _hOff : off + 24 ≤ out.size then
       let rInfo := Reader.readU64 out (off + 8)
       let new := rewriteRInfo firstSymIdx perm rInfo
       out := Encoder.splice out (off + 8) (Writer.writeU64 new)

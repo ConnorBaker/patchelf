@@ -111,14 +111,14 @@ flowchart LR
   IV["IsValid<br/>(8 clauses)"]
   IL["IsLoadable<br/>= IsValid + 4 clauses"]
   IFV["IsFullyValid<br/>= IsLoadable + 1 clause"]
-  EP["EncodePreconditions<br/>(11 clauses)"]
+  EP["EncodePreconditions<br/>(10 clauses)"]
   IV --> IL --> IFV
-  IV -. "+ spliceRegionsDisjoint<br/>+ syncOk<br/>+ identValid<br/>+ typesMatch<br/>+ sizeFit<br/>+ nullEmpty<br/>+ headerFit/phdrFit/shdrFit" .-> EP
+  IV -. "+ spliceRegionsDisjoint<br/>+ syncOk<br/>+ identValid<br/>+ sizeFit<br/>+ nullEmpty<br/>+ headerFit/phdrFit/shdrFit" .-> EP
 ```
 
 | Predicate | Adds |
 |---|---|
-| `IsValid` | header counts consistent · sections[0] = SHT_NULL · strtabs null-terminated · dynamic well-formed · dynsym names in bounds · content matches type · types unique · names unique |
+| `IsValid` | header counts consistent · sections[0] = SHT_NULL · strtabs null-terminated · dynamic well-formed · dynsym names in bounds · types unique · names unique (the type↔content match is now structural — `Section.type` is derived from `content`, and `SectionContent.raw` carries a non-structural-type proof) |
 | `IsLoadable` | + sections non-overlapping · PT_INTERP offset agrees · PT_DYNAMIC offset agrees · PT_LOAD vaddr/offset congruent |
 | `IsFullyValid` | + DT_* address tags match section offsets / sizes |
 | `EncodePreconditions` | 11 decidable clauses including `spliceRegionsDisjoint` (built from the `IntervalDisjoint` primitive over 7 region-pair cases) |

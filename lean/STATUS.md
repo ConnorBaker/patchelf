@@ -171,9 +171,9 @@ accepts) or any post-write loader-coherence violation — those live
 in `Validate.IsLoadableBytes`, run at write time.
 
 The byte-level codec is verified end-to-end under the
-`EncodePreconditions` bundle (11 explicit, decidable preconditions —
-9 conceptual clauses, with `headerFit_*` exploded into 3 separate
-fields).  All decoder-inverse facts are proved:
+`EncodePreconditions` bundle (10 explicit, decidable preconditions —
+8 conceptual clauses plus the 3 `headerFit_*` fields).  All
+decoder-inverse facts are proved:
 
 - `parseHeader_encode` — header parser succeeds and recovers `e.header`.
 - `phdrs_decode_encode` — `decodePhdrs` recovers `e.phdrs`.
@@ -181,16 +181,13 @@ fields).  All decoder-inverse facts are proved:
 - `section_decode_encode` — for every section, `decodeSectionContent`
   on `(toShdr s)` recovers `s.content`.
 
-`EncodePreconditions e` packages 11 fields (9 conceptual facts;
-the 3 `headerFit_*` fields are tracked separately):
+`EncodePreconditions e` packages 10 fields:
 - `syncOk` — `syncDtStrszInFile e = e` (DT_STRSZ already in sync).
 - `spliceDisjoint` — all 4 splice region kinds are pairwise disjoint.
   Subsumes `layoutAlreadyValid e = true` via
   `layoutAlreadyValid_of_spliceRegionsDisjoint`; the derived
   `EncodePreconditions.layoutOk` view exposes the bool form.
 - `identValid` — ELF magic + class + data ident bytes are spec-valid.
-- `typesMatch` — section type matches content constructor (per
-  `decodeSectionContent` dispatch).
 - `sizeFit` — each `s.shdrSize < UInt64.size`.  For non-NOBITS
   sections this is `encodedSize`; for NOBITS it's the declared
   `memSize` carried on `SectionContent.nobits` (so the shdr table
@@ -201,8 +198,14 @@ the 3 `headerFit_*` fields are tracked separately):
 - `phdrFit` — every ProgramHeader wrap_nat field fits in UInt64.
 - `shdrFit` — every Section's wrap_nat fields fit in UInt64.
 
+The previously-required `typesMatch` field is gone after the
+SectionContent IR migration: `Section.type` is now derived from
+`content.type`, and `SectionContent.raw` carries a structural proof
+that its `sh_type` is non-structural — so the type↔content invariant
+holds by construction with no external predicate.
+
 **Parser-output → EncodePreconditions bridge.**
-`encodePreconditions_of_parser bs shdrs e` derives 10 of 11 fields
+`encodePreconditions_of_parser bs shdrs e` derives 9 of 10 fields
 (everything except `spliceDisjoint`) from parser-output structural
 facts plus `e.phdrs = decodePhdrs ...` and `shdrs = decodeShdrs ...`.
 Callers supply `spliceDisjoint` directly — the parser doesn't

@@ -106,7 +106,7 @@ def renameDynamicSymbols (e : ValidElfFile) (oldName newName : String)
     No-op (returns input unchanged + identity perm) when either
     `.gnu.hash` is absent or `.dynsym` is absent. -/
 def gnuHashRebuildOp (e : ValidElfFile) : ValidElfFile × Option (Nat × Array Nat) :=
-  match h : e.dynsym, e.gnuHash with
+  match _h : e.dynsym, e.gnuHash with
   | some dsym, some ghs =>
     let versym0 : Array UInt16 := e.versym.getD #[]
     let r := rebuildGnuHash dsym e.dynstr versym0 ghs.table

@@ -324,6 +324,10 @@ def decodeDynamic (bs : ByteArray) (baseOff : Nat) (maxCount : Nat) :
     Array DynEntry :=
   decodeDynamicLoop bs baseOff maxCount 0 #[]
 
+-- The `simp only [h]` rewrites discharge by-construction match
+-- equations even when the linter believes they are unused —
+-- removing them makes `omega` lose the context it needs.
+set_option linter.unusedSimpArgs false in
 theorem decodeDynamicLoop_size_le (bs : ByteArray) (baseOff maxCount i : Nat)
     (acc : Array DynEntry) :
     (decodeDynamicLoop bs baseOff maxCount i acc).size ≤ acc.size + (maxCount - i) := by

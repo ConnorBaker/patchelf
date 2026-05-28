@@ -171,7 +171,7 @@ end GnuHashRebuild
 /-- Rebuild the GNU hash table for the post-rename dynsym.  Returns
     the new dynsym, versym, hash table, and the dynsym permutation. -/
 def rebuildGnuHash {ds : StringSection} (dynsym : SymbolSection ds)
-    (dynstr : StringSection) (versym : Array UInt16) (ght : GnuHashTable) :
+    (_dynstr : StringSection) (versym : Array UInt16) (ght : GnuHashTable) :
     GnuHashRebuild.RebuildResult ds :=
   let firstSymIdx := ght.symndx.toNat
   let numBuckets  := ght.buckets.size

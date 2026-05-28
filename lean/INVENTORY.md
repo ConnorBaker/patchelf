@@ -187,13 +187,12 @@ This is the largest verification file (~2900 LOC). Mostly private threading-lemm
 | 1944 | theorem | `isValid_to_hDynWF` | `(e : ElfFile) (hVal : e.IsValid) -> ... hDynWF` (dynamic well-formedness) |
 | 2004 | theorem | `section_decode_encode` | per-section decodeSectionContent recovers original content |
 | 2162 | structure | `DecodeRoundtripWitness` | bundle: `parseHeader_ok`, `phdrs_decode`, `shdrs_decode`, `section_decode` |
-| 2208 | structure | `EncodePreconditions` | 11-field bundle: syncOk, spliceDisjoint, identValid, typesMatch, sizeFit, nullEmpty, headerFit_{entry,phoff,shoff}, phdrFit, shdrFit |
+| 2208 | structure | `EncodePreconditions` | 10-field bundle: syncOk, spliceDisjoint, identValid, sizeFit, nullEmpty, headerFit_{entry,phoff,shoff}, phdrFit, shdrFit (typesMatch dropped after IR migration; see STATUS.md) |
 | 2251 | theorem | `EncodePreconditions.layoutOk` | precondition-bundle implies layoutAlreadyValid |
 | 2259 | theorem | `decodeRoundtripWitness_of_preconditions` | `IsValid + EncodePreconditions -> DecodeRoundtripWitness` |
 | 2327 | theorem | **`parse_encode_roundtrip`** | **MASTER**: `(e : ParsedElf) (hPre : EncodePreconditions e.elf) -> parse (encode e.elf) = .ok e` |
 | 2350 | theorem | `parse_encode_roundtrip_witness` | bundle-form variant |
-| 2400 | theorem | `sectionFromShdr_typeContentMatches` | sectionFromShdr produces typeContentMatches |
-| 2420 | theorem | `sectionsFromShdrs_typeContentMatch` | array-level corollary |
+(stale: `sectionFromShdr_typeContentMatches` and `sectionsFromShdrs_typeContentMatch` removed by the SectionContent IR migration — type↔content match is now structural)
 | 2439 | theorem | `identBytesValid_of_decodeHeader` | parser output satisfies IdentBytesValid |
 | 2481 | theorem | `parseHeader_byte_facts` | byte-level facts about parser output |
 | 2590 | theorem | `syncDtStrszInFile_eq_id` | `dynStrszCoherent -> syncDtStrszInFile e = e` |
@@ -311,9 +310,7 @@ The DSL emits, per schema invocation: `<T>.write` (def), `<T>.decode` (def), `<T
 | 247 | def | `Section.contentWellFormedB` | `Section -> Bool` |
 | 251 | def | `sectionsContentWellFormed` | |
 | 254 | instance | `Decidable e.sectionsContentWellFormed` | |
-| 272 | def | `Section.typeContentMatchesB` | `Section -> Bool` |
-| 288 | def | `sectionsTypeContentMatch` | |
-| 291 | instance | `Decidable e.sectionsTypeContentMatch` | |
+(stale: `Section.typeContentMatchesB` and `sectionsTypeContentMatch` removed by the SectionContent IR migration — `Section.type` is now derived from `content.type`, and `SectionContent.raw` carries a non-structural-type proof)
 | 298 | def | `dynamicTerminated` | last `.dynamic` entry is null |
 | 305 | instance | `Decidable e.dynamicTerminated` | |
 | 323 | def | `dynamicStringRefsValid` | string-ref offsets in bounds |

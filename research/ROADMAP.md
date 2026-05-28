@@ -188,7 +188,7 @@ preservation proofs will reuse:
 `ByteRoundtrip.parse_encode_roundtrip` is unconditional under
 `EncodePreconditions`.  See `lean/STATUS.md` §Tier D.
 
-#### 1.3a `EncodePreconditions` from parser output — 10 of 11 done
+#### 1.3a `EncodePreconditions` from parser output — 9 of 10 done
 
 `encodePreconditions_of_parser bs shdrs e` derives all fields except
 `spliceDisjoint` from parser-output structural facts.  Per-clause
@@ -197,13 +197,18 @@ helpers:
 | Clause | Helper | Caller-supplied side condition |
 |---|---|---|
 | `identValid` | `identBytesValid_of_parseHeader_ok` | `parseHeader bs = .ok e.header` |
-| `typesMatch` | `sectionsFromShdrs_typeContentMatch` | `e.sections = sectionsFromShdrs bs shdrs` |
 | `nullEmpty` | `sectionFromShdr_null_empty` | per SHT_NULL shdr: `sh.size.val = 0` |
 | `sizeFit` | `sectionFromShdr_encodedSize_le` | per shdr: `sh.size.val < UInt64.size` |
 | `syncOk` | `syncDtStrszInFile_eq_id` | `e.dynStrszCoherent` |
 | `headerFit_{entry,phoff,shoff}` | `parseHeader_byte_facts` + `(readU64 _ _).toNat_lt` | `parseHeader bs = .ok e.header` |
 | `phdrFit` | per-element `Decode.decodePhdrs_getElem` + `toNat_lt` | `e.phdrs = decodePhdrs bs ...` |
 | `shdrFit` | per-element `Decode.decodeShdrs_getElem` + `toNat_lt` | `shdrs = decodeShdrs bs ...` |
+
+`typesMatch` is gone after the SectionContent IR migration.
+`Section.type` is now derived from `content.type` (no stored field),
+and `SectionContent.raw` carries a structural proof that its
+`sh_type` is non-structural — so the type↔content invariant holds
+by construction with no external predicate or precondition.
 
 `spliceDisjoint` is the missing field.  Parser-side: not
 derivable, since overlapping sections are spec-valid and the parser
