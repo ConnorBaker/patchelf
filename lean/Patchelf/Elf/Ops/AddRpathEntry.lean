@@ -1,15 +1,14 @@
 /-
   addRpathEntry — insert a new DT_RPATH / DT_RUNPATH entry.
 
-  Semantics (matching patchelf.cc:1667 `rpAdd`):
-    1. Grow `.dynstr` with `newRpath`.
-    2. Set DT_RPATH (if `forceRpath`) or DT_RUNPATH to the new offset,
-       clearing the other slot.
+  Identical to `modifyRPath … .set`; this file just provides the
+  alias and re-exports the two observables under the
+  `addRpathEntry_*` names (the canonical names referenced by the
+  CLI tests).
 -/
 module
 
-public import Patchelf.Elf.ObservableCombinators
-public import Patchelf.Elf.Basic
+public import Patchelf.Elf.Ops.Rpath
 
 @[expose] public section
 
@@ -17,12 +16,13 @@ namespace Patchelf.Elf
 
 open Patchelf.Elf (StringTable)
 
-/-- Append `newRpath` to `.dynstr`; set one rpath slot, clear the other. -/
+/-- Append `newRpath` to `.dynstr`; set one rpath slot, clear the other.
+    Defined as `modifyRPath … .set`. -/
 def addRpathEntry (e : ValidElfFile) (forceRpath : Bool) (newRpath : String)
-    (_h : e.dynamic.isSome) : ValidElfFile :=
-  growDynstrDynamicOp e newRpath (fun _ off d => d.setRpathTag forceRpath off)
+    (h : e.dynamic.isSome) : ValidElfFile :=
+  modifyRPath e forceRpath .set newRpath h
 
-/-! ## Observables -/
+/-! ## Observables (re-exports of the modifyRPath set-mode lemmas) -/
 
 theorem addRpathEntry_rpath_observable
     (e : ValidElfFile) (newRpath : String) (h : e.dynamic.isSome)
@@ -32,10 +32,7 @@ theorem addRpathEntry_rpath_observable
       (addRpathEntry e true newRpath h).dynamic = some dyn' ∧
       (dyn'.rpath = some off ∧ dyn'.runpath = none) ∧
       (addRpathEntry e true newRpath h).dynstr.lookup off = some newRpath.toUTF8 :=
-  growDynstrDynamicOp_observable
-    (P := fun d off => d.rpath = some off ∧ d.runpath = none)
-    e newRpath _ h hNoNulls
-    (fun _ => by unfold DynamicSection.setRpathTag; simp)
+  modifyRPath_set_rpath_observable e newRpath h hNoNulls
 
 theorem addRpathEntry_runpath_observable
     (e : ValidElfFile) (newRpath : String) (h : e.dynamic.isSome)
@@ -45,9 +42,6 @@ theorem addRpathEntry_runpath_observable
       (addRpathEntry e false newRpath h).dynamic = some dyn' ∧
       (dyn'.rpath = none ∧ dyn'.runpath = some off) ∧
       (addRpathEntry e false newRpath h).dynstr.lookup off = some newRpath.toUTF8 :=
-  growDynstrDynamicOp_observable
-    (P := fun d off => d.rpath = none ∧ d.runpath = some off)
-    e newRpath _ h hNoNulls
-    (fun _ => by unfold DynamicSection.setRpathTag; simp)
+  modifyRPath_set_runpath_observable e newRpath h hNoNulls
 
 end Patchelf.Elf
