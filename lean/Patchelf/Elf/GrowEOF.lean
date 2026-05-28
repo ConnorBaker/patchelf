@@ -3232,4 +3232,54 @@ theorem growEOFWith_produces_spliceRegionsDisjoint (pageSize? : Option Nat) (e :
           exact growEOFWithFreshPtLoadReloc_produces_spliceRegionsDisjoint pageSize? e
             hHeaderSec
 
+/-- `growEOFWith` preserves byte-layer `IsValid`.
+
+    Top-level dispatch theorem composing the four branches:
+
+    1. `layoutAlreadyValid e = true` → identity (preservation trivial).
+    2. `lastPtLoadIdx e.phdrs = none` → `layoutForEncoding e`.
+    3. `canExtendLastPtLoad ... = true` → `growEOFWithMainBody`.
+    4. `canExtendLastPtLoad ... = false` ∧ `canAddFreshPtLoad e = true`
+       → `growEOFWithFreshPtLoad`.
+    5. Both reject → `growEOFWithFreshPtLoadReloc`.
+
+    The fresh-PT_LOAD branches (4, 5) bump `phnum` by 1, so they
+    take an explicit `(e.phdrs.size + 1) < UInt16.size` bound to
+    discharge the UInt16 round-trip in `header_counts`.  Real ELFs
+    satisfy this trivially. -/
+theorem growEOFWith_preserves_valid (pageSize? : Option Nat) (e : ElfFile)
+    (hVal : e.IsValid)
+    (hPhdrFit : (e.phdrs.size + 1) < UInt16.size) :
+    (growEOFWith pageSize? e).IsValid := by
+  unfold growEOFWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · -- Fast path: identity.
+    simp only [hLay, ↓reduceIte]
+    exact hVal
+  · simp only [hLay]
+    cases hLast : lastPtLoadIdx e.phdrs with
+    | none =>
+      simp
+      exact layoutForEncoding_preserves_valid e hVal
+    | some lastIdx =>
+      simp only []
+      by_cases hExt : (canExtendLastPtLoad e
+        (roundUp (currentFileEnd e)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (roundUp (maxPtLoadVaddrEnd e.phdrs)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs)
+        lastIdx) = true
+      · simp only [hExt, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+        show (growEOFWithMainBody pageSize? e lastIdx).IsValid
+        exact growEOFWithMainBody_preserves_valid pageSize? e lastIdx hVal
+      · simp only [hExt, Bool.not_false, ↓reduceIte]
+        by_cases hAdd : canAddFreshPtLoad e = true
+        · simp only [hAdd, ↓reduceIte]
+          show (growEOFWithFreshPtLoad pageSize? e).IsValid
+          exact growEOFWithFreshPtLoad_preserves_valid pageSize? e hVal hPhdrFit
+        · simp only [hAdd, Bool.false_eq_true, ↓reduceIte]
+          show (growEOFWithFreshPtLoadReloc pageSize? e).IsValid
+          exact growEOFWithFreshPtLoadReloc_preserves_valid pageSize? e hVal hPhdrFit
+
 end Patchelf.Elf

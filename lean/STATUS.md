@@ -5,20 +5,32 @@
 > + `syncDtAddrTagsInFile` + a pre-write validator
 > (`Patchelf/Elf/{GrowEOF,Validate}.lean`). `set-rpath` on real
 > Linux ET_DYN binaries now produces output that runs.
-> [`research/REWRITE-PHASE-3-DESIGN.md`](../research/REWRITE-PHASE-3-DESIGN.md)
-> remains the planning document for the broader unification arc;
-> the §"Known gaps" list below records what didn't land
-> (BSS-collision binaries fall back to `layoutForEncoding`'s
-> repack and are caught by the validator at write time —
-> design plan for the fix in
-> [`research/REWRITE-FRESH-PT-LOAD-DESIGN.md`](../research/REWRITE-FRESH-PT-LOAD-DESIGN.md)).
 >
-> **2026-05 feature gap pass.** Closed C++ parity gaps §3.3
-> (GNU hash rebuild + reloc remap) and §3.4 (vn_file rewrite in
-> replace-needed); design plan for §3.5a (fresh PT_LOAD).  Tests:
-> 49 → 52 shell tests passing.  Plus a cleanup pass (~−260 LOC
-> mechanical duplication) extending `simp_splice`'s
-> omega-discharger.  See "Recent work" below.
+> **§3.5a fully landed.** Fresh-PT_LOAD allocation handles both
+> the in-place sub-case (binaries with phdr-table headroom) and
+> the relocatePht sub-case (binaries packed tight against the
+> first section, e.g. coreutils `ls`).  Empirically verified on
+> real `ls` and synthetic BSS-heavy fixtures.  Tests 53–54 cover
+> both paths.
+>
+> **§1.1 parser side landed.** `Parser.parseLoadable` returns
+> `LoadableElfFile` carrying `IsLoadable` + `shdrSectionDisjoint`
+> + `sectionFileInSomePtLoad`.  Per-clause `ParseError` variants
+> classify loader-coherence failures.  CLI's `validate`
+> subcommand cross-checks `parseLoadable` against `validateBytes`.
+>
+> **§1.2 `_preserves_valid` ladder complete.** All seven byte-layer
+> `IsValid` preservation theorems shipped:
+> `syncDtStrszInFile`, `syncDtAddrTagsInFile`,
+> `layoutForEncoding`, `growEOFWithMainBody`,
+> `growEOFWithFreshPtLoad`, `growEOFWithFreshPtLoadReloc`, and
+> the user-facing top-level `growEOFWith_preserves_valid`.  Built
+> on a new `PlaceFold.placeFold_value_witness` abstraction in
+> `LayoutEngine.lean`.  Only `growEOFWith_preserves_loadable` (the
+> deeper `IsLoadable`-level claim) remains open.
+>
+> **Tests: 54/54 shell tests passing; 108/108 Lean build jobs;
+> zero `sorry`s.**
 
 This document records the **current state** of the Lean 4 patchelf
 port — what works, what doesn't, what's verified, what isn't.
@@ -399,23 +411,31 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   (`sectionsOverlapping`, `ptInterpAgreementFailed`, etc.) classify
   loader-coherence failures.  Op-level `_preserves_loadable`
   theorems remain open; pick up under §1.2.
-- **Pre-encode passes — `_preserves_valid` largely landed.**
-  Five preservation theorems shipped:
+- **Pre-encode passes — `_preserves_valid` complete.**
+  All seven byte-layer `IsValid` preservation theorems shipped:
   `syncDtStrszInFile_preserves_valid` (`Encoder.lean`),
   `syncDtAddrTagsInFile_preserves_valid` (`GrowEOF.lean`),
   `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`
-  (`GrowEOF.lean`), `growEOFWithMainBody_preserves_valid`,
-  `growEOFWithFreshPtLoad_preserves_valid`, and
-  `growEOFWithFreshPtLoadReloc_preserves_valid` (all `GrowEOF.lean`).
-  Built on a new `PlaceFold.placeFold_value_witness` abstraction in
+  (`GrowEOF.lean`), `layoutForEncoding_preserves_valid`
+  (`LayoutEngine.lean`), `growEOFWithMainBody_preserves_valid`,
+  `growEOFWithFreshPtLoad_preserves_valid`,
+  `growEOFWithFreshPtLoadReloc_preserves_valid`, and the
+  user-facing top-level `growEOFWith_preserves_valid`
+  (all `GrowEOF.lean`).  Built on a new
+  `PlaceFold.placeFold_value_witness` abstraction in
   `LayoutEngine.lean` that exposes the per-output-index
   verbatim/transform disjunction; per-field corollaries
-  (`appendStaleSections_{name,flags,link,info,addralign,entsize,content,type}`)
-  derive trivially.  The top-level `growEOFWith_preserves_valid`
-  remains open (composes the three named-body proofs plus
-  `layoutForEncoding_preserves_valid` for the no-PT_LOAD branch);
-  the load-bearing `growEOFWith_preserves_loadable` is the deeper
-  follow-up.
+  (`appendStaleSections_{name,flags,link,info,addralign,entsize,content,type}`
+   and `layoutSectionsFold_*`) derive trivially.
+
+  The fresh-PT_LOAD branches' top-level theorem takes an
+  `(e.phdrs.size + 1) < UInt16.size` precondition for the bumped
+  phnum's UInt16 round-trip; real binaries satisfy this trivially
+  (phnum is at most a few dozen).
+
+  The load-bearing `growEOFWith_preserves_loadable` is the deeper
+  follow-up — `IsLoadable` adds segment congruence and PT_INTERP /
+  PT_DYNAMIC offset agreement, which DO depend on offsets.
 - **`spliceDisjoint` for encoder output — DONE.**
   `Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
   is the composed API the op-level Tier D proofs consume.  See

@@ -24,10 +24,12 @@ forward-looking view.
 > work, but a non-trivial dependent-type obstacle in `Adapter.toElfFile`
 > was discovered during the worked example — see §5.1 for details.
 >
-> Items §1.2 and §5.1 remain open.  §3.5a fully landed (both
-> in-place and relocatePht sub-cases — see below).  §1.1 parser
-> side landed — `parseLoadable` now establishes `LoadableElfFile`;
-> per-op `_preserves_loadable` theorems remain (now under §1.2).
+> Items §1.2 (only `_preserves_loadable` remaining) and §5.1
+> remain open.  §3.5a fully landed (both in-place and relocatePht
+> sub-cases — see below).  §1.1 parser side landed.  §1.2's
+> `_preserves_valid` ladder fully landed (top-level
+> `growEOFWith_preserves_valid` lands by composing four branches);
+> only the load-bearing `growEOFWith_preserves_loadable` remains.
 >
 > **2026-05 cleanup + feature gap pass landed.** Six commits of
 > mechanical-duplication cleanup (~−260 LOC across CLI, Adapter,
@@ -55,7 +57,7 @@ forward-looking view.
 **Build and test from `lean/`:**
 ```sh
 nix develop ../.#lean -c lake build              # expect a clean build
-nix develop ../.#lean -c bash tests/run.sh       # 52/52 shell tests expected
+nix develop ../.#lean -c bash tests/run.sh       # 54/54 shell tests expected
 grep -rn "sorry\b" Patchelf/                     # zero matches expected
 ```
 
@@ -164,33 +166,46 @@ Two byte-layer `IsValid` preservations remain:
   to point at a strtab).  Real ELFs always satisfy the precondition;
   the runtime validator catches pathological inputs.
 
-**Three named-body preservations landed.**
-`growEOFWithMainBody_preserves_valid`,
-`growEOFWithFreshPtLoad_preserves_valid`, and
-`growEOFWithFreshPtLoadReloc_preserves_valid` all proved end-to-end
-via the value-witness abstraction in `LayoutEngine.lean`:
+**`_preserves_valid` ladder complete.**  Top-level
+`growEOFWith_preserves_valid` lands by composing four branches:
+
+1. `layoutAlreadyValid e = true` → identity (trivial).
+2. `lastPtLoadIdx e.phdrs = none` → `layoutForEncoding` →
+   `layoutForEncoding_preserves_valid`.
+3. `canExtendLastPtLoad ... = true` → `growEOFWithMainBody` →
+   `growEOFWithMainBody_preserves_valid`.
+4. Else if `canAddFreshPtLoad e = true` → `growEOFWithFreshPtLoad`
+   → `growEOFWithFreshPtLoad_preserves_valid`.
+5. Else → `growEOFWithFreshPtLoadReloc` →
+   `growEOFWithFreshPtLoadReloc_preserves_valid`.
+
+Built on these reusable pieces:
 
 * `PlaceFold.ValueInv` + `placeFold_value_inv` +
-  `placeFold_value_witness` — structural fact that every
-  `placeFold` output entry is either the input section verbatim
-  or `transform input off` for some `off`.  Proves once; consumed
-  by every per-field corollary.
-* `appendStaleSections_field_eq` (generic projection) +
-  per-field corollaries (`name`, `flags`, `link`, `info`,
-  `addralign`, `entsize`, `content`, `type`, `encodedSize`).
-* `growEOFWithMainBody_*` / `growEOFWithFreshPtLoad_*` /
-  `growEOFWithFreshPtLoadReloc_*` accessor preservations
-  (`dynamicIdx`, `dynamic`, `dynsym`, `dynstr`, `shstrtab`,
-  `findIdxByName`, etc.) — typed accessors all preserved.
+  `placeFold_value_witness` (`LayoutEngine.lean`) — structural
+  fact that every `placeFold` output entry is either the input
+  section verbatim or `transform input off` for some `off`.
+* Per-field corollaries: `appendStaleSections_*` (in `GrowEOF.lean`)
+  and `layoutSectionsFold_field_eq` (in `LayoutEngine.lean`) plus
+  per-field rfl lemmas for both `appendTransform` and
+  `Section.withOffset`.
+* Accessor preservations (`dynamicIdx`, `dynamic`, `dynsym`,
+  `dynstr`, `shstrtab`, `findIdxByName`, etc.) for each of the
+  four output shapes — typed accessors all preserved because
+  per-section types/names/content are.
 
-The fresh-PT_LOAD variants take a `(e.phdrs.size + 1) <
-UInt16.size` precondition for the bumped-phnum UInt16 round-trip;
-real binaries satisfy this trivially.
+The fresh-PT_LOAD branches' theorem takes
+`(e.phdrs.size + 1) < UInt16.size` for the bumped-phnum UInt16
+round-trip; real binaries satisfy this trivially.
 
-Remaining open: `growEOFWith_preserves_valid` (top-level dispatch
-combining the three named-body proofs + `layoutForEncoding`),
-`growEOFWith_preserves_loadable` (the load-bearing one), and
-`layoutForEncoding_preserves_valid` (no-PT_LOAD branch).
+Remaining open: `growEOFWith_preserves_loadable` (the
+load-bearing one).  `IsLoadable` adds `sectionsNonOverlapping`,
+`ptInterpAgreement`, `ptDynamicAgreement`, `segmentCongruence` —
+all of which depend on offsets, which growEOFWith mutates.  The
+`_preserves_loadable` proof has to argue that the new offsets
+maintain those invariants (it does, by construction — that's
+the whole point of `growEOFWith` over `layoutForEncoding`), but
+the proof is substantially deeper than `_preserves_valid`.
 - `layoutForEncoding_preserves_valid` — the BSS-collision fallback;
   same shape as `growEOFWith` but doesn't preserve PT_LOAD coverage.
 

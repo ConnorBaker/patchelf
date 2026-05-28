@@ -230,6 +230,21 @@ theorem spliceRegionsDisjoint_of_layoutFullyValid (e : ElfFile)
 @[simp] theorem withOffset_addralign (s : Section) (n : Nat) :
     (Section.withOffset s n).addralign = s.addralign := rfl
 
+@[simp] theorem withOffset_name (s : Section) (n : Nat) :
+    (Section.withOffset s n).name = s.name := rfl
+
+@[simp] theorem withOffset_flags (s : Section) (n : Nat) :
+    (Section.withOffset s n).flags = s.flags := rfl
+
+@[simp] theorem withOffset_link (s : Section) (n : Nat) :
+    (Section.withOffset s n).link = s.link := rfl
+
+@[simp] theorem withOffset_info (s : Section) (n : Nat) :
+    (Section.withOffset s n).info = s.info := rfl
+
+@[simp] theorem withOffset_entsize (s : Section) (n : Nat) :
+    (Section.withOffset s n).entsize = s.entsize := rfl
+
 /-! ## `roundUp` arithmetic facts -/
 
 theorem le_roundUp (n align : Nat) : n ≤ roundUp n align := by
@@ -1170,5 +1185,257 @@ theorem layoutForEncoding_produces_spliceRegionsDisjoint (e : ElfFile)
       have hFinAdd : (newSections[j]'hjN).offset.val + (newSections[j]'hjN).encodedSize
                     ≤ 0 + finalCursor := hPlace.2.2
       omega
+
+/-! ## `layoutForEncoding` preserves byte-layer `IsValid`
+
+    Mirrors the `growEOFWithMainBody_preserves_valid` template.
+    Output's `sections` come from `layoutSectionsFold` (= `placeFold
+    layoutVerbatim Section.withOffset`); `Section.withOffset`
+    preserves all non-`offset` fields.  The `_preserves_valid`
+    proof dispatches each IsValid clause via per-field preservation
+    derived from `placeFold_value_witness`. -/
+
+/-- Per-section field preservation under `layoutSectionsFold`. -/
+private theorem layoutSectionsFold_field_eq.{u}
+    {α : Type u} (sections : Array Section) (cursor0 : Nat)
+    (proj : Section → α)
+    (hTransform : ∀ s o, proj (Section.withOffset s o) = proj s)
+    (j : Nat)
+    (hj : j < (layoutSectionsFold sections cursor0).1.size)
+    (hjS : j < sections.size) :
+    proj ((layoutSectionsFold sections cursor0).1[j]'hj)
+      = proj (sections[j]'hjS) := by
+  unfold layoutSectionsFold
+  rcases PlaceFold.placeFold_value_witness sections cursor0 j hjS hj with
+    ⟨_, hVerb⟩ | ⟨_, off, hPlaced⟩
+  · rw [hVerb]
+  · rw [hPlaced]; exact hTransform _ _
+
+@[simp] theorem layoutForEncoding_sections_size (e : ElfFile) :
+    (layoutForEncoding e).sections.size = e.sections.size := by
+  unfold layoutForEncoding
+  exact PlaceFold.size_eq _ _
+
+@[simp] theorem layoutForEncoding_header_phnum (e : ElfFile) :
+    (layoutForEncoding e).header.phnum = e.header.phnum := by
+  unfold layoutForEncoding; rfl
+
+@[simp] theorem layoutForEncoding_header_shnum (e : ElfFile) :
+    (layoutForEncoding e).header.shnum = e.header.shnum := by
+  unfold layoutForEncoding; rfl
+
+@[simp] theorem layoutForEncoding_header_shstrndx (e : ElfFile) :
+    (layoutForEncoding e).header.shstrndx = e.header.shstrndx := by
+  unfold layoutForEncoding; rfl
+
+@[simp] theorem layoutForEncoding_header_phentsize (e : ElfFile) :
+    (layoutForEncoding e).header.phentsize = e.header.phentsize := by
+  unfold layoutForEncoding; rfl
+
+@[simp] theorem layoutForEncoding_header_shentsize (e : ElfFile) :
+    (layoutForEncoding e).header.shentsize = e.header.shentsize := by
+  unfold layoutForEncoding; rfl
+
+@[simp] theorem layoutForEncoding_phdrs_size (e : ElfFile) :
+    (layoutForEncoding e).phdrs.size = e.phdrs.size := by
+  unfold layoutForEncoding
+  exact Array.size_map ..
+
+theorem layoutForEncoding_sections_name (e : ElfFile) (j : Nat)
+    (hj : j < (layoutForEncoding e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((layoutForEncoding e).sections[j]'hj).name = (e.sections[j]'hjE).name := by
+  unfold layoutForEncoding at hj ⊢
+  exact layoutSectionsFold_field_eq _ _ (·.name) (fun _ _ => rfl) j hj hjE
+
+theorem layoutForEncoding_sections_type (e : ElfFile) (j : Nat)
+    (hj : j < (layoutForEncoding e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((layoutForEncoding e).sections[j]'hj).type = (e.sections[j]'hjE).type := by
+  unfold layoutForEncoding at hj ⊢
+  exact layoutSectionsFold_field_eq _ _ (·.type) (fun _ _ => rfl) j hj hjE
+
+theorem layoutForEncoding_sections_content (e : ElfFile) (j : Nat)
+    (hj : j < (layoutForEncoding e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((layoutForEncoding e).sections[j]'hj).content = (e.sections[j]'hjE).content := by
+  unfold layoutForEncoding at hj ⊢
+  exact layoutSectionsFold_field_eq _ _ (·.content) (fun _ _ => rfl) j hj hjE
+
+theorem layoutForEncoding_findUniqueTypeIdx (e : ElfFile) (ty : ShType) :
+    (layoutForEncoding e).findUniqueTypeIdx ty = e.findUniqueTypeIdx ty := by
+  apply ElfFile.firstIdxWhereIn_congr
+  · exact layoutForEncoding_sections_size _
+  · intros k hk hk'
+    have := layoutForEncoding_sections_type e k hk hk'
+    simp [this]
+
+@[simp] theorem layoutForEncoding_dynamicIdx (e : ElfFile) :
+    (layoutForEncoding e).dynamicIdx = e.dynamicIdx :=
+  layoutForEncoding_findUniqueTypeIdx e ShType.SHT_DYNAMIC
+
+@[simp] theorem layoutForEncoding_dynsymIdx (e : ElfFile) :
+    (layoutForEncoding e).dynsymIdx = e.dynsymIdx :=
+  layoutForEncoding_findUniqueTypeIdx e ShType.SHT_DYNSYM
+
+theorem layoutForEncoding_contentAt (e : ElfFile) (i? : Option Nat) :
+    (layoutForEncoding e).contentAt i? = e.contentAt i? := by
+  unfold ElfFile.contentAt
+  cases i? with
+  | none => rfl
+  | some i =>
+    simp only [Option.bind_some]
+    by_cases hi : i < e.sections.size
+    · have hi' : i < (layoutForEncoding e).sections.size :=
+        (layoutForEncoding_sections_size e).symm ▸ hi
+      rw [dif_pos hi', dif_pos hi]
+      rw [layoutForEncoding_sections_content e i hi' hi]
+    · have hi' : ¬ i < (layoutForEncoding e).sections.size := by
+        intro h; exact hi ((layoutForEncoding_sections_size e).symm ▸ h)
+      rw [dif_neg hi', dif_neg hi]
+
+@[simp] theorem layoutForEncoding_dynamic (e : ElfFile) :
+    (layoutForEncoding e).dynamic = e.dynamic := by
+  unfold ElfFile.dynamic
+  rw [layoutForEncoding_dynamicIdx, layoutForEncoding_contentAt]
+
+@[simp] theorem layoutForEncoding_dynsym (e : ElfFile) :
+    (layoutForEncoding e).dynsym = e.dynsym := by
+  unfold ElfFile.dynsym
+  rw [layoutForEncoding_dynsymIdx, layoutForEncoding_contentAt]
+
+@[simp] theorem layoutForEncoding_shstrtab (e : ElfFile) :
+    (layoutForEncoding e).shstrtab = e.shstrtab := by
+  unfold ElfFile.shstrtab
+  rw [layoutForEncoding_header_shstrndx]
+  by_cases hSh : e.header.shstrndx.toNat < e.sections.size
+  · have hSh' : e.header.shstrndx.toNat < (layoutForEncoding e).sections.size :=
+      (layoutForEncoding_sections_size e).symm ▸ hSh
+    rw [dif_pos hSh', dif_pos hSh]
+    rw [layoutForEncoding_sections_content e _ hSh' hSh]
+  · have hSh' : ¬ e.header.shstrndx.toNat < (layoutForEncoding e).sections.size := by
+      intro h; exact hSh ((layoutForEncoding_sections_size e).symm ▸ h)
+    rw [dif_neg hSh', dif_neg hSh]
+
+theorem layoutForEncoding_findIdxByName (e : ElfFile) (name : ByteArray) :
+    (layoutForEncoding e).findIdxByName name = e.findIdxByName name := by
+  unfold ElfFile.findIdxByName
+  rw [layoutForEncoding_shstrtab]
+  cases e.shstrtab with
+  | none => rfl
+  | some st =>
+    apply ElfFile.firstIdxWhereIn_congr
+    · exact layoutForEncoding_sections_size _
+    · intros k hk hk'
+      have := layoutForEncoding_sections_name e k hk hk'
+      simp [this]
+
+@[simp] theorem layoutForEncoding_dynstrIdx (e : ElfFile) :
+    (layoutForEncoding e).dynstrIdx = e.dynstrIdx :=
+  layoutForEncoding_findIdxByName e _
+
+@[simp] theorem layoutForEncoding_dynstr (e : ElfFile) :
+    (layoutForEncoding e).dynstr = e.dynstr := by
+  unfold ElfFile.dynstr
+  rw [layoutForEncoding_dynstrIdx, layoutForEncoding_contentAt]
+
+/-- `layoutForEncoding` preserves byte-layer `IsValid`.
+
+    Same shape as `growEOFWithMainBody_preserves_valid`: per-section
+    `(name, type, content)` and header counts are all preserved;
+    only `(offset, addr)` and `header.shoff` change.  Phdrs go
+    through `relocatePhdr` (which only mutates PT_INTERP /
+    PT_DYNAMIC entries' offsets/sizes — does not change the array
+    size). -/
+theorem layoutForEncoding_preserves_valid (e : ElfFile) (hVal : e.IsValid) :
+    (layoutForEncoding e).IsValid := by
+  refine
+    { header_counts := ?_, sections_wf := ?_, strtabs_wf := ?_,
+      dynamic_wf := ?_, dynsym_wf := ?_, content_wf := ?_,
+      types_distinct := ?_, names_unique := ?_ }
+  ----------------------------------------
+  -- header_counts: phnum/shnum/etc. unchanged.
+  ----------------------------------------
+  · obtain ⟨h1, h2, h3, h4, h5⟩ := hVal.header_counts
+    refine ⟨?_, ?_, ?_, ?_, ?_⟩
+    · rw [layoutForEncoding_header_phnum, layoutForEncoding_phdrs_size]; exact h1
+    · rw [layoutForEncoding_header_shnum, layoutForEncoding_sections_size]; exact h2
+    · rw [layoutForEncoding_header_phentsize]; exact h3
+    · rw [layoutForEncoding_header_shentsize]; exact h4
+    · rw [layoutForEncoding_header_shstrndx, layoutForEncoding_sections_size]; exact h5
+  · intro h0
+    have h0' : 0 < e.sections.size := (layoutForEncoding_sections_size e) ▸ h0
+    rw [layoutForEncoding_sections_type e 0 h0 h0']
+    exact hVal.sections_wf h0'
+  · have hAll := hVal.strtabs_wf
+    show (layoutForEncoding e).sections.all _ = true
+    unfold ElfFile.strtabsWellFormed at hAll
+    rw [Array.all_eq_true] at hAll ⊢
+    intro j hj
+    have hjE : j < e.sections.size := (layoutForEncoding_sections_size e) ▸ hj
+    show ElfFile.Section.strtabWellFormedB ((layoutForEncoding e).sections[j]'hj) = true
+    have : ElfFile.Section.strtabWellFormedB ((layoutForEncoding e).sections[j]'hj)
+         = ElfFile.Section.strtabWellFormedB (e.sections[j]'hjE) := by
+      unfold ElfFile.Section.strtabWellFormedB
+      rw [layoutForEncoding_sections_content e j hj hjE]
+    rw [this]; exact hAll j hjE
+  · refine ⟨?_, ?_⟩
+    · intro dyn hd
+      rw [layoutForEncoding_dynamic] at hd
+      exact hVal.dynamic_wf.1 dyn hd
+    · intros dyn ds hd hds
+      rw [layoutForEncoding_dynamic] at hd
+      rw [layoutForEncoding_dynstr] at hds
+      exact hVal.dynamic_wf.2 dyn ds hd hds
+  · intros syms ds hSyms hDs
+    rw [layoutForEncoding_dynsym] at hSyms
+    rw [layoutForEncoding_dynstr] at hDs
+    exact hVal.dynsym_wf syms ds hSyms hDs
+  · have hAll := hVal.content_wf
+    show (layoutForEncoding e).sections.all _ = true
+    unfold ElfFile.sectionsContentWellFormed at hAll
+    rw [Array.all_eq_true] at hAll ⊢
+    intro j hj
+    have hjE : j < e.sections.size := (layoutForEncoding_sections_size e) ▸ hj
+    show ElfFile.Section.contentWellFormedB ((layoutForEncoding e).sections[j]'hj) = true
+    have : ElfFile.Section.contentWellFormedB ((layoutForEncoding e).sections[j]'hj)
+         = ElfFile.Section.contentWellFormedB (e.sections[j]'hjE) := by
+      unfold ElfFile.Section.contentWellFormedB
+      rw [layoutForEncoding_sections_content e j hj hjE]
+    rw [this]; exact hAll j hjE
+  · obtain ⟨h1, h2, h3, h4, h5, h6⟩ := hVal.types_distinct
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> {
+      intros i hi j hj hi_t hj_t
+      have hiE : i < e.sections.size := (layoutForEncoding_sections_size e) ▸ hi
+      have hjE : j < e.sections.size := (layoutForEncoding_sections_size e) ▸ hj
+      rw [layoutForEncoding_sections_type e i hi hiE] at hi_t
+      rw [layoutForEncoding_sections_type e j hj hjE] at hj_t
+      first
+      | exact h1 i hiE j hjE hi_t hj_t
+      | exact h2 i hiE j hjE hi_t hj_t
+      | exact h3 i hiE j hjE hi_t hj_t
+      | exact h4 i hiE j hjE hi_t hj_t
+      | exact h5 i hiE j hjE hi_t hj_t
+      | exact h6 i hiE j hjE hi_t hj_t
+    }
+  · unfold ElfFile.namedSectionsUnique
+    rw [layoutForEncoding_shstrtab]
+    cases hSt : e.shstrtab with
+    | none => trivial
+    | some st =>
+        obtain ⟨h1, h2⟩ := by
+          have := hVal.names_unique
+          unfold ElfFile.namedSectionsUnique at this
+          rw [hSt] at this; exact this
+        constructor <;> {
+          intros i hi j hj hi_n hj_n
+          have hiE : i < e.sections.size := (layoutForEncoding_sections_size e) ▸ hi
+          have hjE : j < e.sections.size := (layoutForEncoding_sections_size e) ▸ hj
+          rw [layoutForEncoding_sections_name e i hi hiE] at hi_n
+          rw [layoutForEncoding_sections_name e j hj hjE] at hj_n
+          first
+          | exact h1 i hiE j hjE hi_n hj_n
+          | exact h2 i hiE j hjE hi_n hj_n
+        }
 
 end Patchelf.Elf
