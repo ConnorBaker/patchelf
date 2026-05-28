@@ -1,7 +1,17 @@
 /-
-  replaceNeeded{,Reuse} — rewrite DT_NEEDED entries by name.
+  replaceNeeded{,Reuse} — rewrite DT_NEEDED entries by name, plus
+  matching `.gnu.version_r` `vn_file` offsets.
 
   Uses `mapDynamicOp` + `replaceNeededBy_getElem_rewritten`.
+
+  `.gnu.version_r` rewrite: per ELF spec, every `Verneed.vn_file`
+  resolves to a library name in some strings section (almost always
+  `.dynstr`).  When `replace-needed` rewrites a DT_NEEDED entry from
+  `oldName` → `newName`, the matching `vn_file` entries in
+  `.gnu.version_r` should track.  Real-world impact: minor (loaders
+  resolve symbol versions via `Verdef`, not `vn_file`), but matches
+  C++ patchelf and keeps the `.gnu.version_r` table internally
+  consistent with `.dynamic`.
 -/
 module
 
@@ -14,6 +24,22 @@ namespace Patchelf.Elf
 
 open Patchelf.Elf (StringTable)
 
+/-- Rewrite `vn_file` in every `Verneed` entry whose current `vn_file`
+    resolves (in `oldDs`) to `oldName`.  The new offset is supplied by
+    the caller and is interpreted in the post-replace dynstr (which
+    must contain the byte sequence at that offset).  We assume the
+    Verneed strings section IS `.dynstr`; binaries that point at a
+    distinct strings section via `sh_link` aren't handled — see C++
+    patchelf.cc:1853 for the general case. -/
+def VerneedSection.rewriteVnFile (vn : VerneedSection) (oldDs : StringSection)
+    (oldName : String) (newOffset : UInt32) : VerneedSection :=
+  { entries := vn.entries.map fun ve =>
+      if h : ve.vn_file.toNat < oldDs.size then
+        match oldDs.lookup ⟨ve.vn_file.toNat, h⟩ with
+        | some bytes => if bytes = oldName.toUTF8 then { ve with vn_file := newOffset } else ve
+        | none       => ve
+      else ve }
+
 /-- Rewrite matching DT_NEEDED entries to an existing `.dynstr` offset.
 
     Direct record update rather than `mapDynamicOp` because `newOffset`
@@ -21,14 +47,24 @@ open Patchelf.Elf (StringTable)
     of `mapDynamicOp` doesn't fit this op. -/
 def replaceNeededReuse (e : ValidElfFile) (oldName : String)
     (newOffset : Fin e.dynstr.size) (_h : e.dynamic.isSome) : ValidElfFile :=
-  { e with dynamic := e.dynamic.map fun d =>
-      d.replaceNeededBy oldName.toUTF8 newOffset }
+  { e with
+      dynamic := e.dynamic.map (fun d => d.replaceNeededBy oldName.toUTF8 newOffset)
+      verneed := e.verneed.map (fun vn =>
+        vn.rewriteVnFile e.dynstr oldName newOffset.val.toUInt32) }
 
-/-- Grow `.dynstr` with `newName`, rebase sections, rewrite DT_NEEDED. -/
+/-- Grow `.dynstr` with `newName`, rebase sections, rewrite DT_NEEDED
+    and matching `.gnu.version_r` `vn_file` entries. -/
 def replaceNeeded (e : ValidElfFile) (oldName newName : String)
     (_h : e.dynamic.isSome) : ValidElfFile :=
-  growDynstrDynamicOp e newName
-    (fun _ off d => d.replaceNeededBy oldName.toUTF8 off)
+  let p := e.growDynstr newName
+  let e' := p.1
+  let off := p.2
+  let newDynamic := e'.dynamic.map (fun d => d.replaceNeededBy oldName.toUTF8 off)
+  -- The vn_file lookup must use the OLD dynstr; old offsets survive an
+  -- append and still resolve to the same byte sequences.
+  let newVerneed := e'.verneed.map (fun vn =>
+    vn.rewriteVnFile e.dynstr oldName off.val.toUInt32)
+  { e' with dynamic := newDynamic, verneed := newVerneed }
 
 /-! ## Observables -/
 
@@ -68,7 +104,7 @@ theorem replaceNeeded_observable_offset
     rw [DynamicSection.rebase_needed_size]; exact hi
   refine ⟨(dyn.rebase (StringSection.size_le_append e.dynstr newName)).replaceNeededBy
             oldName.toUTF8 (e.dynstr.appendOffset newName), ?_, ?_⟩
-  · unfold replaceNeeded growDynstrDynamicOp ValidElfFile.growDynstr; simp [hDyn]
+  · unfold replaceNeeded ValidElfFile.growDynstr; simp [hDyn]
   · obtain ⟨hi'', hEq⟩ := replaceNeededBy_getElem_rewritten
                            (dyn.rebase (StringSection.size_le_append e.dynstr newName))
                            oldName.toUTF8 (e.dynstr.appendOffset newName) i hRebased
