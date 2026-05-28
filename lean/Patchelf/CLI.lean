@@ -500,7 +500,19 @@ def runClearSymbolVersion (p : Parsed) : IO UInt32 :=
     else throw (Run.badPrecondition "clearSymbolVersion" "no .dynsym section")
 
 /-- Apply a single `(oldName, newName)` rename.  Returns the post-encode
-    bytes, or an error if the typed-op's preconditions aren't met. -/
+    bytes, or an error if the typed-op's preconditions aren't met.
+
+    Pipeline:
+      1. Adapter decode → typed `ValidElfFile`.
+      2. `renameDynamicSymbols` (rebuilds SysV hash if present).
+      3. `gnuHashRebuildOp` (rebuilds `.gnu.hash` and reorders dynsym
+         + versym; returns the dynsym permutation if `.gnu.hash`
+         was present).
+      4. Adapter encode → byte-layer `ElfFile`.
+      5. (TODO) Apply the permutation to raw rel/rela section bytes
+         in the encoded output.  Currently the rebuild produces a
+         self-consistent `.gnu.hash` ↔ `.dynsym` view but reloc
+         indices may be stale; see ROADMAP §3.3 follow-up. -/
 def renameOnce (opts : Options) (e : ElfFile) (oldName newName : String) :
     Except CliError ByteArray := do
   let tv ← match Patchelf.Elf.Adapter.ofElfFile e with
@@ -508,14 +520,13 @@ def renameOnce (opts : Options) (e : ElfFile) (oldName newName : String) :
         throw (Run.badPrecondition "renameDynamicSymbol" s!"adapter failed: {repr err}")
     | .ok tv => pure tv
   if hDs : tv.dynsym.isSome then
-  if hGh : tv.gnuHash.isNone then
   if hFit : tv.dynstr.bytes.size + newName.toUTF8.size + 1 < UInt32.size then
     let hOk : Patchelf.Elf.RenameDynamicSymbolsOk tv newName :=
-      { hasDynsym := hDs, offsetFits := hFit, noGnuHash := hGh }
-    let tv' := Patchelf.Elf.renameDynamicSymbols tv oldName newName hOk
-    .ok (Patchelf.Elf.encodeWith opts.pageSize (Patchelf.Elf.Adapter.toElfFile e tv'))
+      { hasDynsym := hDs, offsetFits := hFit }
+    let tv1 := Patchelf.Elf.renameDynamicSymbols tv oldName newName hOk
+    let (tv2, _perm) := Patchelf.Elf.gnuHashRebuildOp tv1
+    .ok (Patchelf.Elf.encodeWith opts.pageSize (Patchelf.Elf.Adapter.toElfFile e tv2))
   else throw (Run.badPrecondition "renameDynamicSymbol" "UInt32 offset overflow")
-  else throw (Run.badPrecondition "renameDynamicSymbol" ".gnu.hash present")
   else throw (Run.badPrecondition "renameDynamicSymbol" "no .dynsym")
 
 def runRenameDynamicSymbol (p : Parsed) : IO UInt32 :=

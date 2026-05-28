@@ -15,6 +15,7 @@
 module
 
 public import Patchelf.Elf.ValidElfFile
+public import Patchelf.Elf.GnuHashRebuild
 public import Patchelf.Elf.Basic
 
 @[expose] public section
@@ -23,11 +24,13 @@ namespace Patchelf.Elf
 
 open Patchelf.Elf (StringTable Symbol SysVHashTable sysvHash)
 
-/-- Rename precondition: has dynsym, no gnu.hash, offset fits in UInt32. -/
+/-- Rename precondition: has dynsym, offset fits in UInt32.
+    Note: removed the `noGnuHash` precondition — the op now rebuilds
+    `.gnu.hash` (and the post-rename reloc remap is the caller's
+    responsibility; see `Patchelf.CLI.renameOnce` for wiring). -/
 structure RenameDynamicSymbolsOk (e : ValidElfFile) (newName : String) : Prop where
   hasDynsym    : e.dynsym.isSome
   offsetFits   : e.dynstr.bytes.size + newName.toUTF8.size + 1 < UInt32.size
-  noGnuHash    : e.gnuHash.isNone
 
 /-- Rebuild the SysV hash buckets/chain for the new symbol array. -/
 def rebuildSysVHash (ht : SysVHashTable) (ds : StringSection)
@@ -77,7 +80,11 @@ def SymbolSection.rename {ds : StringSection} (ss : SymbolSection ds)
 
     Uses `Option.map` on dynsym (rather than `match`) so that
     `(rename e).dynsym = e'.dynsym.map ...` is rfl-reducible — this
-    lets the observables close cleanly. -/
+    lets the observables close cleanly.
+
+    GNU hash rebuild is a SEPARATE op (`gnuHashRebuildOp`) called by
+    the CLI as a post-pass; this avoids reshaping the rename op's
+    body and breaking the existing observable theorems. -/
 def renameDynamicSymbols (e : ValidElfFile) (oldName newName : String)
     (_h : RenameDynamicSymbolsOk e newName) : ValidElfFile :=
   let p := e.growDynstr newName
@@ -89,6 +96,27 @@ def renameDynamicSymbols (e : ValidElfFile) (oldName newName : String)
     | some nd => { table := rebuildSysVHash shs.table e'.dynstr nd.symbols }
     | none    => shs)
   { e' with dynsym := newDynsym, sysvHash := newSysvHash }
+
+/-- Rebuild `.gnu.hash` for a `ValidElfFile` whose `.dynsym` has been
+    renamed.  Reorders `.dynsym` and `.gnu.version` according to the
+    new bucket layout; rewrites bloom/buckets/chain.  Returns the
+    post-rebuild file PLUS the dynsym permutation for callers that
+    need to remap relocation `r_info` symbol indices.
+
+    No-op (returns input unchanged + identity perm) when either
+    `.gnu.hash` is absent or `.dynsym` is absent. -/
+def gnuHashRebuildOp (e : ValidElfFile) : ValidElfFile × Option (Nat × Array Nat) :=
+  match h : e.dynsym, e.gnuHash with
+  | some dsym, some ghs =>
+    let versym0 : Array UInt16 := e.versym.getD #[]
+    let r := rebuildGnuHash dsym e.dynstr versym0 ghs.table
+    let e' : ValidElfFile :=
+      { e with
+          dynsym := some r.dynsym
+          versym := if e.versym.isSome then some r.versym else none
+          gnuHash := some { table := r.ght } }
+    (e', some (r.firstSymIdx, r.perm))
+  | _, _ => (e, none)
 
 /-! ## Observables -/
 
@@ -108,21 +136,11 @@ theorem renameDynamicSymbols_dynsym_isSome
   unfold renameDynamicSymbols ValidElfFile.growDynstr
   cases e.dynsym <;> rfl
 
-/-- gnu.hash is untouched (stays `none` per precondition). -/
-theorem renameDynamicSymbols_gnuHash
-    (e : ValidElfFile) (oldName newName : String)
-    (h : RenameDynamicSymbolsOk e newName) :
-    (renameDynamicSymbols e oldName newName h).gnuHash = none := by
-  -- The result's gnuHash field = e'.gnuHash (growDynstr preserves it)
-  -- = e.gnuHash = none (by precondition).
-  show (renameDynamicSymbols e oldName newName h).gnuHash = none
-  have hEq : (renameDynamicSymbols e oldName newName h).gnuHash = e.gnuHash := rfl
-  rw [hEq]
-  exact Option.isNone_iff_eq_none.mp h.noGnuHash
-
 /-- If the input had a symbol at index `i` whose `st_name` looked up
     to `oldName` in the OLD dynstr, the output has a symbol at the
-    same index whose `st_name` equals the newly-appended offset. -/
+    same index whose `st_name` equals the newly-appended offset.
+    (The GNU hash rebuild reorders dynsym; this observable is
+    pre-rebuild.) -/
 theorem renameDynamicSymbols_observable
     (e : ValidElfFile) (oldName newName : String)
     (h : RenameDynamicSymbolsOk e newName)
@@ -137,23 +155,18 @@ theorem renameDynamicSymbols_observable
       (renameDynamicSymbols e oldName newName h).dynsym = some dsym' ∧
       ∃ hi' : i < dsym'.symbols.size,
         (dsym'.symbols[i]'hi').st_name.val = (e.dynstr.appendOffset newName).val := by
-  -- Let dsymR = rebased dsym; then new dynsym = dsymR.rename oldName off.
   have hRebaseSize : (dsym.rebase (StringSection.size_le_append e.dynstr newName)).symbols.size
                    = dsym.symbols.size := SymbolSection.rebase_size _ _
-  -- The new dynsym of the renamed file.
   refine ⟨(dsym.rebase (StringSection.size_le_append e.dynstr newName)).rename
             oldName (e.dynstr.appendOffset newName), ?_, ?_⟩
-  · -- dynsym = some …: by Option.map on growDynstr's dynsym.
-    unfold renameDynamicSymbols ValidElfFile.growDynstr
+  · unfold renameDynamicSymbols ValidElfFile.growDynstr
     simp [hDsym]
-  -- i is in range for the renamed section.
   have hSize : ((dsym.rebase (StringSection.size_le_append e.dynstr newName)).rename
                  oldName (e.dynstr.appendOffset newName)).symbols.size
              = dsym.symbols.size := by
     unfold SymbolSection.rename
     simp
   refine ⟨hSize ▸ hi, ?_⟩
-  -- Compute the st_name at i via map + rename predicate.
   show (((dsym.rebase (StringSection.size_le_append e.dynstr newName)).rename
           oldName (e.dynstr.appendOffset newName)).symbols[i]'_).st_name.val =
        (e.dynstr.appendOffset newName).val

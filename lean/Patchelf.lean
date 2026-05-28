@@ -49,6 +49,7 @@ public import Patchelf.Elf.DynamicParse
 public import Patchelf.Elf.DynamicEncode
 public import Patchelf.Elf.Adapter
 public import Patchelf.Elf.AdapterRoundtrip
+public import Patchelf.Elf.GnuHashRebuild
 
 -- Observable-correctness combinators
 public import Patchelf.Elf.ObservableCombinators
