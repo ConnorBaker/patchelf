@@ -59,7 +59,7 @@ elf_schema DynEntry := 16
 /-- Array-write size: `writeArray DynEntry.write dyn` totals
     `dyn.size * 16` bytes. Wraps `writeArray_size_of_uniform` with the
     DSL-generated `DynEntry.write_size`. -/
-theorem writeArray_DynEntry_size (dyn : Array DynEntry) :
+@[simp] theorem writeArray_DynEntry_size (dyn : Array DynEntry) :
     (writeArray DynEntry.write dyn).size = dyn.size * Layout.dynEntrySize :=
   writeArray_size_of_uniform DynEntry.write _ DynEntry.write_size dyn
 
@@ -268,6 +268,30 @@ elf_schema SectionHeader := 64
 -- `decodePhdrs`, `decodeShdrs`, `decodeDynsym` and the matching
 -- `writeArray_Foo_write_extract` theorems are DSL-generated from
 -- the `with_array_decoder <Name>` clauses on the schemas above.
+
+/-! ## Array-write size lemmas
+
+    Each `(writeArray Foo.write arr).size = arr.size * <Foo's bytes>`
+    derives from the DSL-emitted `Foo.write_size` via
+    `writeArray_size_of_uniform`.  Marked `@[simp]` so the splice
+    simproc's omega-discharger can chain through writeArray sizes
+    without an explicit `have hPhdrWSz : … = …` at every call site. -/
+
+@[simp] theorem writeArray_ProgramHeader_size (arr : Array ProgramHeader) :
+    (writeArray ProgramHeader.write arr).size = arr.size * Layout.phdrSize :=
+  writeArray_size_of_uniform ProgramHeader.write _ ProgramHeader.write_size arr
+
+@[simp] theorem writeArray_SectionHeader_size (arr : Array SectionHeader) :
+    (writeArray SectionHeader.write arr).size = arr.size * Layout.shdrSize :=
+  writeArray_size_of_uniform SectionHeader.write _ SectionHeader.write_size arr
+
+@[simp] theorem writeArray_Symbol_size (arr : Array Symbol) :
+    (writeArray Symbol.write arr).size = arr.size * Layout.symEntrySize :=
+  writeArray_size_of_uniform Symbol.write _ Symbol.write_size arr
+
+@[simp] theorem writeArray_writeU16_size (arr : Array UInt16) :
+    (writeArray Writer.writeU16 arr).size = arr.size * 2 :=
+  writeArray_size_of_uniform Writer.writeU16 2 (fun _ => writeU16_size _) arr
 
 namespace Decode
 

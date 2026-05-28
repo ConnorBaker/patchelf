@@ -134,94 +134,62 @@ theorem readU8_encode_in_header (e : ElfFile)
     (r : Nat) (hr : r + 1 ≤ Layout.ehdrSize) :
     Reader.readU8 (encode e) r
       = Reader.readU8 (ElfHeader.write e.header) r := by
-  -- Drive `encode e` to its `encodeBody` form by discharging the pre-passes.
   have hEnc : encode e = encodeBody e := by
     unfold encode; rw [hSync]; simp [hLay]
   rw [hEnc]
   unfold encodeBody
-  -- Buffer aliases (definitional; no `set`-based metavars).
-  let total := encodedFileSize e
-  let buf0 : ByteArray := zeroBytes total
-  let hdrW : ByteArray := ElfHeader.write e.header
-  let buf1 : ByteArray := splice buf0 0 hdrW
-  let phdrW : ByteArray := writeArray ProgramHeader.write e.phdrs
-  let phoff := e.header.phoff.val
-  let buf2 : ByteArray := splice buf1 phoff phdrW
-  let shdrW : ByteArray := writeArray SectionHeader.write (e.sections.map toShdr)
-  let shoff := e.header.shoff.val
-  let buf3 : ByteArray := splice buf2 shoff shdrW
-  -- Sizes.
-  have hBuf0Sz : buf0.size = total := zeroBytes_size total
-  have hBuf1Sz : buf1.size = total := by show (splice _ _ _).size = _; rw [splice_size]; exact hBuf0Sz
-  have hBuf2Sz : buf2.size = total := by show (splice _ _ _).size = _; rw [splice_size]; exact hBuf1Sz
-  have hBuf3Sz : buf3.size = total := by show (splice _ _ _).size = _; rw [splice_size]; exact hBuf2Sz
-  have hHdrWSz : hdrW.size = Layout.ehdrSize := ElfHeader.write_size e.header
-  have hPhdrWSz : phdrW.size = e.phdrs.size * Layout.phdrSize :=
-    writeArray_size_of_uniform ProgramHeader.write Layout.phdrSize
-            ProgramHeader.write_size e.phdrs
-  have hShdrWSz : shdrW.size = e.sections.size * Layout.shdrSize := by
-    show (writeArray _ _).size = _
-    rw [writeArray_size_of_uniform SectionHeader.write Layout.shdrSize
-            SectionHeader.write_size, Array.size_map]
-  -- Region bounds.
-  have hTotalEhdr : Layout.ehdrSize ≤ total := encodedFileSize_ge_ehdr e
-  have hPhdrEnd : phoff + e.phdrs.size * Layout.phdrSize ≤ total :=
-    phdr_end_le_encodedFileSize e
-  have hShdrEnd : shoff + e.sections.size * Layout.shdrSize ≤ total :=
-    shdr_end_le_encodedFileSize e
-  -- Splice-fit conditions.
-  have hHdrFit : 0 + hdrW.size ≤ buf0.size := by rw [hHdrWSz, hBuf0Sz]; omega
-  have hPhdrFit : phoff + phdrW.size ≤ buf1.size := by rw [hPhdrWSz, hBuf1Sz]; exact hPhdrEnd
-  have hShdrFit : shoff + shdrW.size ≤ buf2.size := by rw [hShdrWSz, hBuf2Sz]; exact hShdrEnd
-  have hrLtTotal : r < total := by omega
-  -- Step 1: section foldl preserves byte at offset r.
+  -- Encoder bounds the simproc's omega-discharger needs in scope.
+  have hPhdrEnd : e.header.phoff.val + e.phdrs.size * Layout.phdrSize
+                  ≤ encodedFileSize e := phdr_end_le_encodedFileSize e
+  have hShdrEnd : e.header.shoff.val + e.sections.size * Layout.shdrSize
+                  ≤ encodedFileSize e := shdr_end_le_encodedFileSize e
+  have hTotalEhdr : Layout.ehdrSize ≤ encodedFileSize e := encodedFileSize_ge_ehdr e
+  -- Step 1: section foldl preserves byte at offset r ∈ [0, ehdrSize).
   have hStep1 : Reader.readU8
-      (e.sections.foldl (init := buf3) sectionFoldStep) r
-      = Reader.readU8 buf3 r := by
-    apply readU8_foldl_section_splice_preserved e.sections 0 Layout.ehdrSize buf3
+      (e.sections.foldl (init := splice (splice (splice (zeroBytes (encodedFileSize e)) 0
+        (ElfHeader.write e.header)) e.header.phoff.val
+          (writeArray ProgramHeader.write e.phdrs)) e.header.shoff.val
+            (writeArray SectionHeader.write (e.sections.map toShdr)))
+        sectionFoldStep) r
+      = Reader.readU8 (splice (splice (splice (zeroBytes (encodedFileSize e)) 0
+        (ElfHeader.write e.header)) e.header.phoff.val
+          (writeArray ProgramHeader.write e.phdrs)) e.header.shoff.val
+            (writeArray SectionHeader.write (e.sections.map toShdr))) r := by
+    apply readU8_foldl_section_splice_preserved e.sections 0 Layout.ehdrSize _
       (hKAll := ?_) (hrLo := Nat.zero_le _) (hrHi := hr)
-      (hrFit := by rw [hBuf3Sz]; exact hrLtTotal)
+      (hrFit := by simp only [splice_size, zeroBytes_size]; omega)
     intros i hi
-    -- Case-split on s.type FIRST (so we have the type negation facts).
     by_cases hN1 : (e.sections[i]'hi).type = ShType.SHT_NOBITS
     · exact Or.inl hN1
     by_cases hN2 : (e.sections[i]'hi).type = ShType.SHT_NULL
     · exact Or.inr (Or.inl hN2)
-    -- Non-NOBITS, non-NULL: derive disjointness + size bound.
     refine Or.inr (Or.inr ⟨?_, ?_⟩)
-    · -- IntervalDisjoint 0 ehdrSize s.offset s.end from headerSectionDisjoint.
-      have hSec := hDisj.hdr_sec_disjoint i hi
+    · have hSec := hDisj.hdr_sec_disjoint i hi
       rcases hSec with hN | hN | hOK
       · exact absurd hN hN1
       · exact absurd hN hN2
       exact hOK
-    · -- s.offset + s.encodedSize ≤ buf3.size
-      rw [hBuf3Sz]
+    · simp only [splice_size, zeroBytes_size]
       exact section_end_le_encodedFileSize e i hi hN1 hN2
-  -- Steps 2–4: shdr/phdr disjoint splices + header inside-splice.
-  -- These three manual cascades collapse to a single `simp_splice`.
-  -- ROADMAP §5.4: omega discharger handles every side condition
-  -- (splice fit, read fit, disjointness, inside-bounds).
-  have hShdrDisj : r + 1 ≤ shoff ∨ shoff + shdrW.size ≤ r := by
+  rw [hStep1]
+  -- Steps 2–4: shdr/phdr disjoint splices + header inside-splice.  All
+  -- three side conditions discharge through `simp_splice`'s omega-
+  -- discharger now that `writeArray_*_size` lemmas are in its simp set.
+  have hShdrDisj : r + 1 ≤ e.header.shoff.val ∨
+      e.header.shoff.val + e.sections.size * Layout.shdrSize ≤ r := by
     have hI := hDisj.hdr_shdr_disjoint
     unfold ElfFile.headerShdrDisjoint IntervalDisjoint at hI
     rcases hI with hL | hR
     · left; omega
-    · right; rw [hShdrWSz]; omega
-  have hPhdrDisj : r + 1 ≤ phoff ∨ phoff + phdrW.size ≤ r := by
+    · right; omega
+  have hPhdrDisj : r + 1 ≤ e.header.phoff.val ∨
+      e.header.phoff.val + e.phdrs.size * Layout.phdrSize ≤ r := by
     have hI := hDisj.hdr_phdr_disjoint
     unfold ElfFile.headerPhdrDisjoint IntervalDisjoint at hI
     rcases hI with hL | hR
     · left; omega
-    · right; rw [hPhdrWSz]; omega
-  have hHdrInside : r < hdrW.size := by rw [hHdrWSz]; omega
-  have hStep234 : Reader.readU8 buf3 r = Reader.readU8 hdrW r := by
-    show Reader.readU8
-      (splice (splice (splice buf0 0 hdrW) phoff phdrW) shoff shdrW) r = _
-    simp_splice
-  -- Compose.  The goal already has the foldl form on the LHS.
-  show Reader.readU8 (e.sections.foldl _ buf3) r = Reader.readU8 hdrW r
-  rw [hStep1, hStep234]
+    · right; omega
+  simp_splice
 
 /-- Per-byte preservation: the i-th byte of `(encode e)` agrees with
     the i-th byte of `ElfHeader.write e.header` for `i < ehdrSize`. -/
@@ -549,77 +517,52 @@ theorem readU8_encode_in_phdr (e : ElfFile)
     unfold encode; rw [hSync]; simp [hLay]
   rw [hEnc]
   unfold encodeBody
-  let total := encodedFileSize e
-  let buf0 : ByteArray := zeroBytes total
-  let hdrW : ByteArray := ElfHeader.write e.header
-  let buf1 : ByteArray := splice buf0 0 hdrW
-  let phdrW : ByteArray := writeArray ProgramHeader.write e.phdrs
-  let phoff := e.header.phoff.val
-  let buf2 : ByteArray := splice buf1 phoff phdrW
-  let shdrW : ByteArray := writeArray SectionHeader.write (e.sections.map toShdr)
-  let shoff := e.header.shoff.val
-  let buf3 : ByteArray := splice buf2 shoff shdrW
-  -- Sizes.
-  have hBuf0Sz : buf0.size = total := zeroBytes_size total
-  have hBuf1Sz : buf1.size = total := by show (splice _ _ _).size = _; rw [splice_size]; exact hBuf0Sz
-  have hBuf2Sz : buf2.size = total := by show (splice _ _ _).size = _; rw [splice_size]; exact hBuf1Sz
-  have hBuf3Sz : buf3.size = total := by show (splice _ _ _).size = _; rw [splice_size]; exact hBuf2Sz
-  have hPhdrWSz : phdrW.size = e.phdrs.size * Layout.phdrSize :=
-    writeArray_size_of_uniform ProgramHeader.write Layout.phdrSize
-            ProgramHeader.write_size e.phdrs
-  have hShdrWSz : shdrW.size = e.sections.size * Layout.shdrSize := by
-    show (writeArray _ _).size = _
-    rw [writeArray_size_of_uniform SectionHeader.write Layout.shdrSize
-            SectionHeader.write_size, Array.size_map]
-  -- Region bounds.
-  have hPhdrEnd : phoff + e.phdrs.size * Layout.phdrSize ≤ total :=
-    phdr_end_le_encodedFileSize e
-  have hShdrEnd : shoff + e.sections.size * Layout.shdrSize ≤ total :=
-    shdr_end_le_encodedFileSize e
-  -- Splice-fit conditions.
-  have hPhdrFit : phoff + phdrW.size ≤ buf1.size := by rw [hPhdrWSz, hBuf1Sz]; exact hPhdrEnd
-  have hShdrFit : shoff + shdrW.size ≤ buf2.size := by rw [hShdrWSz, hBuf2Sz]; exact hShdrEnd
-  -- The target read offset r := phoff + k.
-  have hrLtTotal : phoff + k < total := by
-    have : phoff + k < phoff + e.phdrs.size * Layout.phdrSize := by omega
-    exact Nat.lt_of_lt_of_le this hPhdrEnd
-  -- Step 1: section foldl preserves byte at `phoff + k`.
+  -- Step 1: section foldl preserves byte at `phoff + k`.  The fold
+  -- input has size `encodedFileSize e` (3 splices + zeroBytes; size
+  -- chain via `splice_size`/`zeroBytes_size`).
+  have hPhdrEnd : e.header.phoff.val + e.phdrs.size * Layout.phdrSize
+                  ≤ encodedFileSize e := phdr_end_le_encodedFileSize e
   have hStep1 : Reader.readU8
-      (e.sections.foldl (init := buf3) sectionFoldStep) (phoff + k)
-      = Reader.readU8 buf3 (phoff + k) := by
-    apply readU8_foldl_section_splice_preserved e.sections phoff
-      (phoff + e.phdrs.size * Layout.phdrSize) buf3
+      (e.sections.foldl (init := splice (splice (splice (zeroBytes (encodedFileSize e)) 0
+        (ElfHeader.write e.header)) e.header.phoff.val
+          (writeArray ProgramHeader.write e.phdrs)) e.header.shoff.val
+            (writeArray SectionHeader.write (e.sections.map toShdr)))
+        sectionFoldStep) (e.header.phoff.val + k)
+      = Reader.readU8 (splice (splice (splice (zeroBytes (encodedFileSize e)) 0
+        (ElfHeader.write e.header)) e.header.phoff.val
+          (writeArray ProgramHeader.write e.phdrs)) e.header.shoff.val
+            (writeArray SectionHeader.write (e.sections.map toShdr)))
+        (e.header.phoff.val + k) := by
+    apply readU8_foldl_section_splice_preserved e.sections e.header.phoff.val
+      (e.header.phoff.val + e.phdrs.size * Layout.phdrSize) _
       (hKAll := ?_) (hrLo := Nat.le_add_right _ _) (hrHi := by omega)
-      (hrFit := by rw [hBuf3Sz]; exact hrLtTotal)
+      (hrFit := by simp only [splice_size, zeroBytes_size]; omega)
     intros i hi
     by_cases hN1 : (e.sections[i]'hi).type = ShType.SHT_NOBITS
     · exact Or.inl hN1
     by_cases hN2 : (e.sections[i]'hi).type = ShType.SHT_NULL
     · exact Or.inr (Or.inl hN2)
     refine Or.inr (Or.inr ⟨?_, ?_⟩)
-    · -- phdrSectionDisjoint gives exactly the IntervalDisjoint we need.
-      have hSec := hDisj.phdr_sec_disjoint i hi
+    · have hSec := hDisj.phdr_sec_disjoint i hi
       rcases hSec with hN | hN | hOK
       · exact absurd hN hN1
       · exact absurd hN hN2
       exact hOK
-    · rw [hBuf3Sz]; exact section_end_le_encodedFileSize e i hi hN1 hN2
-  -- Steps 2–3: shdr splice (disjoint) + phdr splice (inside) collapse
-  -- to a single `simp_splice` once the phdr/shdr disjointness is in
-  -- the local context.
+    · simp only [splice_size, zeroBytes_size]
+      exact section_end_le_encodedFileSize e i hi hN1 hN2
+  rw [hStep1]
+  -- Steps 2–3: shdr splice (disjoint) + phdr splice (inside).
+  have hShdrEnd : e.header.shoff.val + e.sections.size * Layout.shdrSize
+                  ≤ encodedFileSize e := shdr_end_le_encodedFileSize e
   have hPhShDisj :
-      (phoff + k) + 1 ≤ shoff ∨ shoff + shdrW.size ≤ (phoff + k) := by
+      (e.header.phoff.val + k) + 1 ≤ e.header.shoff.val ∨
+      e.header.shoff.val + e.sections.size * Layout.shdrSize ≤ e.header.phoff.val + k := by
     have hI := hDisj.phdr_shdr_disjoint
     unfold ElfFile.phdrShdrDisjoint IntervalDisjoint at hI
     rcases hI with hL | hR
     · left; omega
-    · right; rw [hShdrWSz]; omega
-  have hPhdrInside : (phoff + k) - phoff < phdrW.size := by rw [hPhdrWSz]; omega
-  have hStep23 : Reader.readU8 buf3 (phoff + k) = Reader.readU8 phdrW k := by
-    show Reader.readU8 (splice (splice buf1 phoff phdrW) shoff shdrW) (phoff + k) = _
-    simp_splice
-  show Reader.readU8 (e.sections.foldl _ buf3) (phoff + k) = Reader.readU8 phdrW k
-  rw [hStep1, hStep23]
+    · right; omega
+  simp_splice
 
 /-- Per-byte preservation: the i-th byte of `(encode e)` agrees with
     the i-th byte of `writeArray PH.write e.phdrs` when `i ∈ [phoff, phoff + phnum*56)`. -/
@@ -814,42 +757,24 @@ theorem readU8_encode_in_shdr (e : ElfFile)
     unfold encode; rw [hSync]; simp [hLay]
   rw [hEnc]
   unfold encodeBody
-  let total := encodedFileSize e
-  let buf0 : ByteArray := zeroBytes total
-  let hdrW : ByteArray := ElfHeader.write e.header
-  let buf1 : ByteArray := splice buf0 0 hdrW
-  let phdrW : ByteArray := writeArray ProgramHeader.write e.phdrs
-  let phoff := e.header.phoff.val
-  let buf2 : ByteArray := splice buf1 phoff phdrW
-  let shdrW : ByteArray := writeArray SectionHeader.write (e.sections.map toShdr)
-  let shoff := e.header.shoff.val
-  let buf3 : ByteArray := splice buf2 shoff shdrW
-  -- Sizes.
-  have hBuf0Sz : buf0.size = total := zeroBytes_size total
-  have hBuf1Sz : buf1.size = total := by show (splice _ _ _).size = _; rw [splice_size]; exact hBuf0Sz
-  have hBuf2Sz : buf2.size = total := by show (splice _ _ _).size = _; rw [splice_size]; exact hBuf1Sz
-  have hBuf3Sz : buf3.size = total := by show (splice _ _ _).size = _; rw [splice_size]; exact hBuf2Sz
-  have hShdrWSz : shdrW.size = e.sections.size * Layout.shdrSize := by
-    show (writeArray _ _).size = _
-    rw [writeArray_size_of_uniform SectionHeader.write Layout.shdrSize
-            SectionHeader.write_size, Array.size_map]
-  -- Region bounds.
-  have hShdrEnd : shoff + e.sections.size * Layout.shdrSize ≤ total :=
-    shdr_end_le_encodedFileSize e
-  -- Splice-fit conditions.
-  have hShdrFit : shoff + shdrW.size ≤ buf2.size := by rw [hShdrWSz, hBuf2Sz]; exact hShdrEnd
-  -- Read offset r := shoff + k.
-  have hrLtTotal : shoff + k < total := by
-    have : shoff + k < shoff + e.sections.size * Layout.shdrSize := by omega
-    exact Nat.lt_of_lt_of_le this hShdrEnd
+  have hShdrEnd : e.header.shoff.val + e.sections.size * Layout.shdrSize
+                  ≤ encodedFileSize e := shdr_end_le_encodedFileSize e
   -- Step 1: section foldl preserves byte at `shoff + k`.
   have hStep1 : Reader.readU8
-      (e.sections.foldl (init := buf3) sectionFoldStep) (shoff + k)
-      = Reader.readU8 buf3 (shoff + k) := by
-    apply readU8_foldl_section_splice_preserved e.sections shoff
-      (shoff + e.sections.size * Layout.shdrSize) buf3
+      (e.sections.foldl (init := splice (splice (splice (zeroBytes (encodedFileSize e)) 0
+        (ElfHeader.write e.header)) e.header.phoff.val
+          (writeArray ProgramHeader.write e.phdrs)) e.header.shoff.val
+            (writeArray SectionHeader.write (e.sections.map toShdr)))
+        sectionFoldStep) (e.header.shoff.val + k)
+      = Reader.readU8 (splice (splice (splice (zeroBytes (encodedFileSize e)) 0
+        (ElfHeader.write e.header)) e.header.phoff.val
+          (writeArray ProgramHeader.write e.phdrs)) e.header.shoff.val
+            (writeArray SectionHeader.write (e.sections.map toShdr)))
+        (e.header.shoff.val + k) := by
+    apply readU8_foldl_section_splice_preserved e.sections e.header.shoff.val
+      (e.header.shoff.val + e.sections.size * Layout.shdrSize) _
       (hKAll := ?_) (hrLo := Nat.le_add_right _ _) (hrHi := by omega)
-      (hrFit := by rw [hBuf3Sz]; exact hrLtTotal)
+      (hrFit := by simp only [splice_size, zeroBytes_size]; omega)
     intros i hi
     by_cases hN1 : (e.sections[i]'hi).type = ShType.SHT_NOBITS
     · exact Or.inl hN1
@@ -861,14 +786,11 @@ theorem readU8_encode_in_shdr (e : ElfFile)
       · exact absurd hN hN1
       · exact absurd hN hN2
       exact hOK
-    · rw [hBuf3Sz]; exact section_end_le_encodedFileSize e i hi hN1 hN2
-  -- Step 2: shdr splice INSIDE returns the payload.
-  have hShdrInside : (shoff + k) - shoff < shdrW.size := by rw [hShdrWSz]; omega
-  have hStep2 : Reader.readU8 buf3 (shoff + k) = Reader.readU8 shdrW k := by
-    show Reader.readU8 (splice buf2 shoff shdrW) (shoff + k) = _
-    simp_splice
-  show Reader.readU8 (e.sections.foldl _ buf3) (shoff + k) = Reader.readU8 shdrW k
-  rw [hStep1, hStep2]
+    · simp only [splice_size, zeroBytes_size]
+      exact section_end_le_encodedFileSize e i hi hN1 hN2
+  rw [hStep1]
+  -- Step 2: shdr splice INSIDE returns the payload (outermost splice).
+  simp_splice
 
 /-- Per-byte preservation: the i-th byte of `(encode e)` agrees with
     the i-th byte of `writeArray SectionHeader.write (e.sections.map toShdr)`
@@ -1023,39 +945,31 @@ theorem readU8_encode_in_section (e : ElfFile)
     unfold encode; rw [hSync]; simp [hLay]
   rw [hEnc]
   unfold encodeBody
-  -- Buffer aliases.
-  let total := encodedFileSize e
-  let buf0 : ByteArray := zeroBytes total
-  let hdrW : ByteArray := ElfHeader.write e.header
-  let buf1 : ByteArray := splice buf0 0 hdrW
-  let phdrW : ByteArray := writeArray ProgramHeader.write e.phdrs
-  let phoff := e.header.phoff.val
-  let buf2 : ByteArray := splice buf1 phoff phdrW
-  let shdrW : ByteArray := writeArray SectionHeader.write (e.sections.map toShdr)
-  let shoff := e.header.shoff.val
-  let buf3 : ByteArray := splice buf2 shoff shdrW
-  have hBuf0Sz : buf0.size = total := zeroBytes_size total
-  have hBuf1Sz : buf1.size = total := by show (splice _ _ _).size = _; rw [splice_size]; exact hBuf0Sz
-  have hBuf2Sz : buf2.size = total := by show (splice _ _ _).size = _; rw [splice_size]; exact hBuf1Sz
-  have hBuf3Sz : buf3.size = total := by show (splice _ _ _).size = _; rw [splice_size]; exact hBuf2Sz
-  -- Section i fits in buf3.
+  -- Section i fits in the encoder buffer.
   have hSectionFit : (e.sections[i]'hi).offset.val
-                  + (e.sections[i]'hi).encodedSize ≤ buf3.size := by
-    rw [hBuf3Sz]
+                  + (e.sections[i]'hi).encodedSize
+                  ≤ (splice (splice (splice (zeroBytes (encodedFileSize e)) 0
+                       (ElfHeader.write e.header)) e.header.phoff.val
+                         (writeArray ProgramHeader.write e.phdrs)) e.header.shoff.val
+                           (writeArray SectionHeader.write (e.sections.map toShdr))).size := by
+    simp only [splice_size, zeroBytes_size]
     exact section_end_le_encodedFileSize e i hi hType_NB hType_NL
-  -- All sections fit (for the hSizesFit precondition).
+  -- All sections fit.
   have hAllSizesFit : ∀ (j : Nat) (hj : j < e.sections.size),
       (e.sections[j]'hj).type = ShType.SHT_NOBITS ∨
       (e.sections[j]'hj).type = ShType.SHT_NULL ∨
-      (e.sections[j]'hj).offset.val
-        + (e.sections[j]'hj).encodedSize ≤ buf3.size := by
+      (e.sections[j]'hj).offset.val + (e.sections[j]'hj).encodedSize
+        ≤ (splice (splice (splice (zeroBytes (encodedFileSize e)) 0
+            (ElfHeader.write e.header)) e.header.phoff.val
+              (writeArray ProgramHeader.write e.phdrs)) e.header.shoff.val
+                (writeArray SectionHeader.write (e.sections.map toShdr))).size := by
     intros j hj
     by_cases hN1 : (e.sections[j]'hj).type = ShType.SHT_NOBITS
     · exact Or.inl hN1
     by_cases hN2 : (e.sections[j]'hj).type = ShType.SHT_NULL
     · exact Or.inr (Or.inl hN2)
     refine Or.inr (Or.inr ?_)
-    rw [hBuf3Sz]
+    simp only [splice_size, zeroBytes_size]
     exact section_end_le_encodedFileSize e j hj hN1 hN2
   -- Other sections disjoint from section i (from sectionsNonOverlapping).
   have hOverlap : ∀ (j : Nat) (hj : j < e.sections.size), i ≠ j →
@@ -1068,15 +982,13 @@ theorem readU8_encode_in_section (e : ElfFile)
         ((e.sections[i]'hi).offset.val + (e.sections[i]'hi).encodedSize) := by
     intros j hj hij
     have hSec := hDisj.sections_disjoint j hj i hi (Ne.symm hij)
-    -- hSec gives: NOBITS_j ∨ NOBITS_i ∨ NULL_j ∨ NULL_i ∨ Disjoint.
     rcases hSec with hN | hN | hN | hN | hOK
     · exact Or.inl hN
     · exact absurd hN hType_NB
     · exact Or.inr (Or.inl hN)
     · exact absurd hN hType_NL
     · exact Or.inr (Or.inr hOK)
-  -- Apply readU8_foldl_section_recovers.
-  exact readU8_foldl_section_recovers e.sections buf3 i hi hType_NB hType_NL
+  exact readU8_foldl_section_recovers e.sections _ i hi hType_NB hType_NL
     hSectionFit hOverlap hAllSizesFit k hk
 
 theorem readU16_encode_in_section (e : ElfFile)

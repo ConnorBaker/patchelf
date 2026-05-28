@@ -67,17 +67,30 @@ open Lean Elab Tactic
     Equivalent to `simp only [splice_simp] (discharger := omega)`. -/
 syntax (name := simpSplice) "simp_splice" (Lean.Parser.Tactic.location)? : tactic
 
-/-- Discharger used by `simp_splice`: rewrite splice/zeroBytes sizes to
-    their underlying buffer sizes (so omega can see them), then run
+/-- Discharger used by `simp_splice`: rewrite splice/zeroBytes/writeArray
+    sizes to their underlying terms (so omega can see them), then run
     omega.  The size-rewrite-then-omega ordering is what lets omega
     discharge fit conditions for nested splices like
-    `phoff + phdrW.size ≤ (splice buf0 0 hdrW).size`. -/
+    `phoff + phdrW.size ≤ (splice buf0 0 hdrW).size` even when
+    `phdrW = writeArray ProgramHeader.write _` (no let-binding alias). -/
 syntax "splice_disch" : tactic
 macro_rules
   | `(tactic| splice_disch) =>
     `(tactic| (try simp only
                 [Patchelf.Elf.Encoder.splice_size,
-                 Patchelf.Elf.zeroBytes_size] at *); omega)
+                 Patchelf.Elf.zeroBytes_size,
+                 Patchelf.Elf.writeArray_DynEntry_size,
+                 Patchelf.Elf.writeArray_ProgramHeader_size,
+                 Patchelf.Elf.writeArray_SectionHeader_size,
+                 Patchelf.Elf.writeArray_Symbol_size,
+                 Patchelf.Elf.writeArray_writeU16_size,
+                 Patchelf.Elf.ElfHeader.write_size,
+                 Patchelf.Elf.Layout.ehdrSize,
+                 Patchelf.Elf.Layout.phdrSize,
+                 Patchelf.Elf.Layout.shdrSize,
+                 Patchelf.Elf.Layout.dynEntrySize,
+                 Patchelf.Elf.Layout.symEntrySize,
+                 Array.size_map] at *); omega)
 
 macro_rules
   | `(tactic| simp_splice $[$loc:location]?) =>
