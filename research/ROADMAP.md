@@ -24,16 +24,12 @@ forward-looking view.
 > work, but a non-trivial dependent-type obstacle in `Adapter.toElfFile`
 > was discovered during the worked example — see §5.1 for details.
 >
-> Items §1.2 (only `_preserves_loadable` for the three growEOFWith
-> branches + top-level dispatch remaining; `layoutForEncoding`'s
-> branch landed) and §5.1 remain open.  §3.5a fully landed (both
-> in-place and relocatePht sub-cases — see below).  §1.1 parser
-> side landed.  §1.2's `_preserves_valid` ladder fully landed
-> (top-level `growEOFWith_preserves_valid` lands by composing four
-> branches).  `_preserves_loadable` ladder started:
-> `layoutForEncoding_preserves_loadable` ships;
-> `growEOFWith_preserves_loadable` is the canonical pickup
-> ([`PICKUP-PROMPT-PRESERVES-LOADABLE.md`](PICKUP-PROMPT-PRESERVES-LOADABLE.md)).
+> Item §1.2 is now **fully landed** — both the `_preserves_valid`
+> and `_preserves_loadable` ladders close, including the top-level
+> `growEOFWith_preserves_loadable` dispatch.  §5.1 (op-level Tier D
+> / per-op `_preserves_loadable`) remains open.  §3.5a fully landed
+> (both in-place and relocatePht sub-cases — see below).  §1.1
+> parser side landed.
 >
 > **2026-05 cleanup + feature gap pass landed.** Six commits of
 > mechanical-duplication cleanup (~−260 LOC across CLI, Adapter,
@@ -67,20 +63,15 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 
 **Recommended pickup order:**
 
-- **§1.2 `_preserves_loadable` — IN PROGRESS, CANONICAL NEXT PICKUP.**
-  `layoutForEncoding_preserves_loadable` landed; the three
-  `growEOFWith*` branches plus top-level dispatch remain.  Needs
-  per-phdr facts about `updatePhdrsAfterMove` analogous to the
-  `relocatePhdr_*` lemmas now in place for `layoutForEncoding`.
-  Fresh-agent pickup prompt at
-  [`PICKUP-PROMPT-PRESERVES-LOADABLE.md`](PICKUP-PROMPT-PRESERVES-LOADABLE.md).
-  Estimated ~600 LOC, ~1-2 days.
-- **§5.1 op-level Tier D — UNBLOCKED, NON-TRIVIAL.**
-  Each op needs to establish the 5 structural input invariants on
-  its output.  Discovered a dependent-type obstacle in
+- **§5.1 op-level Tier D / per-op `_preserves_loadable` — UNBLOCKED,
+  NON-TRIVIAL, CANONICAL NEXT PICKUP.**
+  Now that the layout pass's `_preserves_loadable` ladder is closed
+  (`growEOFWith_preserves_loadable`), the remaining loader-coherence
+  gap is per-op: each op needs to establish the 5 structural input
+  invariants on its output (and, for the static guarantee, its own
+  `_preserves_loadable`).  Discovered a dependent-type obstacle in
   `Adapter.toElfFile` when attempting `setOsAbi` as the worked
   example — see §5.1 for three documented workaround paths.
-  Recommend revisiting after §1.2 fully closes.
 - **§4.2 trailing-array DSL field kind + `Verneed.write_decode`** —
   independent typed-side completeness item; `.verneed` is stored
   as `.raw` at the byte layer, so the byte-roundtrip doesn't
@@ -92,6 +83,8 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 - §1.1 parser side (`Parser.parseLoadable` + `LoadableElfFile`) — LANDED.
 - §1.2 `_preserves_valid` ladder (all 7 byte-layer theorems +
   top-level `growEOFWith_preserves_valid`) — LANDED.
+- §1.2 `_preserves_loadable` ladder (all four branches +
+  top-level `growEOFWith_preserves_loadable`) — LANDED.
 - §1.3a `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` — LANDED.
 
 **Patterns to know before touching Tier D / encoder proofs:**
@@ -148,27 +141,22 @@ theorem so the static guarantee threads through CLI flows.  Most
 ops preserve all clauses definitionally; the interesting ones are
 `setInterpreter` (PT_INTERP agreement after changing interp
 offset) and any op whose post-encode routes through
-`growEOFWith`'s fresh-PT_LOAD or relocatePht branches.  Pick up
-under §1.2.
+`growEOFWith`'s fresh-PT_LOAD or relocatePht branches.  Now that the
+layout pass's `growEOFWith_preserves_loadable` is closed, per-op
+preservation is the remaining loader-coherence work — pick up under
+§5.1.
 
-#### 1.2 Pre-encode passes: `_preserves_valid` theorems
+#### 1.2 Pre-encode passes: `_preserves_valid` + `_preserves_loadable` — FULLY LANDED
 
-**Status:** `syncDtStrszInFile_preserves_valid` (`Encoder.lean`)
-and `syncDtAddrTagsInFile_preserves_valid` (`GrowEOF.lean`) landed.
-Two byte-layer `IsValid` preservations remain:
-
-- `growEOFWith_preserves_valid` — offsets change, shoff changes,
-  last PT_LOAD `filesz`/`memsz` extend, PT_INTERP/PT_DYNAMIC track
-  moved sections.  None of the 8 IsValid clauses depend on offsets;
-  the deeper claim — `_preserves_loadable` — is more interesting
-  and the actual point of `growEOF` existing.
-- `syncDtAddrTagsInFile_preserves_valid` — DONE.
-  `Patchelf/Elf/GrowEOF.lean`.  Mirrors
-  `syncDtStrszInFile_preserves_valid`'s structure (aux + outer
-  wrapper), with `e.dynstr = some ds` as a precondition (needed to
-  derive `iDyn ≠ shstrndx` — `IsValid` alone doesn't force shstrndx
-  to point at a strtab).  Real ELFs always satisfy the precondition;
-  the runtime validator catches pathological inputs.
+**Status:** both ladders are closed.  `syncDtStrszInFile_preserves_valid`
+(`Encoder.lean`) and `syncDtAddrTagsInFile_preserves_valid`
+(`GrowEOF.lean`) landed; the latter mirrors the former's structure
+(aux + outer wrapper) with `e.dynstr = some ds` as a precondition
+(needed to derive `iDyn ≠ shstrndx` — `IsValid` alone doesn't force
+shstrndx to point at a strtab; real ELFs always satisfy it, and the
+runtime validator catches pathological inputs).  The top-level
+`growEOFWith_preserves_valid` and `growEOFWith_preserves_loadable`
+both compose their four branches (see below).
 
 **`_preserves_valid` ladder complete.**  Top-level
 `growEOFWith_preserves_valid` lands by composing four branches:
@@ -202,36 +190,48 @@ The fresh-PT_LOAD branches' theorem takes
 `(e.phdrs.size + 1) < UInt16.size` for the bumped-phnum UInt16
 round-trip; real binaries satisfy this trivially.
 
-**`_preserves_loadable` partially landed.**
-`layoutForEncoding_preserves_loadable` (`LayoutEngine.lean`)
-shipped — covers the no-PT_LOAD branch of `growEOFWith`'s
-dispatch.  Built on per-phdr `relocatePhdr_*` lemmas
-(`_type`, `_align`, `_vaddr`, `_of_not_interp_dynamic`,
-`_pt_interp`, `_pt_dynamic`).
+**`_preserves_loadable` ladder complete (LANDED).**  All four
+branches plus the top-level dispatch ship:
+`layoutForEncoding_preserves_loadable` (`LayoutEngine.lean`,
+no-PT_LOAD branch, built on `relocatePhdr_*`),
+`growEOFWithMainBody_preserves_loadable`,
+`growEOFWithFreshPtLoad_preserves_loadable`,
+`growEOFWithFreshPtLoadReloc_preserves_loadable`, and
+`growEOFWith_preserves_loadable` (`GrowEOF.lean`).
 
-Remaining open: the three `growEOFWith*` branches (main body,
-fresh-PT_LOAD in-place, relocate) plus the top-level
-`growEOFWith_preserves_loadable` dispatch.  These need per-phdr
-facts for `updatePhdrsAfterMove` analogous to the
-`relocatePhdr_*` lemmas, but the function is structurally more
-involved: the `if i = lastIdx` branch updates filesz/memsz
-(preserving type/offset/vaddr/align) which then crosses the
-PT_INTERP / PT_DYNAMIC type-test if-then-else.  Tactic threading
-is finicky — the proof needs careful `cases lastIdx?` +
-`by_cases hLI : i = lastIdx` + `if_pos`/`if_neg` + the
-record-update preservation through `phLast`-type identity.
+The growEOFWith branches needed new per-phdr facts for
+`updatePhdrsAfterMove` — structurally more involved than
+`relocatePhdr` because the `if i = lastIdx` branch updates
+filesz/memsz (preserving type/offset/vaddr/align) which then
+crosses the PT_INTERP / PT_DYNAMIC type-test if-then-else.  The
+key tactic over the previous stuck attempt: **`subst` the
+`i = lastIdx` and `interpIdx?`/`dynamicIdx?` witnesses rather than
+`rw`-ing them** (the rewrites trip the dependent-motive checker
+under the nested `dif`).  Lemmas:
 
-For PT_LOAD-only segmentCongruence, the cleanest approach is a
-per-PT_LOAD lemma `updatePhdrsAfterMove_pt_load_offset_vaddr_align`
-that bypasses the PT_INTERP/PT_DYNAMIC tests via type-disjointness.
-For the agreement clauses, lemmas `updatePhdrsAfterMove_pt_interp` /
-`_pt_dynamic` mirror `relocatePhdr_pt_interp` / `_pt_dynamic` but
-need to handle the lastIdx pre-update.
-- `layoutForEncoding_preserves_valid` — the BSS-collision fallback;
-  same shape as `growEOFWith` but doesn't preserve PT_LOAD coverage.
+- `updatePhdrsAfterMove_pt_load_offset_vaddr_align` — bypasses the
+  PT_INTERP/PT_DYNAMIC tests via type-disjointness (PT_LOAD ≠
+  both), giving segmentCongruence.
+- `updatePhdrsAfterMove_pt_interp` / `_pt_dynamic` — the agreement
+  clauses; handle the lastIdx pre-update via the `subst` trick.
+- `updatePhdrsAfterMove_type` / `_size` — general type / size
+  preservation.
+- `retargetPtPhdr_{size,type,of_not_pt_phdr}` + composed
+  `retarget_update_*` — the relocate branch's extra outer
+  `retargetPtPhdr` layer (PT_PHDR ≠ PT_LOAD/INTERP/DYNAMIC, so it's
+  identity on the three relevant types).
+- `freshPtLoad_roundUp_congruence` — the fresh PT_LOAD's
+  congruence (offset/vaddr both `roundUp _ align` ⟹ `≡ 0 mod align`).
 
-**Estimated cost:** ~200 LOC each.  `growEOFWith_preserves_loadable`
-is the load-bearing one and probably ~500 LOC.
+The fresh-PT_LOAD branches take `(e.phdrs.size + 1) < UInt16.size`;
+the top-level dispatch additionally takes the structural
+disjointness invariants (`hSection0Null` / `headerPhdrDisjoint` /
+`headerSectionDisjoint` / `phdrSectionDisjoint`) for the per-branch
+`sections_nonoverlapping`.
+
+Axioms: `[propext, Classical.choice, Quot.sound]` — no `sorryAx`.
+Actual cost was ~780 LOC across `GrowEOF.lean` (L1 per-phdr facts +
+four branch theorems + top-level dispatch).
 
 **Supporting infrastructure landed.** `Patchelf/Elf/SectionOps.lean`
 (~420 LOC) exposes the helpers `growEOFWith` / `syncDtAddrTagsInFile`'s
@@ -523,10 +523,13 @@ different because they do change `sections`; these need their own
 complication only affects "no-op" sections-trivial ops like
 `setOsAbi`, `noDefaultLib`, `addDebugTag`.
 
-Recommend revisiting this item after picking up §1.1 (Parser
-establishes `IsLoadable`) — that pins down where the input
-invariants come from, and may suggest a cleaner shape for the op
-preservation theorems.
+§1.1 (Parser establishes `IsLoadable`) and §1.2
+(`growEOFWith_preserves_loadable`) are both now closed — they pin
+down where the input invariants come from and provide the
+layout-pass preservation the op-level theorems compose with.  The
+`updatePhdrsAfterMove_*` / `retargetPtPhdr_*` per-phdr lemma
+families from §1.2 are reusable for any op-level proof that routes
+through `growEOFWith`.
 
 #### 5.2 Op-level `_observable` completeness
 
