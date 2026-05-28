@@ -152,9 +152,13 @@ latter is the `strsz_size` field of `dynamicAddressCoherent`,
 not a separate clause).
 
 `IsLoadable` is consumed by `Validate.IsLoadableBytes` at the CLI
-write boundary.  Parser still returns `ParsedElf` (`IsValid` only)
-and no op carries an `_preserves_loadable` theorem; see ROADMAP
-item 1.1 for the unfinished static-side threading.
+write boundary AND by `Parser.parseLoadable`, which returns a
+typed `LoadableElfFile` carrying the four `IsLoadable` clauses
+plus `shdrSectionDisjoint` and `sectionFileInSomePtLoad`.  Existing
+`Parser.parse` is unchanged and still returns the weaker
+`ParsedElf`; the CLI's `validate` subcommand cross-checks both
+paths.  Op-level `_preserves_loadable` theorems remain open (see
+ROADMAP §1.2).
 
 ### Tier D: `parse_encode_roundtrip` — UNCONDITIONAL
 
@@ -388,11 +392,13 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
 
 ### Priority 1 gaps (verification depth)
 
-- **Parser doesn't establish `IsLoadable`** — `Parser.parse` still
-  returns only `IsValid`.  `Validate.IsLoadableBytes` is run on
-  encoder output at write time, but no op-level
-  `_preserves_loadable` theorem exists, and there's no static link
-  between parser output and validator success.
+- **Parser establishes `IsLoadable` — landed (typed entry point).**
+  `Parser.parseLoadable` returns `LoadableElfFile`, bundling the 4
+  `IsLoadable` clauses plus `shdrSectionDisjoint` and
+  `sectionFileInSomePtLoad`.  Per-clause `ParseError` variants
+  (`sectionsOverlapping`, `ptInterpAgreementFailed`, etc.) classify
+  loader-coherence failures.  Op-level `_preserves_loadable`
+  theorems remain open; pick up under §1.2.
 - **Pre-encode passes — `_preserves_valid` partially landed.**
   `syncDtStrszInFile_preserves_valid` (`Encoder.lean`) and
   `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`

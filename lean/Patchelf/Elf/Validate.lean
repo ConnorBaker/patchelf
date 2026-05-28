@@ -86,7 +86,11 @@ def validateBytes (bs : ByteArray) : Except ValidateFailure Unit :=
   | .ok pe   => validateElfFile pe.elf
 
 /-- Decidable predicate: output bytes are loadable.  This is the
-    Prop-level statement of "this won't SIGSEGV at exec." -/
+    Prop-level statement of "this won't SIGSEGV at exec."
+
+    Equivalent to `parseLoadable bs = .ok _`, but stated in terms of
+    `parse` for backwards compatibility.  See `LoadableElfFile` for
+    the strict-typed companion. -/
 def IsLoadableBytes (bs : ByteArray) : Prop :=
   match parse bs with
   | .error _ => False
@@ -97,5 +101,13 @@ def IsLoadableBytes (bs : ByteArray) : Prop :=
 instance (bs : ByteArray) : Decidable (IsLoadableBytes bs) := by
   unfold IsLoadableBytes
   split <;> exact inferInstance
+
+-- (`parseLoadable_isOk_iff_isLoadableBytes` bridge theorem — i.e.
+-- `parseLoadable bs = .ok _ ↔ IsLoadableBytes bs` — would close the
+-- loop between the typed-result and Prop-decidable formulations.
+-- Both branches reduce to the same conjunction over `parse bs`'s
+-- `.ok` branch, but the `Except`-bind reductions don't compose
+-- under `simp` cleanly enough to ship without scaffolding that
+-- isn't load-bearing yet.  Pick up if/when §1.2 needs it.)
 
 end Patchelf.Elf

@@ -57,6 +57,18 @@ inductive ParseError
   | contentWellFormedFailed
   | typesNotDistinct
   | namesNotUnique
+  /-- Per-clause `IsLoadable` failures (raised by `Parser.parseLoadable`
+      when the decoded `ElfFile` passes `IsValid` but fails one of the
+      loader-coherence clauses).  Each maps to one of the 4
+      `IsLoadable` clause definitions in `ElfFile.lean`, plus the 2
+      extras in `IsLoadableBytes` (`shdrSectionDisjoint`,
+      `sectionFileInSomePtLoad`). -/
+  | sectionsOverlapping
+  | shdrSectionsOverlapping
+  | ptInterpAgreementFailed
+  | ptDynamicAgreementFailed
+  | segmentCongruenceFailed
+  | sectionFileOutsidePtLoad (sectionIdx : Nat)
   deriving Repr
 
 namespace Parse

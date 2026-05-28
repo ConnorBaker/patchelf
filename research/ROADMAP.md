@@ -24,8 +24,10 @@ forward-looking view.
 > work, but a non-trivial dependent-type obstacle in `Adapter.toElfFile`
 > was discovered during the worked example — see §5.1 for details.
 >
-> Items §1.1, §1.2, §5.1 remain open.  §3.5a fully landed (both
-> in-place and relocatePht sub-cases — see below).
+> Items §1.2 and §5.1 remain open.  §3.5a fully landed (both
+> in-place and relocatePht sub-cases — see below).  §1.1 parser
+> side landed — `parseLoadable` now establishes `LoadableElfFile`;
+> per-op `_preserves_loadable` theorems remain (now under §1.2).
 >
 > **2026-05 cleanup + feature gap pass landed.** Six commits of
 > mechanical-duplication cleanup (~−260 LOC across CLI, Adapter,
@@ -109,36 +111,39 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 
 ### Priority 1 — Unblock tiers above IsValid
 
-#### 1.1 Parser: establish `IsLoadable`, not just `IsValid`
+#### 1.1 Parser: establish `IsLoadable`, not just `IsValid` — PARSER SIDE LANDED
 
-**Severity:** structural gap.  Partially mitigated at the I/O
-boundary: `Patchelf/Elf/Validate.lean` provides decidable
-`IsLoadableBytes` and the CLI runs `validateBytes` before every
-write (exit 5 on failure, file unchanged).  This is the *runtime*
-safety net.  The *static* gap remains: `Parser.parse` still returns
-`ParsedElf` carrying only `IsValid`, no op carries an
-`_preserves_loadable` theorem, and no proof connects parser output
-to validator success.
+`Parser.parseLoadable` now returns `LoadableElfFile`, a stronger
+companion to `ParsedElf` that bundles:
 
-**What to do:** extend `Parser.parse` to return
-`LoadableElfFile` (or an enhanced `ValidElfFile` with an optional
-`IsLoadable` field).  Check `sectionsNonOverlapping`,
-`ptInterpAgreement`, `ptDynamicAgreement`, `segmentCongruence`,
-`shdrSectionDisjoint`, `sectionFileInSomePtLoad` at the end of
-parse when `IsValid` holds.  On failure return a new `ParseError`
-subclass (not `shdrIdxMismatch`).
+- `elf : ElfFile` (the parsed file);
+- `isLoadable : elf.IsLoadable` (4-clause: `IsValid` plus
+  `sectionsNonOverlapping`, `ptInterpAgreement`,
+  `ptDynamicAgreement`, `segmentCongruence`);
+- `shdrSecDisjoint : elf.shdrSectionDisjoint`;
+- `secInSomeLoad : elf.sectionFileInSomePtLoad`.
 
-**Downstream:** once `parse` establishes `IsLoadable`, make every op
-preserve it via an `_preserves_loadable` theorem.  Most ops will
-preserve all clauses definitionally; the interesting ones are
-`setInterpreter` (PT_INTERP agreement after changing interp offset)
-and any op whose post-encode would route through `growEOFWith`'s
-BSS-collision fallback.
+These cover everything the kernel + glibc loader inspect at exec.
+On failure, `parseLoadable` dispatches to per-clause `ParseError`
+variants: `sectionsOverlapping`, `shdrSectionsOverlapping`,
+`ptInterpAgreementFailed`, `ptDynamicAgreementFailed`,
+`segmentCongruenceFailed`, `sectionFileOutsidePtLoad`.
 
-**Estimated cost:** ~500 LOC (parser extension + 14 op preservation
-theorems + per-clause Decidable instances refined for better error
-classification).  The decidable predicate is already in
-`Validate.lean`; this work is mostly threading.
+`LoadableElfFile.toParsedElf` recovers the weaker bundle for
+callers that only need `IsValid`.
+
+The CLI's `validate` subcommand cross-checks both paths
+(`validateBytes` and `parseLoadable`); any divergence surfaces as
+exit 5.  Real-binary tests 50–54 transitively exercise the new
+predicate via the pre-write validator.
+
+**Downstream still open:** every op needs an `_preserves_loadable`
+theorem so the static guarantee threads through CLI flows.  Most
+ops preserve all clauses definitionally; the interesting ones are
+`setInterpreter` (PT_INTERP agreement after changing interp
+offset) and any op whose post-encode routes through
+`growEOFWith`'s fresh-PT_LOAD or relocatePht branches.  Pick up
+under §1.2.
 
 #### 1.2 Pre-encode passes: `_preserves_valid` theorems
 

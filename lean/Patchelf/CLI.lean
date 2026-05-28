@@ -582,10 +582,18 @@ def runValidate (p : Parsed) : IO UInt32 := do
   match bsOpt with
   | .error e => IO.eprintln s!"I/O error reading {file}: {e}"; return 4
   | .ok bs =>
-    match validateBytes bs with
-    | .ok () => return 0
-    | .error f =>
+    -- Dual-path: validateBytes (decidable Prop) + parseLoadable (typed
+    -- result).  Both should agree on every input; any divergence is a
+    -- bug worth surfacing.  Cross-check is cheap (parseLoadable
+    -- shares the parse work via the implementation).
+    match validateBytes bs, Patchelf.Elf.parseLoadable bs with
+    | .ok (), .ok _ => return 0
+    | .error f, _ =>
         IO.eprintln s!"validate: {file}: {f.message}"; return 5
+    | .ok (), .error e =>
+        IO.eprintln s!"validate: {file}: parseLoadable disagreed with \
+          validateBytes (would have passed): {repr e}"
+        return 5
 
 def runInspect (p : Parsed) : IO UInt32 := do
   let file := fileOf p

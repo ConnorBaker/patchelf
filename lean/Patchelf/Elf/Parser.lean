@@ -177,4 +177,60 @@ def parse (bs : ByteArray) : Except Patchelf.Elf.ParseError ParsedElf := do
     else if ¬ elf.namedSectionsUnique then throw .namesNotUnique
     else throw .shdrIdxMismatch  -- unreachable; kept for totality.
 
+/-- Parsed ElfFile with `IsLoadable` evidence plus the two extra
+    clauses (`shdrSectionDisjoint`, `sectionFileInSomePtLoad`) that
+    `Validate.IsLoadableBytes` checks at write time.  Together these
+    cover everything the kernel + glibc loader inspect: byte-level
+    `IsValid` (8 clauses), section/segment overlap-freedom, PT_*
+    agreement, segment congruence, and SHF_ALLOC coverage.
+
+    `LoadableElfFile.toParsedElf` recovers the weaker `ParsedElf`
+    bundle for callers that only need `IsValid`. -/
+structure LoadableElfFile where
+  elf            : ElfFile
+  isLoadable     : elf.IsLoadable
+  shdrSecDisjoint : elf.shdrSectionDisjoint
+  secInSomeLoad  : elf.sectionFileInSomePtLoad
+
+/-- Forget the loader-coherence proofs and recover a plain
+    `ParsedElf`. -/
+def LoadableElfFile.toParsedElf (le : LoadableElfFile) : ParsedElf :=
+  ⟨le.elf, le.isLoadable.toIsValid⟩
+
+/-- Parse + verify all loader-coherence clauses.  Strictly stronger
+    than `parse`: returns a `LoadableElfFile` carrying the same
+    proofs that `Validate.validateBytes` checks at write time.
+
+    On `IsValid` failure: dispatches to the same per-clause
+    `ParseError` variants as `parse`.  On `IsLoadable` failure (or
+    one of the two extra clauses): returns a per-clause variant
+    naming which loader-coherence invariant failed.
+
+    Use this when downstream code wants the stronger static
+    guarantee — e.g., op-level `_preserves_loadable` theorems in
+    ROADMAP §1.2.  Existing CLI flows continue to use `parse`. -/
+def parseLoadable (bs : ByteArray) :
+    Except Patchelf.Elf.ParseError LoadableElfFile := do
+  let pe ← parse bs
+  let elf := pe.elf
+  if hLoad : elf.IsLoadable then
+    if hShdrSec : elf.shdrSectionDisjoint then
+      if hSecLoad : elf.sectionFileInSomePtLoad then
+        return ⟨elf, hLoad, hShdrSec, hSecLoad⟩
+      else
+        -- Find which section is outside every PT_LOAD.
+        let idx := Nat.fold elf.sections.size (init := (0 : Nat)) (fun i hi acc =>
+          if decide (ElfFile.sectionInSomePtLoad elf i hi) then acc else i)
+        throw (.sectionFileOutsidePtLoad idx)
+    else
+      throw .shdrSectionsOverlapping
+  else
+    -- Per-clause IsLoadable failure.  Probe the four clauses in
+    -- order; the IsValid base is already established (parse succeeded).
+    if ¬ elf.sectionsNonOverlapping then throw .sectionsOverlapping
+    else if ¬ elf.ptInterpAgreement then throw .ptInterpAgreementFailed
+    else if ¬ elf.ptDynamicAgreement then throw .ptDynamicAgreementFailed
+    else if ¬ elf.segmentCongruence then throw .segmentCongruenceFailed
+    else throw .shdrIdxMismatch  -- unreachable; kept for totality.
+
 end Patchelf.Elf
