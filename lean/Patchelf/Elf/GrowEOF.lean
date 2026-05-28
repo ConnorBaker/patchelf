@@ -286,13 +286,126 @@ theorem appendTransform_transformSpec (startOffset startPage : Nat) :
     (s : Section) (o : Nat) :
     (appendTransform startOffset startPage s o).content = s.content := rfl
 
--- (Deferred: a generic `appendStaleSections_field_eq` projection
---  lemma that exposes per-field preservation through `placeFold`'s
---  `(verbatim s ∨ appendTransform s o)` output shape.  The mechanism
---  is straightforward induction on the fold but requires a dual
---  motive (`state.1.size = k` AND per-index field equality at every
---  j' < k) plus careful index manipulation to read the freshly-pushed
---  element at j' = state.1.size.  Picking up under §1.2 follow-up.)
+/-! ## `appendStaleSections` per-field preservation
+
+    Generic projection: any field that `appendTransform` preserves
+    is preserved by `appendStaleSections` at every index.  Consumes
+    `placeFold_value_witness` (the structural per-entry verbatim /
+    `transform input off` disjunction).  Per-field corollaries below
+    instantiate the projection for the seven non-(offset, addr)
+    fields that `IsValid` clauses depend on. -/
+
+theorem appendStaleSections_field_eq.{u}
+    {α : Type u} (sections : Array Section) (stale : Array Bool)
+    (startOffset startPage : Nat)
+    (proj : Section → α)
+    (hTransform : ∀ s o, proj (appendTransform startOffset startPage s o) = proj s)
+    (j : Nat)
+    (hj : j < (appendStaleSections sections stale startOffset startPage).1.size)
+    (hjS : j < sections.size) :
+    proj ((appendStaleSections sections stale startOffset startPage).1[j]'hj)
+      = proj (sections[j]'hjS) := by
+  unfold appendStaleSections
+  rcases PlaceFold.placeFold_value_witness sections 0 j hjS hj with
+    ⟨_, hVerb⟩ | ⟨_, off, hPlaced⟩
+  · -- Verbatim: output[j] = sections[j].
+    rw [hVerb]
+  · -- Placed: output[j] = appendTransform sections[j] off; use hTransform.
+    rw [hPlaced]; exact hTransform _ _
+
+/-- `appendStaleSections` preserves `name` at every index. -/
+theorem appendStaleSections_name (sections : Array Section) (stale : Array Bool)
+    (startOffset startPage : Nat) (j : Nat)
+    (hj : j < (appendStaleSections sections stale startOffset startPage).1.size)
+    (hjS : j < sections.size) :
+    ((appendStaleSections sections stale startOffset startPage).1[j]'hj).name
+      = (sections[j]'hjS).name :=
+  appendStaleSections_field_eq sections stale startOffset startPage
+    (·.name) (fun _ _ => rfl) j hj hjS
+
+/-- `appendStaleSections` preserves `flags`. -/
+theorem appendStaleSections_flags (sections : Array Section) (stale : Array Bool)
+    (startOffset startPage : Nat) (j : Nat)
+    (hj : j < (appendStaleSections sections stale startOffset startPage).1.size)
+    (hjS : j < sections.size) :
+    ((appendStaleSections sections stale startOffset startPage).1[j]'hj).flags
+      = (sections[j]'hjS).flags :=
+  appendStaleSections_field_eq sections stale startOffset startPage
+    (·.flags) (fun _ _ => rfl) j hj hjS
+
+/-- `appendStaleSections` preserves `link`. -/
+theorem appendStaleSections_link (sections : Array Section) (stale : Array Bool)
+    (startOffset startPage : Nat) (j : Nat)
+    (hj : j < (appendStaleSections sections stale startOffset startPage).1.size)
+    (hjS : j < sections.size) :
+    ((appendStaleSections sections stale startOffset startPage).1[j]'hj).link
+      = (sections[j]'hjS).link :=
+  appendStaleSections_field_eq sections stale startOffset startPage
+    (·.link) (fun _ _ => rfl) j hj hjS
+
+/-- `appendStaleSections` preserves `info`. -/
+theorem appendStaleSections_info (sections : Array Section) (stale : Array Bool)
+    (startOffset startPage : Nat) (j : Nat)
+    (hj : j < (appendStaleSections sections stale startOffset startPage).1.size)
+    (hjS : j < sections.size) :
+    ((appendStaleSections sections stale startOffset startPage).1[j]'hj).info
+      = (sections[j]'hjS).info :=
+  appendStaleSections_field_eq sections stale startOffset startPage
+    (·.info) (fun _ _ => rfl) j hj hjS
+
+/-- `appendStaleSections` preserves `addralign`. -/
+theorem appendStaleSections_addralign (sections : Array Section) (stale : Array Bool)
+    (startOffset startPage : Nat) (j : Nat)
+    (hj : j < (appendStaleSections sections stale startOffset startPage).1.size)
+    (hjS : j < sections.size) :
+    ((appendStaleSections sections stale startOffset startPage).1[j]'hj).addralign
+      = (sections[j]'hjS).addralign :=
+  appendStaleSections_field_eq sections stale startOffset startPage
+    (·.addralign) (fun _ _ => rfl) j hj hjS
+
+/-- `appendStaleSections` preserves `entsize`. -/
+theorem appendStaleSections_entsize (sections : Array Section) (stale : Array Bool)
+    (startOffset startPage : Nat) (j : Nat)
+    (hj : j < (appendStaleSections sections stale startOffset startPage).1.size)
+    (hjS : j < sections.size) :
+    ((appendStaleSections sections stale startOffset startPage).1[j]'hj).entsize
+      = (sections[j]'hjS).entsize :=
+  appendStaleSections_field_eq sections stale startOffset startPage
+    (·.entsize) (fun _ _ => rfl) j hj hjS
+
+/-- `appendStaleSections` preserves `content`. -/
+theorem appendStaleSections_content (sections : Array Section) (stale : Array Bool)
+    (startOffset startPage : Nat) (j : Nat)
+    (hj : j < (appendStaleSections sections stale startOffset startPage).1.size)
+    (hjS : j < sections.size) :
+    ((appendStaleSections sections stale startOffset startPage).1[j]'hj).content
+      = (sections[j]'hjS).content :=
+  appendStaleSections_field_eq sections stale startOffset startPage
+    (·.content) (fun _ _ => rfl) j hj hjS
+
+/-- `appendStaleSections` preserves `type` (already provable via
+    `Placement.type_eq`, but we expose it here for uniform access
+    alongside the other field corollaries). -/
+theorem appendStaleSections_type (sections : Array Section) (stale : Array Bool)
+    (startOffset startPage : Nat) (j : Nat)
+    (hj : j < (appendStaleSections sections stale startOffset startPage).1.size)
+    (hjS : j < sections.size) :
+    ((appendStaleSections sections stale startOffset startPage).1[j]'hj).type
+      = (sections[j]'hjS).type :=
+  appendStaleSections_field_eq sections stale startOffset startPage
+    (·.type) (fun s o => by show (appendTransform _ _ s o).content.type = _; rfl)
+    j hj hjS
+
+/-- `appendStaleSections` preserves `encodedSize` (consequence of
+    content preservation; encodedSize is content-derived). -/
+theorem appendStaleSections_encodedSize (sections : Array Section) (stale : Array Bool)
+    (startOffset startPage : Nat) (j : Nat)
+    (hj : j < (appendStaleSections sections stale startOffset startPage).1.size)
+    (hjS : j < sections.size) :
+    ((appendStaleSections sections stale startOffset startPage).1[j]'hj).encodedSize
+      = (sections[j]'hjS).encodedSize := by
+  unfold Section.encodedSize
+  rw [appendStaleSections_content sections stale startOffset startPage j hj hjS]
 
 /-! ## Stale ⇒ disjointness extraction
 
@@ -1787,6 +1900,598 @@ theorem growEOFWithMainBody_produces_spliceRegionsDisjoint
             ≤ startOffset + appendedBytes := hPlace.2.2
       omega
 
+/-! ## `growEOFWithMainBody` field projections
+
+    Lift the `appendStaleSections_*` corollaries to the full
+    `growEOFWithMainBody` output.  The output's `sections` field IS
+    `appendStaleSections.1`; its `header.{phnum, shnum, shstrndx}`
+    are unchanged from the input. -/
+
+@[simp] theorem growEOFWithMainBody_sections_size
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).sections.size = e.sections.size := by
+  unfold growEOFWithMainBody
+  exact PlaceFold.size_eq _ _
+
+@[simp] theorem growEOFWithMainBody_header_phnum
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).header.phnum = e.header.phnum := by
+  unfold growEOFWithMainBody; rfl
+
+@[simp] theorem growEOFWithMainBody_header_shnum
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).header.shnum = e.header.shnum := by
+  unfold growEOFWithMainBody; rfl
+
+@[simp] theorem growEOFWithMainBody_header_shstrndx
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).header.shstrndx = e.header.shstrndx := by
+  unfold growEOFWithMainBody; rfl
+
+@[simp] theorem growEOFWithMainBody_header_phentsize
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).header.phentsize = e.header.phentsize := by
+  unfold growEOFWithMainBody; rfl
+
+@[simp] theorem growEOFWithMainBody_header_shentsize
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).header.shentsize = e.header.shentsize := by
+  unfold growEOFWithMainBody; rfl
+
+@[simp] theorem growEOFWithMainBody_phdrs_size
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).phdrs.size = e.phdrs.size := by
+  unfold growEOFWithMainBody updatePhdrsAfterMove
+  exact Array.size_mapIdx
+
+/-- Per-section name preservation lifted to `growEOFWithMainBody`. -/
+theorem growEOFWithMainBody_sections_name
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) (j : Nat)
+    (hj : j < (growEOFWithMainBody pageSize? e lastIdx).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithMainBody pageSize? e lastIdx).sections[j]'hj).name
+      = (e.sections[j]'hjE).name := by
+  unfold growEOFWithMainBody at hj ⊢
+  exact appendStaleSections_name _ _ _ _ j hj hjE
+
+/-- Per-section type preservation. -/
+theorem growEOFWithMainBody_sections_type
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) (j : Nat)
+    (hj : j < (growEOFWithMainBody pageSize? e lastIdx).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithMainBody pageSize? e lastIdx).sections[j]'hj).type
+      = (e.sections[j]'hjE).type := by
+  unfold growEOFWithMainBody at hj ⊢
+  exact appendStaleSections_type _ _ _ _ j hj hjE
+
+/-- Per-section content preservation. -/
+theorem growEOFWithMainBody_sections_content
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) (j : Nat)
+    (hj : j < (growEOFWithMainBody pageSize? e lastIdx).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithMainBody pageSize? e lastIdx).sections[j]'hj).content
+      = (e.sections[j]'hjE).content := by
+  unfold growEOFWithMainBody at hj ⊢
+  exact appendStaleSections_content _ _ _ _ j hj hjE
+
+/-- `growEOFWithMainBody` preserves `findUniqueTypeIdx` for every type
+    (since per-section types are preserved + sections.size unchanged). -/
+theorem growEOFWithMainBody_findUniqueTypeIdx
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) (ty : ShType) :
+    (growEOFWithMainBody pageSize? e lastIdx).findUniqueTypeIdx ty
+      = e.findUniqueTypeIdx ty := by
+  apply ElfFile.firstIdxWhereIn_congr
+  · exact growEOFWithMainBody_sections_size _ _ _
+  · intros k hk hk'
+    have := growEOFWithMainBody_sections_type pageSize? e lastIdx k hk hk'
+    simp [this]
+
+/-- `growEOFWithMainBody` preserves `dynamicIdx`. -/
+@[simp] theorem growEOFWithMainBody_dynamicIdx
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).dynamicIdx = e.dynamicIdx :=
+  growEOFWithMainBody_findUniqueTypeIdx pageSize? e lastIdx ShType.SHT_DYNAMIC
+
+/-- `growEOFWithMainBody` preserves `dynsymIdx`. -/
+@[simp] theorem growEOFWithMainBody_dynsymIdx
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).dynsymIdx = e.dynsymIdx :=
+  growEOFWithMainBody_findUniqueTypeIdx pageSize? e lastIdx ShType.SHT_DYNSYM
+
+/-- `growEOFWithMainBody` preserves `contentAt` for any optional index. -/
+theorem growEOFWithMainBody_contentAt
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) (i? : Option Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).contentAt i? = e.contentAt i? := by
+  unfold ElfFile.contentAt
+  cases i? with
+  | none => rfl
+  | some i =>
+    simp only [Option.bind_some]
+    by_cases hi : i < e.sections.size
+    · have hi' : i < (growEOFWithMainBody pageSize? e lastIdx).sections.size :=
+        (growEOFWithMainBody_sections_size pageSize? e lastIdx).symm ▸ hi
+      rw [dif_pos hi', dif_pos hi]
+      rw [growEOFWithMainBody_sections_content pageSize? e lastIdx i hi' hi]
+    · have hi' : ¬ i < (growEOFWithMainBody pageSize? e lastIdx).sections.size := by
+        intro h; exact hi ((growEOFWithMainBody_sections_size pageSize? e lastIdx).symm ▸ h)
+      rw [dif_neg hi', dif_neg hi]
+
+/-- `growEOFWithMainBody` preserves `dynamic`. -/
+@[simp] theorem growEOFWithMainBody_dynamic
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).dynamic = e.dynamic := by
+  unfold ElfFile.dynamic
+  rw [growEOFWithMainBody_dynamicIdx, growEOFWithMainBody_contentAt]
+
+/-- `growEOFWithMainBody` preserves `dynsym`. -/
+@[simp] theorem growEOFWithMainBody_dynsym
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).dynsym = e.dynsym := by
+  unfold ElfFile.dynsym
+  rw [growEOFWithMainBody_dynsymIdx, growEOFWithMainBody_contentAt]
+
+/-- `growEOFWithMainBody` preserves `shstrtab`. -/
+@[simp] theorem growEOFWithMainBody_shstrtab
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).shstrtab = e.shstrtab := by
+  unfold ElfFile.shstrtab
+  rw [growEOFWithMainBody_header_shstrndx]
+  by_cases hSh : e.header.shstrndx.toNat < e.sections.size
+  · have hSh' : e.header.shstrndx.toNat
+                  < (growEOFWithMainBody pageSize? e lastIdx).sections.size :=
+      (growEOFWithMainBody_sections_size pageSize? e lastIdx).symm ▸ hSh
+    rw [dif_pos hSh', dif_pos hSh]
+    rw [growEOFWithMainBody_sections_content pageSize? e lastIdx _ hSh' hSh]
+  · have hSh' : ¬ e.header.shstrndx.toNat
+                   < (growEOFWithMainBody pageSize? e lastIdx).sections.size := by
+      intro h; exact hSh ((growEOFWithMainBody_sections_size pageSize? e lastIdx).symm ▸ h)
+    rw [dif_neg hSh', dif_neg hSh]
+
+/-- `growEOFWithMainBody` preserves `findIdxByName` (since shstrtab and
+    per-section names are both preserved). -/
+theorem growEOFWithMainBody_findIdxByName
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) (name : ByteArray) :
+    (growEOFWithMainBody pageSize? e lastIdx).findIdxByName name
+      = e.findIdxByName name := by
+  unfold ElfFile.findIdxByName
+  rw [growEOFWithMainBody_shstrtab]
+  cases e.shstrtab with
+  | none => rfl
+  | some st =>
+    apply ElfFile.firstIdxWhereIn_congr
+    · exact growEOFWithMainBody_sections_size _ _ _
+    · intros k hk hk'
+      have := growEOFWithMainBody_sections_name pageSize? e lastIdx k hk hk'
+      simp [this]
+
+/-- `growEOFWithMainBody` preserves `dynstrIdx`. -/
+@[simp] theorem growEOFWithMainBody_dynstrIdx
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).dynstrIdx = e.dynstrIdx :=
+  growEOFWithMainBody_findIdxByName pageSize? e lastIdx _
+
+/-- `growEOFWithMainBody` preserves `dynstr`. -/
+@[simp] theorem growEOFWithMainBody_dynstr
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).dynstr = e.dynstr := by
+  unfold ElfFile.dynstr
+  rw [growEOFWithMainBody_dynstrIdx, growEOFWithMainBody_contentAt]
+
+/-- `growEOFWithMainBody` preserves byte-layer `IsValid`.
+
+    All 8 IsValid clauses depend only on per-section (name, type,
+    content) plus header counts (phnum, shnum, etc.) — none on
+    `(offset, addr)`.  `growEOFWithMainBody` mutates `header.shoff`
+    and per-section `(offset, addr)` only; phnum / shnum /
+    sections.size / phdrs.size are all preserved.  The proof
+    dispatches each clause via the `growEOFWithMainBody_*` accessor-
+    preservation lemmas above. -/
+theorem growEOFWithMainBody_preserves_valid
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat)
+    (hVal : e.IsValid) :
+    (growEOFWithMainBody pageSize? e lastIdx).IsValid := by
+  refine
+    { header_counts := ?_, sections_wf := ?_, strtabs_wf := ?_,
+      dynamic_wf := ?_, dynsym_wf := ?_, content_wf := ?_,
+      types_distinct := ?_, names_unique := ?_ }
+  ----------------------------------------
+  -- header_counts: phnum/shnum/etc. unchanged.
+  ----------------------------------------
+  · obtain ⟨h1, h2, h3, h4, h5⟩ := hVal.header_counts
+    refine ⟨?_, ?_, ?_, ?_, ?_⟩
+    · rw [growEOFWithMainBody_header_phnum, growEOFWithMainBody_phdrs_size]; exact h1
+    · rw [growEOFWithMainBody_header_shnum, growEOFWithMainBody_sections_size]; exact h2
+    · rw [growEOFWithMainBody_header_phentsize]; exact h3
+    · rw [growEOFWithMainBody_header_shentsize]; exact h4
+    · rw [growEOFWithMainBody_header_shstrndx, growEOFWithMainBody_sections_size]; exact h5
+  ----------------------------------------
+  -- sections_wf: section[0].type = SHT_NULL.  Type preserved at index 0.
+  ----------------------------------------
+  · intro h0
+    have h0' : 0 < e.sections.size :=
+      (growEOFWithMainBody_sections_size pageSize? e lastIdx) ▸ h0
+    rw [growEOFWithMainBody_sections_type pageSize? e lastIdx 0 h0 h0']
+    exact hVal.sections_wf h0'
+  ----------------------------------------
+  -- strtabs_wf: per-section strtab predicate; depends on content only.
+  ----------------------------------------
+  · have hAll := hVal.strtabs_wf
+    show (growEOFWithMainBody pageSize? e lastIdx).sections.all _ = true
+    unfold ElfFile.strtabsWellFormed at hAll
+    rw [Array.all_eq_true] at hAll ⊢
+    intro j hj
+    have hjE : j < e.sections.size :=
+      (growEOFWithMainBody_sections_size pageSize? e lastIdx) ▸ hj
+    show ElfFile.Section.strtabWellFormedB
+            ((growEOFWithMainBody pageSize? e lastIdx).sections[j]'hj) = true
+    have : ElfFile.Section.strtabWellFormedB
+              ((growEOFWithMainBody pageSize? e lastIdx).sections[j]'hj)
+         = ElfFile.Section.strtabWellFormedB (e.sections[j]'hjE) := by
+      unfold ElfFile.Section.strtabWellFormedB
+      rw [growEOFWithMainBody_sections_content pageSize? e lastIdx j hj hjE]
+    rw [this]
+    exact hAll j hjE
+  ----------------------------------------
+  -- dynamic_wf: depends on .dynamic and .dynstr; both preserved.
+  ----------------------------------------
+  · refine ⟨?_, ?_⟩
+    · intro dyn hd
+      rw [growEOFWithMainBody_dynamic] at hd
+      exact hVal.dynamic_wf.1 dyn hd
+    · intros dyn ds hd hds
+      rw [growEOFWithMainBody_dynamic] at hd
+      rw [growEOFWithMainBody_dynstr] at hds
+      exact hVal.dynamic_wf.2 dyn ds hd hds
+  ----------------------------------------
+  -- dynsym_wf: depends on .dynsym and .dynstr; both preserved.
+  ----------------------------------------
+  · intros syms ds hSyms hDs
+    rw [growEOFWithMainBody_dynsym] at hSyms
+    rw [growEOFWithMainBody_dynstr] at hDs
+    exact hVal.dynsym_wf syms ds hSyms hDs
+  ----------------------------------------
+  -- content_wf: per-section content predicate.
+  ----------------------------------------
+  · have hAll := hVal.content_wf
+    show (growEOFWithMainBody pageSize? e lastIdx).sections.all _ = true
+    unfold ElfFile.sectionsContentWellFormed at hAll
+    rw [Array.all_eq_true] at hAll ⊢
+    intro j hj
+    have hjE : j < e.sections.size :=
+      (growEOFWithMainBody_sections_size pageSize? e lastIdx) ▸ hj
+    show ElfFile.Section.contentWellFormedB
+            ((growEOFWithMainBody pageSize? e lastIdx).sections[j]'hj) = true
+    have : ElfFile.Section.contentWellFormedB
+              ((growEOFWithMainBody pageSize? e lastIdx).sections[j]'hj)
+         = ElfFile.Section.contentWellFormedB (e.sections[j]'hjE) := by
+      unfold ElfFile.Section.contentWellFormedB
+      rw [growEOFWithMainBody_sections_content pageSize? e lastIdx j hj hjE]
+    rw [this]
+    exact hAll j hjE
+  ----------------------------------------
+  -- types_distinct: per-type uniqueness; types preserved.
+  ----------------------------------------
+  · obtain ⟨h1, h2, h3, h4, h5, h6⟩ := hVal.types_distinct
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> {
+      intros i hi j hj hi_t hj_t
+      have hiE : i < e.sections.size :=
+        (growEOFWithMainBody_sections_size pageSize? e lastIdx) ▸ hi
+      have hjE : j < e.sections.size :=
+        (growEOFWithMainBody_sections_size pageSize? e lastIdx) ▸ hj
+      rw [growEOFWithMainBody_sections_type pageSize? e lastIdx i hi hiE] at hi_t
+      rw [growEOFWithMainBody_sections_type pageSize? e lastIdx j hj hjE] at hj_t
+      first
+      | exact h1 i hiE j hjE hi_t hj_t
+      | exact h2 i hiE j hjE hi_t hj_t
+      | exact h3 i hiE j hjE hi_t hj_t
+      | exact h4 i hiE j hjE hi_t hj_t
+      | exact h5 i hiE j hjE hi_t hj_t
+      | exact h6 i hiE j hjE hi_t hj_t
+    }
+  ----------------------------------------
+  -- names_unique: shstrtab + per-section name; both preserved.
+  ----------------------------------------
+  · unfold ElfFile.namedSectionsUnique
+    rw [growEOFWithMainBody_shstrtab]
+    cases hSt : e.shstrtab with
+    | none => trivial
+    | some st =>
+        obtain ⟨h1, h2⟩ := by
+          have := hVal.names_unique
+          unfold ElfFile.namedSectionsUnique at this
+          rw [hSt] at this; exact this
+        constructor <;> {
+          intros i hi j hj hi_n hj_n
+          have hiE : i < e.sections.size :=
+            (growEOFWithMainBody_sections_size pageSize? e lastIdx) ▸ hi
+          have hjE : j < e.sections.size :=
+            (growEOFWithMainBody_sections_size pageSize? e lastIdx) ▸ hj
+          rw [growEOFWithMainBody_sections_name pageSize? e lastIdx i hi hiE] at hi_n
+          rw [growEOFWithMainBody_sections_name pageSize? e lastIdx j hj hjE] at hj_n
+          first
+          | exact h1 i hiE j hjE hi_n hj_n
+          | exact h2 i hiE j hjE hi_n hj_n
+        }
+
+/-! ## `growEOFWithFreshPtLoad` field projections and preserves_valid -/
+
+@[simp] theorem growEOFWithFreshPtLoad_sections_size
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).sections.size = e.sections.size := by
+  unfold growEOFWithFreshPtLoad
+  exact PlaceFold.size_eq _ _
+
+@[simp] theorem growEOFWithFreshPtLoad_header_phnum
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).header.phnum
+      = (e.phdrs.size + 1).toUInt16 := by
+  unfold growEOFWithFreshPtLoad; rfl
+
+@[simp] theorem growEOFWithFreshPtLoad_header_shnum
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).header.shnum = e.header.shnum := by
+  unfold growEOFWithFreshPtLoad; rfl
+
+@[simp] theorem growEOFWithFreshPtLoad_header_shstrndx
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).header.shstrndx = e.header.shstrndx := by
+  unfold growEOFWithFreshPtLoad; rfl
+
+@[simp] theorem growEOFWithFreshPtLoad_header_phentsize
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).header.phentsize = e.header.phentsize := by
+  unfold growEOFWithFreshPtLoad; rfl
+
+@[simp] theorem growEOFWithFreshPtLoad_header_shentsize
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).header.shentsize = e.header.shentsize := by
+  unfold growEOFWithFreshPtLoad; rfl
+
+@[simp] theorem growEOFWithFreshPtLoad_phdrs_size
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).phdrs.size = e.phdrs.size + 1 := by
+  unfold growEOFWithFreshPtLoad updatePhdrsAfterMove
+  rw [Array.size_push, Array.size_mapIdx]
+
+theorem growEOFWithFreshPtLoad_sections_name
+    (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWithFreshPtLoad pageSize? e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithFreshPtLoad pageSize? e).sections[j]'hj).name
+      = (e.sections[j]'hjE).name := by
+  unfold growEOFWithFreshPtLoad at hj ⊢
+  exact appendStaleSections_name _ _ _ _ j hj hjE
+
+theorem growEOFWithFreshPtLoad_sections_type
+    (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWithFreshPtLoad pageSize? e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithFreshPtLoad pageSize? e).sections[j]'hj).type
+      = (e.sections[j]'hjE).type := by
+  unfold growEOFWithFreshPtLoad at hj ⊢
+  exact appendStaleSections_type _ _ _ _ j hj hjE
+
+theorem growEOFWithFreshPtLoad_sections_content
+    (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWithFreshPtLoad pageSize? e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithFreshPtLoad pageSize? e).sections[j]'hj).content
+      = (e.sections[j]'hjE).content := by
+  unfold growEOFWithFreshPtLoad at hj ⊢
+  exact appendStaleSections_content _ _ _ _ j hj hjE
+
+theorem growEOFWithFreshPtLoad_findUniqueTypeIdx
+    (pageSize? : Option Nat) (e : ElfFile) (ty : ShType) :
+    (growEOFWithFreshPtLoad pageSize? e).findUniqueTypeIdx ty
+      = e.findUniqueTypeIdx ty := by
+  apply ElfFile.firstIdxWhereIn_congr
+  · exact growEOFWithFreshPtLoad_sections_size _ _
+  · intros k hk hk'
+    have := growEOFWithFreshPtLoad_sections_type pageSize? e k hk hk'
+    simp [this]
+
+@[simp] theorem growEOFWithFreshPtLoad_dynamicIdx
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).dynamicIdx = e.dynamicIdx :=
+  growEOFWithFreshPtLoad_findUniqueTypeIdx pageSize? e ShType.SHT_DYNAMIC
+
+@[simp] theorem growEOFWithFreshPtLoad_dynsymIdx
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).dynsymIdx = e.dynsymIdx :=
+  growEOFWithFreshPtLoad_findUniqueTypeIdx pageSize? e ShType.SHT_DYNSYM
+
+theorem growEOFWithFreshPtLoad_contentAt
+    (pageSize? : Option Nat) (e : ElfFile) (i? : Option Nat) :
+    (growEOFWithFreshPtLoad pageSize? e).contentAt i? = e.contentAt i? := by
+  unfold ElfFile.contentAt
+  cases i? with
+  | none => rfl
+  | some i =>
+    simp only [Option.bind_some]
+    by_cases hi : i < e.sections.size
+    · have hi' : i < (growEOFWithFreshPtLoad pageSize? e).sections.size :=
+        (growEOFWithFreshPtLoad_sections_size pageSize? e).symm ▸ hi
+      rw [dif_pos hi', dif_pos hi]
+      rw [growEOFWithFreshPtLoad_sections_content pageSize? e i hi' hi]
+    · have hi' : ¬ i < (growEOFWithFreshPtLoad pageSize? e).sections.size := by
+        intro h; exact hi ((growEOFWithFreshPtLoad_sections_size pageSize? e).symm ▸ h)
+      rw [dif_neg hi', dif_neg hi]
+
+@[simp] theorem growEOFWithFreshPtLoad_dynamic
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).dynamic = e.dynamic := by
+  unfold ElfFile.dynamic
+  rw [growEOFWithFreshPtLoad_dynamicIdx, growEOFWithFreshPtLoad_contentAt]
+
+@[simp] theorem growEOFWithFreshPtLoad_dynsym
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).dynsym = e.dynsym := by
+  unfold ElfFile.dynsym
+  rw [growEOFWithFreshPtLoad_dynsymIdx, growEOFWithFreshPtLoad_contentAt]
+
+@[simp] theorem growEOFWithFreshPtLoad_shstrtab
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).shstrtab = e.shstrtab := by
+  unfold ElfFile.shstrtab
+  rw [growEOFWithFreshPtLoad_header_shstrndx]
+  by_cases hSh : e.header.shstrndx.toNat < e.sections.size
+  · have hSh' : e.header.shstrndx.toNat
+                  < (growEOFWithFreshPtLoad pageSize? e).sections.size :=
+      (growEOFWithFreshPtLoad_sections_size pageSize? e).symm ▸ hSh
+    rw [dif_pos hSh', dif_pos hSh]
+    rw [growEOFWithFreshPtLoad_sections_content pageSize? e _ hSh' hSh]
+  · have hSh' : ¬ e.header.shstrndx.toNat
+                   < (growEOFWithFreshPtLoad pageSize? e).sections.size := by
+      intro h; exact hSh ((growEOFWithFreshPtLoad_sections_size pageSize? e).symm ▸ h)
+    rw [dif_neg hSh', dif_neg hSh]
+
+theorem growEOFWithFreshPtLoad_findIdxByName
+    (pageSize? : Option Nat) (e : ElfFile) (name : ByteArray) :
+    (growEOFWithFreshPtLoad pageSize? e).findIdxByName name
+      = e.findIdxByName name := by
+  unfold ElfFile.findIdxByName
+  rw [growEOFWithFreshPtLoad_shstrtab]
+  cases e.shstrtab with
+  | none => rfl
+  | some st =>
+    apply ElfFile.firstIdxWhereIn_congr
+    · exact growEOFWithFreshPtLoad_sections_size _ _
+    · intros k hk hk'
+      have := growEOFWithFreshPtLoad_sections_name pageSize? e k hk hk'
+      simp [this]
+
+@[simp] theorem growEOFWithFreshPtLoad_dynstrIdx
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).dynstrIdx = e.dynstrIdx :=
+  growEOFWithFreshPtLoad_findIdxByName pageSize? e _
+
+@[simp] theorem growEOFWithFreshPtLoad_dynstr
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).dynstr = e.dynstr := by
+  unfold ElfFile.dynstr
+  rw [growEOFWithFreshPtLoad_dynstrIdx, growEOFWithFreshPtLoad_contentAt]
+
+/-- `growEOFWithFreshPtLoad` preserves byte-layer `IsValid`, given a
+    bound on `phdrs.size + 1` (so the bumped phnum survives the
+    `UInt16` round-trip).  The bound `(e.phdrs.size + 1) < UInt16.size`
+    is satisfied by every real ELF (phnum is at most a few dozen). -/
+theorem growEOFWithFreshPtLoad_preserves_valid
+    (pageSize? : Option Nat) (e : ElfFile)
+    (hVal : e.IsValid)
+    (hPhdrFit : (e.phdrs.size + 1) < UInt16.size) :
+    (growEOFWithFreshPtLoad pageSize? e).IsValid := by
+  refine
+    { header_counts := ?_, sections_wf := ?_, strtabs_wf := ?_,
+      dynamic_wf := ?_, dynsym_wf := ?_, content_wf := ?_,
+      types_distinct := ?_, names_unique := ?_ }
+  ----------------------------------------
+  -- header_counts: phnum bumped, shnum/etc. unchanged.
+  ----------------------------------------
+  · obtain ⟨_, h2, h3, h4, h5⟩ := hVal.header_counts
+    refine ⟨?_, ?_, ?_, ?_, ?_⟩
+    · -- phnum.toNat = phdrs.size = e.phdrs.size + 1.
+      rw [growEOFWithFreshPtLoad_header_phnum, growEOFWithFreshPtLoad_phdrs_size]
+      -- (e.phdrs.size + 1).toUInt16.toNat = e.phdrs.size + 1 (given hPhdrFit).
+      show (e.phdrs.size + 1).toUInt16.toNat = e.phdrs.size + 1
+      -- For n < 2^16, (n.toUInt16.toNat) = n.  Standard mod-reduction.
+      unfold Nat.toUInt16 UInt16.toNat
+      simp only [UInt16.ofNat]
+      -- Goal reduces to (e.phdrs.size + 1) % 2^16 = e.phdrs.size + 1.
+      exact Nat.mod_eq_of_lt hPhdrFit
+    · rw [growEOFWithFreshPtLoad_header_shnum, growEOFWithFreshPtLoad_sections_size]; exact h2
+    · rw [growEOFWithFreshPtLoad_header_phentsize]; exact h3
+    · rw [growEOFWithFreshPtLoad_header_shentsize]; exact h4
+    · rw [growEOFWithFreshPtLoad_header_shstrndx, growEOFWithFreshPtLoad_sections_size]; exact h5
+  ----------------------------------------
+  -- sections_wf, strtabs_wf, dynamic_wf, dynsym_wf, content_wf,
+  -- types_distinct, names_unique: identical structure to main-body proof.
+  ----------------------------------------
+  · intro h0
+    have h0' : 0 < e.sections.size :=
+      (growEOFWithFreshPtLoad_sections_size pageSize? e) ▸ h0
+    rw [growEOFWithFreshPtLoad_sections_type pageSize? e 0 h0 h0']
+    exact hVal.sections_wf h0'
+  · have hAll := hVal.strtabs_wf
+    show (growEOFWithFreshPtLoad pageSize? e).sections.all _ = true
+    unfold ElfFile.strtabsWellFormed at hAll
+    rw [Array.all_eq_true] at hAll ⊢
+    intro j hj
+    have hjE : j < e.sections.size :=
+      (growEOFWithFreshPtLoad_sections_size pageSize? e) ▸ hj
+    show ElfFile.Section.strtabWellFormedB
+            ((growEOFWithFreshPtLoad pageSize? e).sections[j]'hj) = true
+    have : ElfFile.Section.strtabWellFormedB
+              ((growEOFWithFreshPtLoad pageSize? e).sections[j]'hj)
+         = ElfFile.Section.strtabWellFormedB (e.sections[j]'hjE) := by
+      unfold ElfFile.Section.strtabWellFormedB
+      rw [growEOFWithFreshPtLoad_sections_content pageSize? e j hj hjE]
+    rw [this]; exact hAll j hjE
+  · refine ⟨?_, ?_⟩
+    · intro dyn hd
+      rw [growEOFWithFreshPtLoad_dynamic] at hd
+      exact hVal.dynamic_wf.1 dyn hd
+    · intros dyn ds hd hds
+      rw [growEOFWithFreshPtLoad_dynamic] at hd
+      rw [growEOFWithFreshPtLoad_dynstr] at hds
+      exact hVal.dynamic_wf.2 dyn ds hd hds
+  · intros syms ds hSyms hDs
+    rw [growEOFWithFreshPtLoad_dynsym] at hSyms
+    rw [growEOFWithFreshPtLoad_dynstr] at hDs
+    exact hVal.dynsym_wf syms ds hSyms hDs
+  · have hAll := hVal.content_wf
+    show (growEOFWithFreshPtLoad pageSize? e).sections.all _ = true
+    unfold ElfFile.sectionsContentWellFormed at hAll
+    rw [Array.all_eq_true] at hAll ⊢
+    intro j hj
+    have hjE : j < e.sections.size :=
+      (growEOFWithFreshPtLoad_sections_size pageSize? e) ▸ hj
+    show ElfFile.Section.contentWellFormedB
+            ((growEOFWithFreshPtLoad pageSize? e).sections[j]'hj) = true
+    have : ElfFile.Section.contentWellFormedB
+              ((growEOFWithFreshPtLoad pageSize? e).sections[j]'hj)
+         = ElfFile.Section.contentWellFormedB (e.sections[j]'hjE) := by
+      unfold ElfFile.Section.contentWellFormedB
+      rw [growEOFWithFreshPtLoad_sections_content pageSize? e j hj hjE]
+    rw [this]; exact hAll j hjE
+  · obtain ⟨h1, h2, h3, h4, h5, h6⟩ := hVal.types_distinct
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> {
+      intros i hi j hj hi_t hj_t
+      have hiE : i < e.sections.size :=
+        (growEOFWithFreshPtLoad_sections_size pageSize? e) ▸ hi
+      have hjE : j < e.sections.size :=
+        (growEOFWithFreshPtLoad_sections_size pageSize? e) ▸ hj
+      rw [growEOFWithFreshPtLoad_sections_type pageSize? e i hi hiE] at hi_t
+      rw [growEOFWithFreshPtLoad_sections_type pageSize? e j hj hjE] at hj_t
+      first
+      | exact h1 i hiE j hjE hi_t hj_t
+      | exact h2 i hiE j hjE hi_t hj_t
+      | exact h3 i hiE j hjE hi_t hj_t
+      | exact h4 i hiE j hjE hi_t hj_t
+      | exact h5 i hiE j hjE hi_t hj_t
+      | exact h6 i hiE j hjE hi_t hj_t
+    }
+  · unfold ElfFile.namedSectionsUnique
+    rw [growEOFWithFreshPtLoad_shstrtab]
+    cases hSt : e.shstrtab with
+    | none => trivial
+    | some st =>
+        obtain ⟨h1, h2⟩ := by
+          have := hVal.names_unique
+          unfold ElfFile.namedSectionsUnique at this
+          rw [hSt] at this; exact this
+        constructor <;> {
+          intros i hi j hj hi_n hj_n
+          have hiE : i < e.sections.size :=
+            (growEOFWithFreshPtLoad_sections_size pageSize? e) ▸ hi
+          have hjE : j < e.sections.size :=
+            (growEOFWithFreshPtLoad_sections_size pageSize? e) ▸ hj
+          rw [growEOFWithFreshPtLoad_sections_name pageSize? e i hi hiE] at hi_n
+          rw [growEOFWithFreshPtLoad_sections_name pageSize? e j hj hjE] at hj_n
+          first
+          | exact h1 i hiE j hjE hi_n hj_n
+          | exact h2 i hiE j hjE hi_n hj_n
+        }
+
 /-- The fresh-PT_LOAD construction satisfies `spliceRegionsDisjoint`,
     given the input's structural input invariants AND
     `canAddFreshPtLoad` (which witnesses room for one more phdr in the
@@ -2186,6 +2891,281 @@ theorem growEOFWithFreshPtLoadReloc_produces_spliceRegionsDisjoint
         show startOffset + phtSize + appendedBytes ≤ startOffset + (phtSize + appendedBytes)
         omega
       exact Nat.le_trans hRange (Nat.le_trans this hTotalLeShoff)
+
+/-! ## `growEOFWithFreshPtLoadReloc` field projections and preserves_valid -/
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_sections_size
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).sections.size = e.sections.size := by
+  unfold growEOFWithFreshPtLoadReloc
+  exact PlaceFold.size_eq _ _
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_header_phnum
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).header.phnum
+      = (e.phdrs.size + 1).toUInt16 := by
+  unfold growEOFWithFreshPtLoadReloc; rfl
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_header_shnum
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).header.shnum = e.header.shnum := by
+  unfold growEOFWithFreshPtLoadReloc; rfl
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_header_shstrndx
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).header.shstrndx = e.header.shstrndx := by
+  unfold growEOFWithFreshPtLoadReloc; rfl
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_header_phentsize
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).header.phentsize = e.header.phentsize := by
+  unfold growEOFWithFreshPtLoadReloc; rfl
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_header_shentsize
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).header.shentsize = e.header.shentsize := by
+  unfold growEOFWithFreshPtLoadReloc; rfl
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_phdrs_size
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).phdrs.size = e.phdrs.size + 1 := by
+  unfold growEOFWithFreshPtLoadReloc updatePhdrsAfterMove retargetPtPhdr
+  rw [Array.size_push, Array.size_map, Array.size_mapIdx]
+
+theorem growEOFWithFreshPtLoadReloc_sections_name
+    (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWithFreshPtLoadReloc pageSize? e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithFreshPtLoadReloc pageSize? e).sections[j]'hj).name
+      = (e.sections[j]'hjE).name := by
+  unfold growEOFWithFreshPtLoadReloc at hj ⊢
+  exact appendStaleSections_name _ _ _ _ j hj hjE
+
+theorem growEOFWithFreshPtLoadReloc_sections_type
+    (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWithFreshPtLoadReloc pageSize? e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithFreshPtLoadReloc pageSize? e).sections[j]'hj).type
+      = (e.sections[j]'hjE).type := by
+  unfold growEOFWithFreshPtLoadReloc at hj ⊢
+  exact appendStaleSections_type _ _ _ _ j hj hjE
+
+theorem growEOFWithFreshPtLoadReloc_sections_content
+    (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWithFreshPtLoadReloc pageSize? e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithFreshPtLoadReloc pageSize? e).sections[j]'hj).content
+      = (e.sections[j]'hjE).content := by
+  unfold growEOFWithFreshPtLoadReloc at hj ⊢
+  exact appendStaleSections_content _ _ _ _ j hj hjE
+
+theorem growEOFWithFreshPtLoadReloc_findUniqueTypeIdx
+    (pageSize? : Option Nat) (e : ElfFile) (ty : ShType) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).findUniqueTypeIdx ty
+      = e.findUniqueTypeIdx ty := by
+  apply ElfFile.firstIdxWhereIn_congr
+  · exact growEOFWithFreshPtLoadReloc_sections_size _ _
+  · intros k hk hk'
+    have := growEOFWithFreshPtLoadReloc_sections_type pageSize? e k hk hk'
+    simp [this]
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_dynamicIdx
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).dynamicIdx = e.dynamicIdx :=
+  growEOFWithFreshPtLoadReloc_findUniqueTypeIdx pageSize? e ShType.SHT_DYNAMIC
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_dynsymIdx
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).dynsymIdx = e.dynsymIdx :=
+  growEOFWithFreshPtLoadReloc_findUniqueTypeIdx pageSize? e ShType.SHT_DYNSYM
+
+theorem growEOFWithFreshPtLoadReloc_contentAt
+    (pageSize? : Option Nat) (e : ElfFile) (i? : Option Nat) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).contentAt i? = e.contentAt i? := by
+  unfold ElfFile.contentAt
+  cases i? with
+  | none => rfl
+  | some i =>
+    simp only [Option.bind_some]
+    by_cases hi : i < e.sections.size
+    · have hi' : i < (growEOFWithFreshPtLoadReloc pageSize? e).sections.size :=
+        (growEOFWithFreshPtLoadReloc_sections_size pageSize? e).symm ▸ hi
+      rw [dif_pos hi', dif_pos hi]
+      rw [growEOFWithFreshPtLoadReloc_sections_content pageSize? e i hi' hi]
+    · have hi' : ¬ i < (growEOFWithFreshPtLoadReloc pageSize? e).sections.size := by
+        intro h; exact hi ((growEOFWithFreshPtLoadReloc_sections_size pageSize? e).symm ▸ h)
+      rw [dif_neg hi', dif_neg hi]
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_dynamic
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).dynamic = e.dynamic := by
+  unfold ElfFile.dynamic
+  rw [growEOFWithFreshPtLoadReloc_dynamicIdx, growEOFWithFreshPtLoadReloc_contentAt]
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_dynsym
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).dynsym = e.dynsym := by
+  unfold ElfFile.dynsym
+  rw [growEOFWithFreshPtLoadReloc_dynsymIdx, growEOFWithFreshPtLoadReloc_contentAt]
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_shstrtab
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).shstrtab = e.shstrtab := by
+  unfold ElfFile.shstrtab
+  rw [growEOFWithFreshPtLoadReloc_header_shstrndx]
+  by_cases hSh : e.header.shstrndx.toNat < e.sections.size
+  · have hSh' : e.header.shstrndx.toNat
+                  < (growEOFWithFreshPtLoadReloc pageSize? e).sections.size :=
+      (growEOFWithFreshPtLoadReloc_sections_size pageSize? e).symm ▸ hSh
+    rw [dif_pos hSh', dif_pos hSh]
+    rw [growEOFWithFreshPtLoadReloc_sections_content pageSize? e _ hSh' hSh]
+  · have hSh' : ¬ e.header.shstrndx.toNat
+                   < (growEOFWithFreshPtLoadReloc pageSize? e).sections.size := by
+      intro h; exact hSh ((growEOFWithFreshPtLoadReloc_sections_size pageSize? e).symm ▸ h)
+    rw [dif_neg hSh', dif_neg hSh]
+
+theorem growEOFWithFreshPtLoadReloc_findIdxByName
+    (pageSize? : Option Nat) (e : ElfFile) (name : ByteArray) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).findIdxByName name
+      = e.findIdxByName name := by
+  unfold ElfFile.findIdxByName
+  rw [growEOFWithFreshPtLoadReloc_shstrtab]
+  cases e.shstrtab with
+  | none => rfl
+  | some st =>
+    apply ElfFile.firstIdxWhereIn_congr
+    · exact growEOFWithFreshPtLoadReloc_sections_size _ _
+    · intros k hk hk'
+      have := growEOFWithFreshPtLoadReloc_sections_name pageSize? e k hk hk'
+      simp [this]
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_dynstrIdx
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).dynstrIdx = e.dynstrIdx :=
+  growEOFWithFreshPtLoadReloc_findIdxByName pageSize? e _
+
+@[simp] theorem growEOFWithFreshPtLoadReloc_dynstr
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).dynstr = e.dynstr := by
+  unfold ElfFile.dynstr
+  rw [growEOFWithFreshPtLoadReloc_dynstrIdx, growEOFWithFreshPtLoadReloc_contentAt]
+
+/-- `growEOFWithFreshPtLoadReloc` preserves byte-layer `IsValid`,
+    given the same `phdrs.size + 1 < UInt16.size` bound as the
+    fresh-PT_LOAD in-place case. -/
+theorem growEOFWithFreshPtLoadReloc_preserves_valid
+    (pageSize? : Option Nat) (e : ElfFile)
+    (hVal : e.IsValid)
+    (hPhdrFit : (e.phdrs.size + 1) < UInt16.size) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).IsValid := by
+  refine
+    { header_counts := ?_, sections_wf := ?_, strtabs_wf := ?_,
+      dynamic_wf := ?_, dynsym_wf := ?_, content_wf := ?_,
+      types_distinct := ?_, names_unique := ?_ }
+  ----------------------------------------
+  -- header_counts: phnum bumped, phoff changed (irrelevant), shnum/etc. unchanged.
+  ----------------------------------------
+  · obtain ⟨_, h2, h3, h4, h5⟩ := hVal.header_counts
+    refine ⟨?_, ?_, ?_, ?_, ?_⟩
+    · rw [growEOFWithFreshPtLoadReloc_header_phnum, growEOFWithFreshPtLoadReloc_phdrs_size]
+      show (e.phdrs.size + 1).toUInt16.toNat = e.phdrs.size + 1
+      unfold Nat.toUInt16 UInt16.toNat
+      simp only [UInt16.ofNat]
+      exact Nat.mod_eq_of_lt hPhdrFit
+    · rw [growEOFWithFreshPtLoadReloc_header_shnum,
+          growEOFWithFreshPtLoadReloc_sections_size]; exact h2
+    · rw [growEOFWithFreshPtLoadReloc_header_phentsize]; exact h3
+    · rw [growEOFWithFreshPtLoadReloc_header_shentsize]; exact h4
+    · rw [growEOFWithFreshPtLoadReloc_header_shstrndx,
+          growEOFWithFreshPtLoadReloc_sections_size]; exact h5
+  ----------------------------------------
+  -- Remaining clauses: identical structure to fresh-PT_LOAD in-place.
+  ----------------------------------------
+  · intro h0
+    have h0' : 0 < e.sections.size :=
+      (growEOFWithFreshPtLoadReloc_sections_size pageSize? e) ▸ h0
+    rw [growEOFWithFreshPtLoadReloc_sections_type pageSize? e 0 h0 h0']
+    exact hVal.sections_wf h0'
+  · have hAll := hVal.strtabs_wf
+    show (growEOFWithFreshPtLoadReloc pageSize? e).sections.all _ = true
+    unfold ElfFile.strtabsWellFormed at hAll
+    rw [Array.all_eq_true] at hAll ⊢
+    intro j hj
+    have hjE : j < e.sections.size :=
+      (growEOFWithFreshPtLoadReloc_sections_size pageSize? e) ▸ hj
+    show ElfFile.Section.strtabWellFormedB
+            ((growEOFWithFreshPtLoadReloc pageSize? e).sections[j]'hj) = true
+    have : ElfFile.Section.strtabWellFormedB
+              ((growEOFWithFreshPtLoadReloc pageSize? e).sections[j]'hj)
+         = ElfFile.Section.strtabWellFormedB (e.sections[j]'hjE) := by
+      unfold ElfFile.Section.strtabWellFormedB
+      rw [growEOFWithFreshPtLoadReloc_sections_content pageSize? e j hj hjE]
+    rw [this]; exact hAll j hjE
+  · refine ⟨?_, ?_⟩
+    · intro dyn hd
+      rw [growEOFWithFreshPtLoadReloc_dynamic] at hd
+      exact hVal.dynamic_wf.1 dyn hd
+    · intros dyn ds hd hds
+      rw [growEOFWithFreshPtLoadReloc_dynamic] at hd
+      rw [growEOFWithFreshPtLoadReloc_dynstr] at hds
+      exact hVal.dynamic_wf.2 dyn ds hd hds
+  · intros syms ds hSyms hDs
+    rw [growEOFWithFreshPtLoadReloc_dynsym] at hSyms
+    rw [growEOFWithFreshPtLoadReloc_dynstr] at hDs
+    exact hVal.dynsym_wf syms ds hSyms hDs
+  · have hAll := hVal.content_wf
+    show (growEOFWithFreshPtLoadReloc pageSize? e).sections.all _ = true
+    unfold ElfFile.sectionsContentWellFormed at hAll
+    rw [Array.all_eq_true] at hAll ⊢
+    intro j hj
+    have hjE : j < e.sections.size :=
+      (growEOFWithFreshPtLoadReloc_sections_size pageSize? e) ▸ hj
+    show ElfFile.Section.contentWellFormedB
+            ((growEOFWithFreshPtLoadReloc pageSize? e).sections[j]'hj) = true
+    have : ElfFile.Section.contentWellFormedB
+              ((growEOFWithFreshPtLoadReloc pageSize? e).sections[j]'hj)
+         = ElfFile.Section.contentWellFormedB (e.sections[j]'hjE) := by
+      unfold ElfFile.Section.contentWellFormedB
+      rw [growEOFWithFreshPtLoadReloc_sections_content pageSize? e j hj hjE]
+    rw [this]; exact hAll j hjE
+  · obtain ⟨h1, h2, h3, h4, h5, h6⟩ := hVal.types_distinct
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> {
+      intros i hi j hj hi_t hj_t
+      have hiE : i < e.sections.size :=
+        (growEOFWithFreshPtLoadReloc_sections_size pageSize? e) ▸ hi
+      have hjE : j < e.sections.size :=
+        (growEOFWithFreshPtLoadReloc_sections_size pageSize? e) ▸ hj
+      rw [growEOFWithFreshPtLoadReloc_sections_type pageSize? e i hi hiE] at hi_t
+      rw [growEOFWithFreshPtLoadReloc_sections_type pageSize? e j hj hjE] at hj_t
+      first
+      | exact h1 i hiE j hjE hi_t hj_t
+      | exact h2 i hiE j hjE hi_t hj_t
+      | exact h3 i hiE j hjE hi_t hj_t
+      | exact h4 i hiE j hjE hi_t hj_t
+      | exact h5 i hiE j hjE hi_t hj_t
+      | exact h6 i hiE j hjE hi_t hj_t
+    }
+  · unfold ElfFile.namedSectionsUnique
+    rw [growEOFWithFreshPtLoadReloc_shstrtab]
+    cases hSt : e.shstrtab with
+    | none => trivial
+    | some st =>
+        obtain ⟨h1, h2⟩ := by
+          have := hVal.names_unique
+          unfold ElfFile.namedSectionsUnique at this
+          rw [hSt] at this; exact this
+        constructor <;> {
+          intros i hi j hj hi_n hj_n
+          have hiE : i < e.sections.size :=
+            (growEOFWithFreshPtLoadReloc_sections_size pageSize? e) ▸ hi
+          have hjE : j < e.sections.size :=
+            (growEOFWithFreshPtLoadReloc_sections_size pageSize? e) ▸ hj
+          rw [growEOFWithFreshPtLoadReloc_sections_name pageSize? e i hi hiE] at hi_n
+          rw [growEOFWithFreshPtLoadReloc_sections_name pageSize? e j hj hjE] at hj_n
+          first
+          | exact h1 i hiE j hjE hi_n hj_n
+          | exact h2 i hiE j hjE hi_n hj_n
+        }
 
 /-- `growEOFWith` produces a layout where all 7 splice regions are
     pairwise disjoint.  The output is suitable as the input to `encode`'s

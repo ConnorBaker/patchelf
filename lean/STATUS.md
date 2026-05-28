@@ -399,18 +399,23 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   (`sectionsOverlapping`, `ptInterpAgreementFailed`, etc.) classify
   loader-coherence failures.  Op-level `_preserves_loadable`
   theorems remain open; pick up under §1.2.
-- **Pre-encode passes — `_preserves_valid` partially landed.**
+- **Pre-encode passes — `_preserves_valid` largely landed.**
+  Five preservation theorems shipped:
   `syncDtStrszInFile_preserves_valid` (`Encoder.lean`),
-  `syncDtAddrTagsInFile_preserves_valid` (`GrowEOF.lean`), and
+  `syncDtAddrTagsInFile_preserves_valid` (`GrowEOF.lean`),
   `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`
-  (`GrowEOF.lean`) landed.  `growEOFWith_preserves_valid` /
-  `_preserves_loadable` and `layoutForEncoding_preserves_valid` are
-  still open (the load-bearing `growEOFWith_preserves_loadable` is
-  the most interesting — it's the actual point of `growEOF` over the
-  older `layoutForEncoding`).  Per-field `appendTransform_*` simp
-  lemmas (name, flags, link, info, addralign, entsize, content) are
-  in place as preliminary infrastructure for the `growEOFWith`
-  preservation proofs.
+  (`GrowEOF.lean`), `growEOFWithMainBody_preserves_valid`,
+  `growEOFWithFreshPtLoad_preserves_valid`, and
+  `growEOFWithFreshPtLoadReloc_preserves_valid` (all `GrowEOF.lean`).
+  Built on a new `PlaceFold.placeFold_value_witness` abstraction in
+  `LayoutEngine.lean` that exposes the per-output-index
+  verbatim/transform disjunction; per-field corollaries
+  (`appendStaleSections_{name,flags,link,info,addralign,entsize,content,type}`)
+  derive trivially.  The top-level `growEOFWith_preserves_valid`
+  remains open (composes the three named-body proofs plus
+  `layoutForEncoding_preserves_valid` for the no-PT_LOAD branch);
+  the load-bearing `growEOFWith_preserves_loadable` is the deeper
+  follow-up.
 - **`spliceDisjoint` for encoder output — DONE.**
   `Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
   is the composed API the op-level Tier D proofs consume.  See

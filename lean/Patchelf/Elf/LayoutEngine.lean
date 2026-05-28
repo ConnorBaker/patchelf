@@ -782,6 +782,143 @@ theorem placeFold_pairDisjoint (hSpec : TransformSpec transform baseOffset)
     PairDisjoint (placeFold verbatim transform sections cursor0) j j' :=
   (placeFold_inv hSpec sections cursor0 hVerb).pair_disj j j' hj hj' hNe
 
+/-! ## Per-entry section-value witness
+
+    `Placement` exposes `type_eq`, `size_eq`, and `offset_or` — a partial
+    view of how each output entry relates to the input.  For
+    `_preserves_valid` proofs we need MORE: the actual section value at
+    every output index, so that per-field projections (name, content,
+    link, …) can be derived for the per-entry IsValid clauses that
+    don't bottom out in the three exposed fields.
+
+    `ValueInv` records the foldl-induction motive carrying both
+    `state.1.size = k` and the per-entry value witness.  Closed at
+    `k = sections.size`, the resulting `placeFold_value_witness` is
+    a structural fact about `placeStep`/`placeFold` independent of
+    `TransformSpec` and `VerbatimWitness`. -/
+
+/-- Foldl-induction motive: at step k, `state.1.size = k` and every
+    output index `j < k` has a verbatim/transform witness. -/
+structure ValueInv
+    (verbatim : Nat → Section → Bool)
+    (transform : Section → Nat → Section)
+    (sections : Array Section)
+    (k : Nat) (state : Array Section × Nat) : Prop where
+  size_eq : state.1.size = k
+  per_entry : ∀ (j : Nat) (_hjLt : j < k) (hjA : j < state.1.size)
+                (hjS : j < sections.size),
+    (verbatim j (sections[j]'hjS) = true ∧
+        state.1[j]'hjA = sections[j]'hjS) ∨
+    (verbatim j (sections[j]'hjS) = false ∧
+        ∃ off, state.1[j]'hjA = transform (sections[j]'hjS) off)
+
+/-- `placeFold` produces a fold-state where every output entry's value
+    is either the input section verbatim or `transform input off` for
+    some `off`.  Foundation for per-field preservation. -/
+theorem placeFold_value_inv
+    (sections : Array Section) (cursor0 : Nat) :
+    ValueInv verbatim transform sections sections.size
+      (placeFold verbatim transform sections cursor0) := by
+  unfold placeFold
+  let indexed := sections.mapIdx (fun i s => (i, s))
+  have hIndexedSize : indexed.size = sections.size := Array.size_mapIdx
+  show ValueInv verbatim transform sections sections.size
+    (Array.foldl (placeStep verbatim transform)
+      (Array.emptyWithCapacity sections.size, cursor0) indexed)
+  rw [show sections.size = indexed.size from hIndexedSize.symm]
+  apply @Array.foldl_induction (Nat × Section) (Array Section × Nat) indexed
+    (motive := ValueInv verbatim transform sections)
+    (init := (Array.emptyWithCapacity sections.size, cursor0))
+    (h0 := by
+      refine ⟨?_, ?_⟩
+      · simp
+      · intros j hjLt _ _; exact absurd hjLt (Nat.not_lt_zero _))
+    (f := placeStep verbatim transform)
+    (hf := by
+      intros i state ih
+      obtain ⟨hSize, ihAll⟩ := ih
+      have hiBound : i.val < sections.size := hIndexedSize ▸ i.isLt
+      have hSeq : indexed[i] = (i.val, sections[i.val]'hiBound) := by
+        show indexed[i.val] = _; rw [Array.getElem_mapIdx]
+      rw [hSeq]
+      refine ⟨?_, ?_⟩
+      · -- size_eq for the next step.
+        rw [step_size_eq, hSize]
+      · -- per_entry
+        intros j hjLt hjA hjS
+        by_cases hjOld : j < state.1.size
+        · -- Existing entry: step_getElem_lt + IH.
+          rw [step_getElem_lt state i.val _ j hjOld]
+          have hjLtOld : j < ↑i := hSize ▸ hjOld
+          exact ihAll j hjLtOld hjOld hjS
+        · -- New entry: j = state.1.size = i.val.
+          -- Following `placement_step_new`'s pattern: prove a specialized
+          -- value-equation as a `have`, then use it to discharge both
+          -- disjunction cases.
+          have hjGe : state.1.size ≤ j := Nat.le_of_not_lt hjOld
+          have hjEq : j = state.1.size := by
+            have : j < state.1.size + 1 := by
+              rw [step_size_eq] at hjA; exact hjA
+            omega
+          -- The goal references `sections[j]'hjS`.  Once we know j = state.1.size = i.val,
+          -- it equals `sections[i.val]'hiBound`.  Build that equality up front.
+          have hSecEq : sections[j]'hjS = sections[i.val]'hiBound := by
+            congr 1
+            rw [hjEq, hSize]
+          -- Verbatim/placed dispatch.
+          by_cases hAlt : verbatim i.val (sections[i.val]'hiBound) = true
+          · -- Verbatim: state.1[j] = sections[i.val].
+            have hValEq : (placeStep verbatim transform state
+                            (i.val, sections[i.val]'hiBound)).1[j]'hjA
+                          = sections[i.val]'hiBound := by
+              unfold placeStep
+              simp only [hAlt, ↓reduceIte]
+              -- Goal: (state.1.push sections[i.val]).getElem j _ = sections[i.val].
+              -- j = state.1.size, so this is push_eq.
+              have hJ : j = state.1.size := hjEq
+              subst hJ
+              exact Array.getElem_push_eq
+            -- The goal's verbatim takes j; we need to rewrite j ↦ i.val.
+            have hjVal : j = i.val := by rw [hjEq, hSize]
+            refine Or.inl ⟨?_, ?_⟩
+            · rw [hSecEq, hjVal]; exact hAlt
+            · rw [hValEq, hSecEq]
+          · -- Placed: state.1[j] = transform sections[i.val] off.
+            have hAltF : verbatim i.val (sections[i.val]'hiBound) = false := by
+              cases h : verbatim i.val (sections[i.val]'hiBound)
+              · rfl
+              · exact absurd h hAlt
+            let off := roundUp state.2 (sections[i.val]'hiBound).addralign.val
+            have hValEq : (placeStep verbatim transform state
+                            (i.val, sections[i.val]'hiBound)).1[j]'hjA
+                          = transform (sections[i.val]'hiBound) off := by
+              unfold placeStep
+              simp only [hAltF, Bool.false_eq_true, ↓reduceIte]
+              have hJ : j = state.1.size := hjEq
+              subst hJ
+              exact Array.getElem_push_eq
+            have hjVal : j = i.val := by rw [hjEq, hSize]
+            refine Or.inr ⟨?_, off, ?_⟩
+            · rw [hSecEq, hjVal]; exact hAltF
+            · rw [hValEq, hSecEq])
+
+/-- Per-entry value witness: every output index of `placeFold` is
+    either the input section unchanged (verbatim) or `transform input
+    off` for some offset (placed).  The structural fact that
+    `_preserves_valid` proofs consume to derive per-field
+    preservation. -/
+theorem placeFold_value_witness
+    (sections : Array Section) (cursor0 : Nat)
+    (j : Nat) (hjS : j < sections.size)
+    (hjA : j < (placeFold verbatim transform sections cursor0).1.size) :
+    (verbatim j (sections[j]'hjS) = true ∧
+        (placeFold verbatim transform sections cursor0).1[j]'hjA
+          = sections[j]'hjS) ∨
+    (verbatim j (sections[j]'hjS) = false ∧
+        ∃ off, (placeFold verbatim transform sections cursor0).1[j]'hjA
+                  = transform (sections[j]'hjS) off) :=
+  (placeFold_value_inv sections cursor0).per_entry j (size_eq .. ▸ hjA) hjA hjS
+
 end PlaceFold
 
 /-! ## `Section.withOffset` instantiation for `layoutForEncoding`

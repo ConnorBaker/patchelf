@@ -164,28 +164,33 @@ Two byte-layer `IsValid` preservations remain:
   to point at a strtab).  Real ELFs always satisfy the precondition;
   the runtime validator catches pathological inputs.
 
-**Infrastructure for `growEOFWith_preserves_valid`** (the next
-pickup): the per-field `appendTransform_*` simp lemmas (name,
-flags, link, info, addralign, entsize, content) landed.  The
-remaining gap is exposing per-field preservation through
-`PlaceFold`'s output: `Placement` currently carries only
-`type_eq` and `size_eq`, but the verbatim/placed disjunction
-gives us section-value equality (the verbatim branch returns
-`s` unchanged, the placed branch returns `appendTransform s
-off`).  Two paths:
+**Three named-body preservations landed.**
+`growEOFWithMainBody_preserves_valid`,
+`growEOFWithFreshPtLoad_preserves_valid`, and
+`growEOFWithFreshPtLoadReloc_preserves_valid` all proved end-to-end
+via the value-witness abstraction in `LayoutEngine.lean`:
 
-1. Strengthen `Placement` with a `value_or` field disjunction
-   exposing the actual section value.  Invasive (touches every
-   client of `Placement`) but additive.
-2. Prove a separate `appendStaleSections_field_eq` lemma per
-   field via direct foldl induction with a dual motive
-   (state.1.size = k ∧ per-index field equality).  Mechanically
-   straightforward but verbose.
+* `PlaceFold.ValueInv` + `placeFold_value_inv` +
+  `placeFold_value_witness` — structural fact that every
+  `placeFold` output entry is either the input section verbatim
+  or `transform input off` for some `off`.  Proves once; consumed
+  by every per-field corollary.
+* `appendStaleSections_field_eq` (generic projection) +
+  per-field corollaries (`name`, `flags`, `link`, `info`,
+  `addralign`, `entsize`, `content`, `type`, `encodedSize`).
+* `growEOFWithMainBody_*` / `growEOFWithFreshPtLoad_*` /
+  `growEOFWithFreshPtLoadReloc_*` accessor preservations
+  (`dynamicIdx`, `dynamic`, `dynsym`, `dynstr`, `shstrtab`,
+  `findIdxByName`, etc.) — typed accessors all preserved.
 
-Either path closes the three named-body preservations
-(`growEOFWithMainBody_preserves_valid`,
-`growEOFWithFreshPtLoad_preserves_valid`,
-`growEOFWithFreshPtLoadReloc_preserves_valid`) trivially.
+The fresh-PT_LOAD variants take a `(e.phdrs.size + 1) <
+UInt16.size` precondition for the bumped-phnum UInt16 round-trip;
+real binaries satisfy this trivially.
+
+Remaining open: `growEOFWith_preserves_valid` (top-level dispatch
+combining the three named-body proofs + `layoutForEncoding`),
+`growEOFWith_preserves_loadable` (the load-bearing one), and
+`layoutForEncoding_preserves_valid` (no-PT_LOAD branch).
 - `layoutForEncoding_preserves_valid` — the BSS-collision fallback;
   same shape as `growEOFWith` but doesn't preserve PT_LOAD coverage.
 
