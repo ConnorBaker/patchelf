@@ -4013,4 +4013,63 @@ theorem growEOFWith_preserves_valid (pageSize? : Option Nat) (e : ElfFile)
           show (growEOFWithFreshPtLoadReloc pageSize? e).IsValid
           exact growEOFWithFreshPtLoadReloc_preserves_valid pageSize? e hVal hPhdrFit
 
+/-- `growEOFWith` preserves `IsLoadable` — the load-bearing §1.2 theorem.
+
+    Top-level dispatch mirroring `growEOFWith_preserves_valid`'s 5-way
+    branch, composing the four branch `_preserves_loadable` theorems:
+
+    1. `layoutAlreadyValid e = true` → identity (`hLoad` directly).
+    2. `lastPtLoadIdx e.phdrs = none` → `layoutForEncoding_preserves_loadable`.
+    3. `canExtendLastPtLoad ... = true` → `growEOFWithMainBody_preserves_loadable`.
+    4. `canAddFreshPtLoad e = true` → `growEOFWithFreshPtLoad_preserves_loadable`.
+    5. Else → `growEOFWithFreshPtLoadReloc_preserves_loadable`.
+
+    The structural disjointness preconditions (`hSection0Null`,
+    `hHeaderPhdr`, `hHeaderSec`, `hPhdrSec`) feed the per-branch
+    `sections_nonoverlapping` clause (each branch's
+    `_produces_spliceRegionsDisjoint`); they're parser-derivable for
+    every real ELF.  The fresh-PT_LOAD branches need
+    `(e.phdrs.size + 1) < UInt16.size` for the bumped-phnum round-trip. -/
+theorem growEOFWith_preserves_loadable (pageSize? : Option Nat) (e : ElfFile)
+    (hLoad : e.IsLoadable)
+    (hPhdrFit : (e.phdrs.size + 1) < UInt16.size)
+    (hSection0Null : ∀ (h : 0 < e.sections.size),
+      (e.sections[0]'h).type = ShType.SHT_NULL)
+    (hHeaderPhdr : e.headerPhdrDisjoint)
+    (hHeaderSec  : e.headerSectionDisjoint)
+    (hPhdrSec    : e.phdrSectionDisjoint) :
+    (growEOFWith pageSize? e).IsLoadable := by
+  unfold growEOFWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]
+    exact hLoad
+  · simp only [hLay]
+    cases hLast : lastPtLoadIdx e.phdrs with
+    | none =>
+      simp
+      exact layoutForEncoding_preserves_loadable e hLoad hSection0Null hHeaderPhdr
+    | some lastIdx =>
+      simp only []
+      by_cases hExt : (canExtendLastPtLoad e
+        (roundUp (currentFileEnd e)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (roundUp (maxPtLoadVaddrEnd e.phdrs)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs)
+        lastIdx) = true
+      · simp only [hExt, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+        show (growEOFWithMainBody pageSize? e lastIdx).IsLoadable
+        exact growEOFWithMainBody_preserves_loadable pageSize? e lastIdx hLoad
+          hHeaderPhdr hHeaderSec hPhdrSec
+      · simp only [hExt, Bool.not_false, ↓reduceIte]
+        by_cases hAdd : canAddFreshPtLoad e = true
+        · simp only [hAdd, ↓reduceIte]
+          show (growEOFWithFreshPtLoad pageSize? e).IsLoadable
+          exact growEOFWithFreshPtLoad_preserves_loadable pageSize? e hLoad hPhdrFit
+            hAdd hHeaderSec
+        · simp only [hAdd, Bool.false_eq_true, ↓reduceIte]
+          show (growEOFWithFreshPtLoadReloc pageSize? e).IsLoadable
+          exact growEOFWithFreshPtLoadReloc_preserves_loadable pageSize? e hLoad hPhdrFit
+            hHeaderSec
+
 end Patchelf.Elf
