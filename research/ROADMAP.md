@@ -163,6 +163,29 @@ Two byte-layer `IsValid` preservations remain:
   derive `iDyn ≠ shstrndx` — `IsValid` alone doesn't force shstrndx
   to point at a strtab).  Real ELFs always satisfy the precondition;
   the runtime validator catches pathological inputs.
+
+**Infrastructure for `growEOFWith_preserves_valid`** (the next
+pickup): the per-field `appendTransform_*` simp lemmas (name,
+flags, link, info, addralign, entsize, content) landed.  The
+remaining gap is exposing per-field preservation through
+`PlaceFold`'s output: `Placement` currently carries only
+`type_eq` and `size_eq`, but the verbatim/placed disjunction
+gives us section-value equality (the verbatim branch returns
+`s` unchanged, the placed branch returns `appendTransform s
+off`).  Two paths:
+
+1. Strengthen `Placement` with a `value_or` field disjunction
+   exposing the actual section value.  Invasive (touches every
+   client of `Placement`) but additive.
+2. Prove a separate `appendStaleSections_field_eq` lemma per
+   field via direct foldl induction with a dual motive
+   (state.1.size = k ∧ per-index field equality).  Mechanically
+   straightforward but verbose.
+
+Either path closes the three named-body preservations
+(`growEOFWithMainBody_preserves_valid`,
+`growEOFWithFreshPtLoad_preserves_valid`,
+`growEOFWithFreshPtLoadReloc_preserves_valid`) trivially.
 - `layoutForEncoding_preserves_valid` — the BSS-collision fallback;
   same shape as `growEOFWith` but doesn't preserve PT_LOAD coverage.
 

@@ -215,7 +215,7 @@ def sectionStale (e : ElfFile) (i : Nat) (h : i < e.sections.size) : Bool :=
     cumulativeBytes.  Equal deltas guarantee `p_offset ≡ p_vaddr
     (mod align)` is preserved.
 
-    Implemented as a specialization of `PlaceFold.placeStep` /
+    Implemented as a specialization of `placeStep` /
     `PlaceFold.placeFold` (defined in `LayoutEngine.lean`), with
     verbatim = `¬ stale[i]` and transform shifting `offset` by
     `startOffset` and `addr` by `startPage`.  This lets us reuse the
@@ -250,6 +250,49 @@ theorem appendTransform_transformSpec (startOffset startPage : Nat) :
     offset_eq := fun s o => by
       show (appendTransform startOffset startPage s o).offset.val = startOffset + o
       rfl }
+
+/-! ## `appendTransform` per-field preservation
+
+    The transform only mutates `(offset, addr)`; every other field
+    survives.  These rfl-lemmas feed the `_preserves_valid` proofs:
+    they let us argue every `IsValid` clause at the placed index
+    reduces to the same clause at the input index. -/
+
+@[simp] theorem appendTransform_name (startOffset startPage : Nat)
+    (s : Section) (o : Nat) :
+    (appendTransform startOffset startPage s o).name = s.name := rfl
+
+@[simp] theorem appendTransform_flags (startOffset startPage : Nat)
+    (s : Section) (o : Nat) :
+    (appendTransform startOffset startPage s o).flags = s.flags := rfl
+
+@[simp] theorem appendTransform_link (startOffset startPage : Nat)
+    (s : Section) (o : Nat) :
+    (appendTransform startOffset startPage s o).link = s.link := rfl
+
+@[simp] theorem appendTransform_info (startOffset startPage : Nat)
+    (s : Section) (o : Nat) :
+    (appendTransform startOffset startPage s o).info = s.info := rfl
+
+@[simp] theorem appendTransform_addralign (startOffset startPage : Nat)
+    (s : Section) (o : Nat) :
+    (appendTransform startOffset startPage s o).addralign = s.addralign := rfl
+
+@[simp] theorem appendTransform_entsize (startOffset startPage : Nat)
+    (s : Section) (o : Nat) :
+    (appendTransform startOffset startPage s o).entsize = s.entsize := rfl
+
+@[simp] theorem appendTransform_content (startOffset startPage : Nat)
+    (s : Section) (o : Nat) :
+    (appendTransform startOffset startPage s o).content = s.content := rfl
+
+-- (Deferred: a generic `appendStaleSections_field_eq` projection
+--  lemma that exposes per-field preservation through `placeFold`'s
+--  `(verbatim s ∨ appendTransform s o)` output shape.  The mechanism
+--  is straightforward induction on the fold but requires a dual
+--  motive (`state.1.size = k` AND per-index field equality at every
+--  j' < k) plus careful index manipulation to read the freshly-pushed
+--  element at j' = state.1.size.  Picking up under §1.2 follow-up.)
 
 /-! ## Stale ⇒ disjointness extraction
 

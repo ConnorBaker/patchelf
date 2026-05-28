@@ -407,7 +407,10 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   `_preserves_loadable` and `layoutForEncoding_preserves_valid` are
   still open (the load-bearing `growEOFWith_preserves_loadable` is
   the most interesting — it's the actual point of `growEOF` over the
-  older `layoutForEncoding`).
+  older `layoutForEncoding`).  Per-field `appendTransform_*` simp
+  lemmas (name, flags, link, info, addralign, entsize, content) are
+  in place as preliminary infrastructure for the `growEOFWith`
+  preservation proofs.
 - **`spliceDisjoint` for encoder output — DONE.**
   `Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
   is the composed API the op-level Tier D proofs consume.  See
