@@ -411,31 +411,28 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   (`sectionsOverlapping`, `ptInterpAgreementFailed`, etc.) classify
   loader-coherence failures.  Op-level `_preserves_loadable`
   theorems remain open; pick up under §1.2.
-- **Pre-encode passes — `_preserves_valid` complete.**
+- **Pre-encode passes — `_preserves_valid` complete + `_preserves_loadable` started.**
   All seven byte-layer `IsValid` preservation theorems shipped:
-  `syncDtStrszInFile_preserves_valid` (`Encoder.lean`),
-  `syncDtAddrTagsInFile_preserves_valid` (`GrowEOF.lean`),
-  `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`
-  (`GrowEOF.lean`), `layoutForEncoding_preserves_valid`
-  (`LayoutEngine.lean`), `growEOFWithMainBody_preserves_valid`,
+  `syncDtStrszInFile_preserves_valid`,
+  `syncDtAddrTagsInFile_preserves_valid`,
+  `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint`,
+  `layoutForEncoding_preserves_valid`,
+  `growEOFWithMainBody_preserves_valid`,
   `growEOFWithFreshPtLoad_preserves_valid`,
   `growEOFWithFreshPtLoadReloc_preserves_valid`, and the
-  user-facing top-level `growEOFWith_preserves_valid`
-  (all `GrowEOF.lean`).  Built on a new
-  `PlaceFold.placeFold_value_witness` abstraction in
-  `LayoutEngine.lean` that exposes the per-output-index
-  verbatim/transform disjunction; per-field corollaries
-  (`appendStaleSections_{name,flags,link,info,addralign,entsize,content,type}`
-   and `layoutSectionsFold_*`) derive trivially.
+  user-facing top-level `growEOFWith_preserves_valid`.
 
-  The fresh-PT_LOAD branches' top-level theorem takes an
-  `(e.phdrs.size + 1) < UInt16.size` precondition for the bumped
-  phnum's UInt16 round-trip; real binaries satisfy this trivially
-  (phnum is at most a few dozen).
-
-  The load-bearing `growEOFWith_preserves_loadable` is the deeper
-  follow-up — `IsLoadable` adds segment congruence and PT_INTERP /
-  PT_DYNAMIC offset agreement, which DO depend on offsets.
+  `_preserves_loadable` ladder partially landed:
+  `layoutForEncoding_preserves_loadable` shipped — covers the
+  no-PT_LOAD branch of `growEOFWith`'s dispatch.  The
+  growEOFWith branches (main body, fresh-PT_LOAD in-place,
+  relocate) still open; they require per-phdr facts about
+  `updatePhdrsAfterMove` (PT_LOAD/PT_INTERP/PT_DYNAMIC distinct
+  treatment crossed with the `i = lastIdx` filesz/memsz update)
+  that need careful tactic threading to land.  The
+  `LayoutEngine.lean` infrastructure (per-phdr facts about the
+  simpler `relocatePhdr` used by `layoutForEncoding`) is in
+  place as a template.
 - **`spliceDisjoint` for encoder output — DONE.**
   `Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
   is the composed API the op-level Tier D proofs consume.  See

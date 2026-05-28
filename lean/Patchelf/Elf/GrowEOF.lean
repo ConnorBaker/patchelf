@@ -589,6 +589,15 @@ def retargetPtPhdr (phdrs : Array Patchelf.Elf.ProgramHeader)
               , memsz := ⟨newSize⟩ }
     else ph
 
+-- (Forward-looking: `updatePhdrsAfterMove`-specific per-phdr facts
+--  for PT_LOAD / PT_INTERP / PT_DYNAMIC are needed for
+--  `growEOFWithMainBody_preserves_loadable`.  Phase L1 (covering
+--  `layoutForEncoding`) lands on the simpler `relocatePhdr` infrastructure
+--  in `LayoutEngine.lean`; the analog for `updatePhdrsAfterMove` requires
+--  more case-bash because the `if i = lastIdx` branch interacts with
+--  the PT_INTERP / PT_DYNAMIC type tests.  Picking up under §1.2
+--  follow-up.)
+
 /-! ## Main entry point -/
 
 /-- Is it safe to extend the last PT_LOAD to cover a new region starting at

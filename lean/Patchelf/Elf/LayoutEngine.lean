@@ -1186,6 +1186,120 @@ theorem layoutForEncoding_produces_spliceRegionsDisjoint (e : ElfFile)
                     ≤ 0 + finalCursor := hPlace.2.2
       omega
 
+/-! ## `relocatePhdr` field facts
+
+    Identity on non-PT_INTERP/PT_DYNAMIC phdrs.  Sets `offset` and
+    `filesz`/`memsz` for the two retargeted types.  Preserves `type`,
+    `vaddr`, `align`, `flags`, `paddr` always. -/
+
+@[simp] theorem relocatePhdr_type (interpIdx dynamicIdx : Option Nat)
+    (newSections : Array Section) (ph : Patchelf.Elf.ProgramHeader) :
+    (relocatePhdr interpIdx dynamicIdx newSections ph).type = ph.type := by
+  unfold relocatePhdr phdrWithOffsetSize
+  by_cases h1 : ph.type = PhType.PT_INTERP
+  · rw [if_pos h1]
+    cases interpIdx with
+    | none => rfl
+    | some i =>
+      by_cases hLt : i < newSections.size
+      · simp only [hLt, ↓reduceDIte]
+      · simp only [hLt, ↓reduceDIte]
+  · rw [if_neg h1]
+    by_cases h2 : ph.type = PhType.PT_DYNAMIC
+    · rw [if_pos h2]
+      cases dynamicIdx with
+      | none => rfl
+      | some i =>
+        by_cases hLt : i < newSections.size
+        · simp only [hLt, ↓reduceDIte]
+        · simp only [hLt, ↓reduceDIte]
+    · rw [if_neg h2]
+
+@[simp] theorem relocatePhdr_align (interpIdx dynamicIdx : Option Nat)
+    (newSections : Array Section) (ph : Patchelf.Elf.ProgramHeader) :
+    (relocatePhdr interpIdx dynamicIdx newSections ph).align = ph.align := by
+  unfold relocatePhdr phdrWithOffsetSize
+  by_cases h1 : ph.type = PhType.PT_INTERP
+  · rw [if_pos h1]
+    cases interpIdx with
+    | none => rfl
+    | some i =>
+      by_cases hLt : i < newSections.size
+      · simp only [hLt, ↓reduceDIte]
+      · simp only [hLt, ↓reduceDIte]
+  · rw [if_neg h1]
+    by_cases h2 : ph.type = PhType.PT_DYNAMIC
+    · rw [if_pos h2]
+      cases dynamicIdx with
+      | none => rfl
+      | some i =>
+        by_cases hLt : i < newSections.size
+        · simp only [hLt, ↓reduceDIte]
+        · simp only [hLt, ↓reduceDIte]
+    · rw [if_neg h2]
+
+@[simp] theorem relocatePhdr_vaddr (interpIdx dynamicIdx : Option Nat)
+    (newSections : Array Section) (ph : Patchelf.Elf.ProgramHeader) :
+    (relocatePhdr interpIdx dynamicIdx newSections ph).vaddr = ph.vaddr := by
+  unfold relocatePhdr phdrWithOffsetSize
+  by_cases h1 : ph.type = PhType.PT_INTERP
+  · rw [if_pos h1]
+    cases interpIdx with
+    | none => rfl
+    | some i =>
+      by_cases hLt : i < newSections.size
+      · simp only [hLt, ↓reduceDIte]
+      · simp only [hLt, ↓reduceDIte]
+  · rw [if_neg h1]
+    by_cases h2 : ph.type = PhType.PT_DYNAMIC
+    · rw [if_pos h2]
+      cases dynamicIdx with
+      | none => rfl
+      | some i =>
+        by_cases hLt : i < newSections.size
+        · simp only [hLt, ↓reduceDIte]
+        · simp only [hLt, ↓reduceDIte]
+    · rw [if_neg h2]
+
+/-- For non-PT_INTERP, non-PT_DYNAMIC phdrs, `relocatePhdr` is identity. -/
+theorem relocatePhdr_of_not_interp_dynamic
+    (interpIdx dynamicIdx : Option Nat)
+    (newSections : Array Section) (ph : Patchelf.Elf.ProgramHeader)
+    (hNotInterp : ph.type ≠ PhType.PT_INTERP)
+    (hNotDynamic : ph.type ≠ PhType.PT_DYNAMIC) :
+    relocatePhdr interpIdx dynamicIdx newSections ph = ph := by
+  unfold relocatePhdr
+  rw [if_neg hNotInterp, if_neg hNotDynamic]
+
+/-- For PT_INTERP phdrs with a valid interpIdx, `relocatePhdr`'s
+    output `offset` is the section's offset. -/
+theorem relocatePhdr_pt_interp
+    {interpIdx : Option Nat} (dynamicIdx : Option Nat)
+    {newSections : Array Section} {ph : Patchelf.Elf.ProgramHeader}
+    (hPh : ph.type = PhType.PT_INTERP)
+    {iS : Nat} (hIdx : interpIdx = some iS) (h : iS < newSections.size) :
+    (relocatePhdr interpIdx dynamicIdx newSections ph).offset
+      = (newSections[iS]'h).offset := by
+  unfold relocatePhdr
+  rw [if_pos hPh, hIdx]
+  simp only [h, ↓reduceDIte]
+  rfl
+
+/-- For PT_DYNAMIC phdrs with a valid dynamicIdx, `relocatePhdr`'s
+    output `offset` is the section's offset. -/
+theorem relocatePhdr_pt_dynamic
+    (interpIdx : Option Nat) {dynamicIdx : Option Nat}
+    {newSections : Array Section} {ph : Patchelf.Elf.ProgramHeader}
+    (hPhNotInterp : ph.type ≠ PhType.PT_INTERP)
+    (hPh : ph.type = PhType.PT_DYNAMIC)
+    {iS : Nat} (hIdx : dynamicIdx = some iS) (h : iS < newSections.size) :
+    (relocatePhdr interpIdx dynamicIdx newSections ph).offset
+      = (newSections[iS]'h).offset := by
+  unfold relocatePhdr
+  rw [if_neg hPhNotInterp, if_pos hPh, hIdx]
+  simp only [h, ↓reduceDIte]
+  rfl
+
 /-! ## `layoutForEncoding` preserves byte-layer `IsValid`
 
     Mirrors the `growEOFWithMainBody_preserves_valid` template.
@@ -1339,6 +1453,24 @@ theorem layoutForEncoding_findIdxByName (e : ElfFile) (name : ByteArray) :
   unfold ElfFile.dynstr
   rw [layoutForEncoding_dynstrIdx, layoutForEncoding_contentAt]
 
+@[simp] theorem layoutForEncoding_interpIdx (e : ElfFile) :
+    (layoutForEncoding e).interpIdx = e.interpIdx :=
+  layoutForEncoding_findIdxByName e _
+
+/-- `layoutForEncoding`'s output's i-th phdr is `relocatePhdr` applied
+    to the input's i-th phdr.  Used to reason about per-phdr properties
+    in `_preserves_loadable`. -/
+theorem layoutForEncoding_phdrs_getElem (e : ElfFile) (i : Nat)
+    (hi : i < (layoutForEncoding e).phdrs.size)
+    (hiE : i < e.phdrs.size) :
+    (layoutForEncoding e).phdrs[i]'hi
+      = relocatePhdr e.interpIdx e.dynamicIdx
+          (layoutSectionsFold e.sections
+            (max Layout.ehdrSize (e.header.phoff.val + e.phdrs.size * Layout.phdrSize))).1
+          (e.phdrs[i]'hiE) := by
+  unfold layoutForEncoding at hi ⊢
+  rw [Array.getElem_map]
+
 /-- `layoutForEncoding` preserves byte-layer `IsValid`.
 
     Same shape as `growEOFWithMainBody_preserves_valid`: per-section
@@ -1437,5 +1569,116 @@ theorem layoutForEncoding_preserves_valid (e : ElfFile) (hVal : e.IsValid) :
           | exact h1 i hiE j hjE hi_n hj_n
           | exact h2 i hiE j hjE hi_n hj_n
         }
+
+/-! ## `layoutForEncoding` preserves `IsLoadable`
+
+    `IsLoadable` adds 4 clauses to `IsValid`: `sectionsNonOverlapping`,
+    `ptInterpAgreement`, `ptDynamicAgreement`, `segmentCongruence`.
+
+    * sections-nonoverlap: from `_produces_spliceRegionsDisjoint`'s
+      `sections_disjoint` clause.
+    * PT_INTERP / PT_DYNAMIC agreement: `relocatePhdr` retargets each
+      such phdr to its section's new offset; `interpIdx` / `dynamicIdx`
+      are preserved → the output's matched section IS the retargeted
+      phdr's target.
+    * segmentCongruence: `relocatePhdr` is identity on PT_LOADs (only
+      touches PT_INTERP and PT_DYNAMIC).  PT_LOAD offsets / vaddrs /
+      aligns are unchanged → congruence preserved if input had it.
+
+    Requires `hSection0Null` + the structural input invariants because
+    `layoutForEncoding_preserves_valid` covers the `IsValid` base, and
+    the existing `_produces_spliceRegionsDisjoint` provides the
+    `sections_disjoint` clause via the `IsLoadable` chain. -/
+theorem layoutForEncoding_preserves_loadable (e : ElfFile)
+    (hLoad : e.IsLoadable)
+    (hSection0Null : ∀ (h : 0 < e.sections.size),
+      (e.sections[0]'h).type = ShType.SHT_NULL)
+    (hHeaderPhdr : e.headerPhdrDisjoint) :
+    (layoutForEncoding e).IsLoadable := by
+  refine
+    { toIsValid := layoutForEncoding_preserves_valid e hLoad.toIsValid
+      sections_nonoverlapping := ?_
+      pt_interp_agrees := ?_
+      pt_dynamic_agrees := ?_
+      segment_congruent := ?_ }
+  ----------------------------------------
+  -- sections_nonoverlapping: from spliceRegionsDisjoint.
+  ----------------------------------------
+  · exact (layoutForEncoding_produces_spliceRegionsDisjoint e
+            hSection0Null hHeaderPhdr).sections_disjoint
+  ----------------------------------------
+  -- ptInterpAgreement
+  ----------------------------------------
+  · unfold ElfFile.ptInterpAgreement
+    rw [layoutForEncoding_interpIdx]
+    cases hI : e.interpIdx with
+    | none => trivial
+    | some iS =>
+      intro hLt iPh hPh hPhT
+      -- Output phdr is relocatePhdr ... (e.phdrs[iPh]).
+      have hPhE : iPh < e.phdrs.size := layoutForEncoding_phdrs_size e ▸ hPh
+      rw [layoutForEncoding_phdrs_getElem e iPh hPh hPhE]
+      -- The PT_INTERP type is preserved by relocatePhdr_type.
+      have hPhTE : (e.phdrs[iPh]'hPhE).type = PhType.PT_INTERP := by
+        rw [layoutForEncoding_phdrs_getElem e iPh hPh hPhE,
+            relocatePhdr_type] at hPhT
+        exact hPhT
+      -- `iS` came from `(layoutForEncoding e).interpIdx`; after the rw
+      -- above, the LHS-side `iS` is the same one and the bound `hLt`
+      -- refers to the OUTPUT's sections.
+      have hLtE : iS < e.sections.size := layoutForEncoding_sections_size e ▸ hLt
+      have hSecE : iS < (layoutSectionsFold e.sections
+                          (max Layout.ehdrSize (e.header.phoff.val
+                            + e.phdrs.size * Layout.phdrSize))).1.size := by
+        unfold layoutSectionsFold
+        rw [PlaceFold.size_eq]; exact hLtE
+      rw [relocatePhdr_pt_interp e.dynamicIdx hPhTE hI hSecE]
+      -- Goal: newSections[iS].offset = (layoutForEncoding e).sections[iS].offset.
+      -- These are the same array.
+      rfl
+  ----------------------------------------
+  -- ptDynamicAgreement
+  ----------------------------------------
+  · unfold ElfFile.ptDynamicAgreement
+    rw [layoutForEncoding_dynamicIdx]
+    cases hD : e.dynamicIdx with
+    | none => trivial
+    | some iS =>
+      intro hLt iPh hPh hPhT
+      have hPhE : iPh < e.phdrs.size := layoutForEncoding_phdrs_size e ▸ hPh
+      rw [layoutForEncoding_phdrs_getElem e iPh hPh hPhE]
+      have hPhTE : (e.phdrs[iPh]'hPhE).type = PhType.PT_DYNAMIC := by
+        rw [layoutForEncoding_phdrs_getElem e iPh hPh hPhE,
+            relocatePhdr_type] at hPhT
+        exact hPhT
+      -- PT_DYNAMIC and PT_INTERP are different — derive `≠`.
+      have hPhNotInterp : (e.phdrs[iPh]'hPhE).type ≠ PhType.PT_INTERP := by
+        rw [hPhTE]; decide
+      have hLtE : iS < e.sections.size := layoutForEncoding_sections_size e ▸ hLt
+      have hSecE : iS < (layoutSectionsFold e.sections
+                          (max Layout.ehdrSize (e.header.phoff.val
+                            + e.phdrs.size * Layout.phdrSize))).1.size := by
+        unfold layoutSectionsFold
+        rw [PlaceFold.size_eq]; exact hLtE
+      rw [relocatePhdr_pt_dynamic e.interpIdx hPhNotInterp hPhTE hD hSecE]
+      rfl
+  ----------------------------------------
+  -- segmentCongruence
+  ----------------------------------------
+  · unfold ElfFile.segmentCongruence
+    intros iPh hPh hPhT
+    have hPhE : iPh < e.phdrs.size := layoutForEncoding_phdrs_size e ▸ hPh
+    rw [layoutForEncoding_phdrs_getElem e iPh hPh hPhE]
+    -- PT_LOAD: relocatePhdr is identity (PT_LOAD ≠ PT_INTERP, PT_LOAD ≠ PT_DYNAMIC).
+    have hPhTE : (e.phdrs[iPh]'hPhE).type = PhType.PT_LOAD := by
+      rw [layoutForEncoding_phdrs_getElem e iPh hPh hPhE,
+          relocatePhdr_type] at hPhT
+      exact hPhT
+    have hPhNotInterp : (e.phdrs[iPh]'hPhE).type ≠ PhType.PT_INTERP := by
+      rw [hPhTE]; decide
+    have hPhNotDynamic : (e.phdrs[iPh]'hPhE).type ≠ PhType.PT_DYNAMIC := by
+      rw [hPhTE]; decide
+    rw [relocatePhdr_of_not_interp_dynamic _ _ _ _ hPhNotInterp hPhNotDynamic]
+    exact hLoad.segment_congruent iPh hPhE hPhTE
 
 end Patchelf.Elf

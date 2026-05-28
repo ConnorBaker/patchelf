@@ -198,14 +198,31 @@ The fresh-PT_LOAD branches' theorem takes
 `(e.phdrs.size + 1) < UInt16.size` for the bumped-phnum UInt16
 round-trip; real binaries satisfy this trivially.
 
-Remaining open: `growEOFWith_preserves_loadable` (the
-load-bearing one).  `IsLoadable` adds `sectionsNonOverlapping`,
-`ptInterpAgreement`, `ptDynamicAgreement`, `segmentCongruence` —
-all of which depend on offsets, which growEOFWith mutates.  The
-`_preserves_loadable` proof has to argue that the new offsets
-maintain those invariants (it does, by construction — that's
-the whole point of `growEOFWith` over `layoutForEncoding`), but
-the proof is substantially deeper than `_preserves_valid`.
+**`_preserves_loadable` partially landed.**
+`layoutForEncoding_preserves_loadable` (`LayoutEngine.lean`)
+shipped — covers the no-PT_LOAD branch of `growEOFWith`'s
+dispatch.  Built on per-phdr `relocatePhdr_*` lemmas
+(`_type`, `_align`, `_vaddr`, `_of_not_interp_dynamic`,
+`_pt_interp`, `_pt_dynamic`).
+
+Remaining open: the three `growEOFWith*` branches (main body,
+fresh-PT_LOAD in-place, relocate) plus the top-level
+`growEOFWith_preserves_loadable` dispatch.  These need per-phdr
+facts for `updatePhdrsAfterMove` analogous to the
+`relocatePhdr_*` lemmas, but the function is structurally more
+involved: the `if i = lastIdx` branch updates filesz/memsz
+(preserving type/offset/vaddr/align) which then crosses the
+PT_INTERP / PT_DYNAMIC type-test if-then-else.  Tactic threading
+is finicky — the proof needs careful `cases lastIdx?` +
+`by_cases hLI : i = lastIdx` + `if_pos`/`if_neg` + the
+record-update preservation through `phLast`-type identity.
+
+For PT_LOAD-only segmentCongruence, the cleanest approach is a
+per-PT_LOAD lemma `updatePhdrsAfterMove_pt_load_offset_vaddr_align`
+that bypasses the PT_INTERP/PT_DYNAMIC tests via type-disjointness.
+For the agreement clauses, lemmas `updatePhdrsAfterMove_pt_interp` /
+`_pt_dynamic` mirror `relocatePhdr_pt_interp` / `_pt_dynamic` but
+need to handle the lastIdx pre-update.
 - `layoutForEncoding_preserves_valid` — the BSS-collision fallback;
   same shape as `growEOFWith` but doesn't preserve PT_LOAD coverage.
 
