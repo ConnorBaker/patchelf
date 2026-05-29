@@ -49,7 +49,21 @@
 > loadable output (`IsValid + sectionsNonOverlapping +
 > ptInterpAgreement + ptDynamicAgreement + segmentCongruence`).
 >
-> **Tests: 54/54 shell tests passing; 108/108 Lean build jobs;
+> **§5.1 op-level Tier D started.** The historical `Adapter.toElfFile`
+> dependent-type obstacle is resolved (the `applyX` helpers were
+> un-bundled to take typed *fields*, with the dependent index `ds`
+> free).  `Patchelf/Elf/OpAdapterPreservation.lean` ships full
+> `_preserves_loadable` for the two Tier-1 ops (`setOsAbi`,
+> `modifyExecstack` — section positions unchanged), the reusable
+> `isValid_of_phdrs_map` / `isLoadable_of_phdrs_map` helpers, and the
+> Tier-2/3 round-trip scaffold (`encode_roundtrip_via_normalized` +
+> `spliceRegionsDisjoint_of_structural`).  The 12 dynstr/`.dynamic`-
+> resizing ops route through the scaffold; their remaining obligations
+> (normalized-form `EncodePreconditions` + pre-pass idempotence) are
+> the documented open core.  Fresh-agent handoff at
+> [`../research/PICKUP-PROMPT-OP-TIER-D.md`](../research/PICKUP-PROMPT-OP-TIER-D.md).
+>
+> **Tests: 54/54 shell tests passing; 109/109 Lean build jobs;
 > zero `sorry`s.**
 
 This document records the **current state** of the Lean 4 patchelf
@@ -142,7 +156,7 @@ For the file-by-file architecture, see
 exhaustive declaration inventory, see
 [`INVENTORY.md`](INVENTORY.md).
 
-Total Lean source: ~20,950 LOC. Distribution by category:
+Total Lean source: ~21,200 LOC. Distribution by category:
 
 | Category | LOC | What it is |
 |---|---|---|
@@ -153,6 +167,7 @@ Total Lean source: ~20,950 LOC. Distribution by category:
 | Layout pipeline + validator (`Encoder` + `GrowEOF` + `Validate`) | ~3,740 | growEOF + syncDtAddrTagsInFile + pre-write validator + `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` chain + the end-to-end `_preserves_loadable` ladder |
 | `SectionOps` | ~420 | `updateSectionContent` + projection / index-preservation / typed-accessor preservation helpers |
 | 14 ops (`Elf/Ops/*.lean`) | ~1,080 | mutating operations |
+| Op-level Tier D (`OpAdapterPreservation`) | ~240 | Tier-1 op `_preserves_loadable` + phdrs-map helpers + the Tier-2/3 round-trip scaffold (§5.1) |
 | CLI + Main + Log | ~990 | lean4-cli subcommand tree + stderr trace logger |
 | Tactic (`SpliceSimproc*`) | ~200 | `simp_splice` macro + `[splice_simp]` simp set |
 | Misc (root, ElfFile, DynamicLemmas) | ~980 | structural |

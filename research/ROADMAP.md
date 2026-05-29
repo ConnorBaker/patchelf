@@ -26,10 +26,14 @@ forward-looking view.
 >
 > Item §1.2 is now **fully landed** — both the `_preserves_valid`
 > and `_preserves_loadable` ladders close, including the top-level
-> `growEOFWith_preserves_loadable` dispatch.  §5.1 (op-level Tier D
-> / per-op `_preserves_loadable`) remains open.  §3.5a fully landed
-> (both in-place and relocatePht sub-cases — see below).  §1.1
-> parser side landed.
+> `growEOFWith_preserves_loadable` dispatch and the end-to-end
+> `prepLayout_syncDtStrsz_preserves_loadable`.  §5.1 (op-level Tier D)
+> is **in progress**: the `toElfFile` dependent-type obstacle is
+> resolved, Tier-1 ops + the Tier-2/3 scaffold landed, the Tier-2/3
+> open core is documented (canonical next pickup —
+> [`PICKUP-PROMPT-OP-TIER-D.md`](PICKUP-PROMPT-OP-TIER-D.md)).  §3.5a
+> fully landed (both in-place and relocatePht sub-cases — see below).
+> §1.1 parser side landed.
 >
 > **2026-05 cleanup + feature gap pass landed.** Six commits of
 > mechanical-duplication cleanup (~−260 LOC across CLI, Adapter,
@@ -68,12 +72,17 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
   un-bundling refactor, commit `8ffe2cb`).  Tier 1 ops (`setOsAbi`,
   `modifyExecstack` — section positions unchanged) have full
   `_preserves_loadable` (`OpAdapterPreservation.lean`, commit
-  `8ecaba0`).  Open: the Tier 2/3 ops, whose byte-level `.dynamic`
-  changes size (so their raw `toElfFile` output isn't laid out —
-  loadability is restored by `encode`'s `growEOFWith`).  For those
-  the target is the full Tier D round-trip `parse (encode (toElfFile
-  … (op typed)))`, composing a per-op `_produces_spliceRegionsDisjoint`
-  with the landed §1.2 pipeline.  See §5.1 for the tier map.
+  `8ecaba0`), and the Tier-2/3 round-trip scaffold is in place
+  (`encode_roundtrip_via_normalized` + `spliceRegionsDisjoint_of_structural`,
+  commit `5c27487`).  Open: the Tier 2/3 ops, whose byte-level
+  `.dynamic` changes size (so their raw `toElfFile` output isn't laid
+  out — loadability is restored by `encode`'s `growEOFWith`).  Their
+  target is the full round-trip `parse (encode (toElfFile … (op typed)))
+  = .ok ⟨normalized, _⟩` via the scaffold; the remaining obligations
+  (normalized-form `EncodePreconditions` + pre-pass idempotence) are
+  the open core.  Fresh-agent handoff:
+  [`PICKUP-PROMPT-OP-TIER-D.md`](PICKUP-PROMPT-OP-TIER-D.md).  See §5.1
+  for the tier map + obligation breakdown.
 - **§4.2 trailing-array DSL field kind + `Verneed.write_decode`** —
   independent typed-side completeness item; `.verneed` is stored
   as `.raw` at the byte layer, so the byte-roundtrip doesn't
