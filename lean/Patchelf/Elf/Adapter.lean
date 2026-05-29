@@ -183,13 +183,7 @@ def symbolOfTyped {ds : StringSection} (s : TypedSymbol ds) : Symbol :=
   , st_size  := s.st_size }
 
 /-- Generic foldl array-size bound: if each step grows the accumulator array
-    by at most one element, the result is bounded by `init.size + as.size`.
-    Reusable building block for bounding `patchDynamicEntries`'s output size
-    (§5.1 shrinking-op structural-invariant discharge — see ROADMAP §5.1
-    "Remaining per-op work").  The `patchDynamicEntries` loop pushes ≤ 1
-    entry per input via this; the tight `≤ byteDyn.size` bound a shrinking
-    op needs additionally uses that drop-ops push 0 net (`typed.rpath = none`
-    skips both the in-loop and trailing-`unless` pushes). -/
+    by at most one element, the result is bounded by `init.size + as.size`. -/
 theorem Array.foldl_size_le_add {α β : Type} (as : Array α)
     (f : Array β → α → Array β) (init : Array β)
     (hf : ∀ (acc : Array β) (a : α), (f acc a).size ≤ acc.size + 1) :
@@ -200,6 +194,53 @@ theorem Array.foldl_size_le_add {α β : Type} (as : Array α)
     (fun i b hb => calc
       (f b as[i]).size ≤ b.size + 1 := hf b _
       _ ≤ init.size + (↑i + 1) := by omega)
+
+/-- Generalization to a foldl over an arbitrary state `σ`, projecting an
+    `Array β` component `π`: if each step grows `π` by ≤ 1, the result's `π`
+    is bounded by `(π init).size + as.size`. -/
+theorem Array.foldl_proj_size_le_add {α σ β : Type} (as : Array α)
+    (f : σ → α → σ) (π : σ → Array β) (init : σ)
+    (hf : ∀ (s : σ) (a : α), (π (f s a)).size ≤ (π s).size + 1) :
+    (π (as.foldl f init)).size ≤ (π init).size + as.size :=
+  Array.foldl_induction
+    (as := as) (motive := fun n s => (π s).size ≤ (π init).size + n) (init := init) (f := f)
+    (Nat.le_add_right _ _)
+    (fun i b hb => calc
+      (π (f b as[i])).size ≤ (π b).size + 1 := hf b _
+      _ ≤ (π init).size + (↑i + 1) := by omega)
+
+/-- Bridge for bounding an `Id`-monad, yield-only `forIn` loop's projected
+    output size: when every step grows the projected `Array β` component by
+    ≤ 1, the loop's result is bounded by `(π init).size + as.size`.
+
+    This is the reusable connector for §5.1's `patchDynamicEntries` output-
+    size bound (see ROADMAP §5.1 "Remaining per-op work"): the
+    `Id.run do … forIn …` loop has exactly this shape with `σ` the 8-tuple
+    state and `π` the `result` projection.  Converts the `forIn` to a `foldl`
+    via `Array.forIn_eq_foldlM` (Id collapses `foldlM`, steps are always
+    `.yield`), then applies `foldl_proj_size_le_add` through `ForInStep.value`. -/
+theorem idForIn_proj_size_le {α σ β : Type} (as : Array α)
+    (g : α → σ → σ) (π : σ → Array β) (init : σ)
+    (hf : ∀ (a : α) (s : σ), (π (g a s)).size ≤ (π s).size + 1) :
+    (π (Id.run (forIn as init (fun a s => pure (ForInStep.yield (g a s)))))).size
+      ≤ (π init).size + as.size := by
+  have hstep : Id.run (forIn as init (fun a s => pure (ForInStep.yield (g a s))))
+      = (as.foldl (fun b a => match b with
+          | ForInStep.yield b => ForInStep.yield (g a b)
+          | ForInStep.done b => ForInStep.done b) (ForInStep.yield init)).value := by
+    rw [Array.forIn_eq_foldlM]; rfl
+  rw [hstep]
+  have := Array.foldl_proj_size_le_add as
+    (f := fun b a => match b with
+      | ForInStep.yield b => ForInStep.yield (g a b)
+      | ForInStep.done b => ForInStep.done b)
+    (π := fun b => π b.value) (init := ForInStep.yield init)
+    (by
+      intro s a
+      cases s with
+      | yield b => simp only [ForInStep.value]; exact hf a b
+      | done b => simp only [ForInStep.value]; omega)
+  simpa using this
 
 /-- Surgical patch of a byte-layer dynamic entry array to reflect the typed's changes.
 
