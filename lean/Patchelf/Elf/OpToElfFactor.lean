@@ -247,46 +247,46 @@ theorem applyDynamic_stripRpath_factor (e₀ : ElfFile) {ds : StringSection}
   --   vs (e₀.update iDyn (.dynamic (patch bd td))).update iDyn (.dynamic (patch bd stripRpath))
   rw [ElfFile.updateSectionContent_set_set]
 
+-- Generic type-based outer-apply commutation: an `applyOpt` keyed on
+-- `findUniqueTypeIdx ty` (ty ≠ SHT_DYNAMIC) commutes with a `.dynamic` update at
+-- iDyn.  The four per-type applies (versym/sysv/gnu/verneed) are thin wrappers.
+theorem applyTypeOpt_dynamic_comm {α : Type} (e : ElfFile) (iDyn : Nat) (d : Array DynEntry)
+    (ty : ShType) (hTyNe : ty ≠ ShType.SHT_DYNAMIC) (val? : Option α) (mk : α → SectionContent)
+    (hIdx : e.dynamicIdx = some iDyn) :
+    applyOpt (e.updateSectionContent iDyn (.dynamic d)) ((e.updateSectionContent iDyn (.dynamic d)).findUniqueTypeIdx ty) val? mk
+      = (applyOpt e (e.findUniqueTypeIdx ty) val? mk).updateSectionContent iDyn (.dynamic d) :=
+  applyOpt_updateSectionContent_dynamic_comm e iDyn d (fun f => f.findUniqueTypeIdx ty) val? mk
+    (ElfFile.updateSectionContent_dynamic_findUniqueTypeIdx e iDyn d hIdx ty)
+    (fun i hi => ElfFile.findUniqueTypeIdx_ne_dynamicIdx e ty hTyNe iDyn hIdx i hi)
+
 -- Commutation of applyVersym with a dynamic update at iDyn.
 theorem applyVersym_dynamic_comm (e : ElfFile) (iDyn : Nat) (d : Array DynEntry)
     (hIdx : e.dynamicIdx = some iDyn) (vs? : Option (Array UInt16)) :
     applyVersym (e.updateSectionContent iDyn (.dynamic d)) vs?
       = (applyVersym e vs?).updateSectionContent iDyn (.dynamic d) := by
   unfold applyVersym ElfFile.versymIdx
-  exact applyOpt_updateSectionContent_dynamic_comm e iDyn d
-    (fun f => f.findUniqueTypeIdx ShType.SHT_GNU_VERSYM) vs? _
-    (ElfFile.updateSectionContent_dynamic_findUniqueTypeIdx e iDyn d hIdx _)
-    (fun i hi => ElfFile.findUniqueTypeIdx_ne_dynamicIdx e _ (by decide) iDyn hIdx i hi)
+  exact applyTypeOpt_dynamic_comm e iDyn d ShType.SHT_GNU_VERSYM (by decide) vs? _ hIdx
 
 theorem applySysvHash_dynamic_comm (e : ElfFile) (iDyn : Nat) (d : Array DynEntry)
     (hIdx : e.dynamicIdx = some iDyn) (x? : Option SysVHashSection) :
     applySysvHash (e.updateSectionContent iDyn (.dynamic d)) x?
       = (applySysvHash e x?).updateSectionContent iDyn (.dynamic d) := by
   unfold applySysvHash ElfFile.sysvHashIdx
-  exact applyOpt_updateSectionContent_dynamic_comm e iDyn d
-    (fun f => f.findUniqueTypeIdx ShType.SHT_HASH) x? _
-    (ElfFile.updateSectionContent_dynamic_findUniqueTypeIdx e iDyn d hIdx _)
-    (fun i hi => ElfFile.findUniqueTypeIdx_ne_dynamicIdx e _ (by decide) iDyn hIdx i hi)
+  exact applyTypeOpt_dynamic_comm e iDyn d ShType.SHT_HASH (by decide) x? _ hIdx
 
 theorem applyGnuHash_dynamic_comm (e : ElfFile) (iDyn : Nat) (d : Array DynEntry)
     (hIdx : e.dynamicIdx = some iDyn) (x? : Option GnuHashSection) :
     applyGnuHash (e.updateSectionContent iDyn (.dynamic d)) x?
       = (applyGnuHash e x?).updateSectionContent iDyn (.dynamic d) := by
   unfold applyGnuHash ElfFile.gnuHashIdx
-  exact applyOpt_updateSectionContent_dynamic_comm e iDyn d
-    (fun f => f.findUniqueTypeIdx ShType.SHT_GNU_HASH) x? _
-    (ElfFile.updateSectionContent_dynamic_findUniqueTypeIdx e iDyn d hIdx _)
-    (fun i hi => ElfFile.findUniqueTypeIdx_ne_dynamicIdx e _ (by decide) iDyn hIdx i hi)
+  exact applyTypeOpt_dynamic_comm e iDyn d ShType.SHT_GNU_HASH (by decide) x? _ hIdx
 
 theorem applyVerneed_dynamic_comm (e : ElfFile) (iDyn : Nat) (d : Array DynEntry)
     (hIdx : e.dynamicIdx = some iDyn) (x? : Option VerneedSection) :
     applyVerneed (e.updateSectionContent iDyn (.dynamic d)) x?
       = (applyVerneed e x?).updateSectionContent iDyn (.dynamic d) := by
   unfold applyVerneed ElfFile.verneedIdx
-  exact applyOpt_updateSectionContent_dynamic_comm e iDyn d
-    (fun f => f.findUniqueTypeIdx ShType.SHT_GNU_VERNEED) x? _
-    (ElfFile.updateSectionContent_dynamic_findUniqueTypeIdx e iDyn d hIdx _)
-    (fun i hi => ElfFile.findUniqueTypeIdx_ne_dynamicIdx e _ (by decide) iDyn hIdx i hi)
+  exact applyTypeOpt_dynamic_comm e iDyn d ShType.SHT_GNU_VERNEED (by decide) x? _ hIdx
 
 -- interpIdx is preserved under a `.dynamic` update at iDyn, and ≠ iDyn,
 -- given a content-dynamic witness + dynstr witness at iDyn (so iDyn ≠ shstrndx).
@@ -345,40 +345,37 @@ theorem applyDynamic_dynamicIdx (e : ElfFile) {ds : StringSection}
     | none => simp only; exact (hudyn _).trans hIdx
     | some bd => simp only; exact (hudyn _).trans hIdx
 
+-- Generic: a type-based outer-apply (ty ≠ SHT_DYNAMIC) targets a section of
+-- type `ty`, so it preserves dynamicIdx.  The four per-type applies are wrappers.
+theorem applyTypeOpt_dynamicIdx {α : Type} (e : ElfFile) (ty : ShType) (hTyNe : ty ≠ ShType.SHT_DYNAMIC)
+    (val? : Option α) (mk : α → SectionContent) (hmk : ∀ v, (mk v).type ≠ ShType.SHT_DYNAMIC) :
+    (applyOpt e (e.findUniqueTypeIdx ty) val? mk).dynamicIdx = e.dynamicIdx := by
+  apply applyOpt_dynamicIdx e (e.findUniqueTypeIdx ty) val? mk hmk
+  intro i hi hb
+  obtain ⟨_, hTy⟩ := ElfFile.findUniqueTypeIdx_section_type e ty i hi
+  rw [hTy]; exact hTyNe
+
 -- Each outer apply targets a section of its OWN type (≠ DYNAMIC), so it
--- preserves dynamicIdx.  Proof: applyOpt_dynamicIdx with hmk (mk's type ≠ DYNAMIC)
--- and hOrig (the findUniqueTypeIdx target has that type, ≠ DYNAMIC).
+-- preserves dynamicIdx.
 theorem applyVersym_dynamicIdx (e : ElfFile) (vs? : Option (Array UInt16)) :
     (applyVersym e vs?).dynamicIdx = e.dynamicIdx := by
-  unfold applyVersym
-  apply applyOpt_dynamicIdx e e.versymIdx vs? _ (fun v => by simp only [SectionContent.type]; decide)
-  intro i hi hb
-  obtain ⟨_, hTy⟩ := ElfFile.findUniqueTypeIdx_section_type e _ i hi
-  rw [hTy]; decide
+  unfold applyVersym ElfFile.versymIdx
+  exact applyTypeOpt_dynamicIdx e ShType.SHT_GNU_VERSYM (by decide) vs? _ (fun v => by simp only [SectionContent.type]; decide)
 
 theorem applySysvHash_dynamicIdx (e : ElfFile) (x? : Option SysVHashSection) :
     (applySysvHash e x?).dynamicIdx = e.dynamicIdx := by
-  unfold applySysvHash
-  apply applyOpt_dynamicIdx e e.sysvHashIdx x? _ (fun v => by simp only [SectionContent.type]; decide)
-  intro i hi hb
-  obtain ⟨_, hTy⟩ := ElfFile.findUniqueTypeIdx_section_type e _ i hi
-  rw [hTy]; decide
+  unfold applySysvHash ElfFile.sysvHashIdx
+  exact applyTypeOpt_dynamicIdx e ShType.SHT_HASH (by decide) x? _ (fun v => by simp only [SectionContent.type]; decide)
 
 theorem applyGnuHash_dynamicIdx (e : ElfFile) (x? : Option GnuHashSection) :
     (applyGnuHash e x?).dynamicIdx = e.dynamicIdx := by
-  unfold applyGnuHash
-  apply applyOpt_dynamicIdx e e.gnuHashIdx x? _ (fun v => by simp only [SectionContent.type]; decide)
-  intro i hi hb
-  obtain ⟨_, hTy⟩ := ElfFile.findUniqueTypeIdx_section_type e _ i hi
-  rw [hTy]; decide
+  unfold applyGnuHash ElfFile.gnuHashIdx
+  exact applyTypeOpt_dynamicIdx e ShType.SHT_GNU_HASH (by decide) x? _ (fun v => by simp only [SectionContent.type]; decide)
 
 theorem applyVerneed_dynamicIdx (e : ElfFile) (x? : Option VerneedSection) :
     (applyVerneed e x?).dynamicIdx = e.dynamicIdx := by
-  unfold applyVerneed
-  apply applyOpt_dynamicIdx e e.verneedIdx x? _ (fun v => by simp only [SectionContent.type]; decide)
-  intro i hi hb
-  obtain ⟨_, hTy⟩ := ElfFile.findUniqueTypeIdx_section_type e _ i hi
-  rw [hTy]; decide
+  unfold applyVerneed ElfFile.verneedIdx
+  exact applyTypeOpt_dynamicIdx e ShType.SHT_GNU_VERNEED (by decide) x? _ (fun v => by simp only [SectionContent.type]; decide)
 
 /-- Outer-chain commutation: the whole `applyInterp ∘ applyVerneed ∘ applyGnuHash
     ∘ applySysvHash ∘ applyVersym` suffix commutes with a dynamic update at iDyn,
@@ -562,34 +559,45 @@ theorem applyOpt_content_at_ne {α : Type} (e : ElfFile) (idx? : Option Nat) (va
       exact congrArg Section.content
         (ElfFile.updateSectionContent_getElem_ne e i (mk v) iDyn hb (Ne.symm (hNe i rfl)) _)
 
+-- Generic: a type-based outer-apply (ty ≠ SHT_DYNAMIC) preserves content at the
+-- dynamic index (its target ≠ iDyn).  The four per-type applies are wrappers.
+theorem applyTypeOpt_content_at {α : Type} (e : ElfFile) (ty : ShType)
+    (hTyNe : ty ≠ ShType.SHT_DYNAMIC) (val? : Option α) (mk : α → SectionContent)
+    (iDyn : Nat) (hIdx : e.dynamicIdx = some iDyn) (hb : iDyn < e.sections.size)
+    (hb' : iDyn < (applyOpt e (e.findUniqueTypeIdx ty) val? mk).sections.size) :
+    ((applyOpt e (e.findUniqueTypeIdx ty) val? mk).sections[iDyn]'hb').content
+      = (e.sections[iDyn]'hb).content :=
+  applyOpt_content_at_ne e (e.findUniqueTypeIdx ty) val? mk iDyn
+    (fun i hi => ElfFile.findUniqueTypeIdx_ne_dynamicIdx e ty hTyNe iDyn hIdx i hi) hb hb'
+
 -- Per-apply content preservation at the dynamic index (target ≠ iDyn).
 theorem applyVersym_content_at (e : ElfFile) (vs? : Option (Array UInt16)) (iDyn : Nat)
     (hIdx : e.dynamicIdx = some iDyn) (hb : iDyn < e.sections.size)
     (hb' : iDyn < (applyVersym e vs?).sections.size) :
-    ((applyVersym e vs?).sections[iDyn]'hb').content = (e.sections[iDyn]'hb).content :=
-  applyOpt_content_at_ne e e.versymIdx vs? _ iDyn
-    (fun i hi => ElfFile.findUniqueTypeIdx_ne_dynamicIdx e _ (by decide) iDyn hIdx i hi) hb hb'
+    ((applyVersym e vs?).sections[iDyn]'hb').content = (e.sections[iDyn]'hb).content := by
+  unfold applyVersym ElfFile.versymIdx
+  exact applyTypeOpt_content_at e ShType.SHT_GNU_VERSYM (by decide) vs? _ iDyn hIdx hb hb'
 
 theorem applySysvHash_content_at (e : ElfFile) (x? : Option SysVHashSection) (iDyn : Nat)
     (hIdx : e.dynamicIdx = some iDyn) (hb : iDyn < e.sections.size)
     (hb' : iDyn < (applySysvHash e x?).sections.size) :
-    ((applySysvHash e x?).sections[iDyn]'hb').content = (e.sections[iDyn]'hb).content :=
-  applyOpt_content_at_ne e e.sysvHashIdx x? _ iDyn
-    (fun i hi => ElfFile.findUniqueTypeIdx_ne_dynamicIdx e _ (by decide) iDyn hIdx i hi) hb hb'
+    ((applySysvHash e x?).sections[iDyn]'hb').content = (e.sections[iDyn]'hb).content := by
+  unfold applySysvHash ElfFile.sysvHashIdx
+  exact applyTypeOpt_content_at e ShType.SHT_HASH (by decide) x? _ iDyn hIdx hb hb'
 
 theorem applyGnuHash_content_at (e : ElfFile) (x? : Option GnuHashSection) (iDyn : Nat)
     (hIdx : e.dynamicIdx = some iDyn) (hb : iDyn < e.sections.size)
     (hb' : iDyn < (applyGnuHash e x?).sections.size) :
-    ((applyGnuHash e x?).sections[iDyn]'hb').content = (e.sections[iDyn]'hb).content :=
-  applyOpt_content_at_ne e e.gnuHashIdx x? _ iDyn
-    (fun i hi => ElfFile.findUniqueTypeIdx_ne_dynamicIdx e _ (by decide) iDyn hIdx i hi) hb hb'
+    ((applyGnuHash e x?).sections[iDyn]'hb').content = (e.sections[iDyn]'hb).content := by
+  unfold applyGnuHash ElfFile.gnuHashIdx
+  exact applyTypeOpt_content_at e ShType.SHT_GNU_HASH (by decide) x? _ iDyn hIdx hb hb'
 
 theorem applyVerneed_content_at (e : ElfFile) (x? : Option VerneedSection) (iDyn : Nat)
     (hIdx : e.dynamicIdx = some iDyn) (hb : iDyn < e.sections.size)
     (hb' : iDyn < (applyVerneed e x?).sections.size) :
-    ((applyVerneed e x?).sections[iDyn]'hb').content = (e.sections[iDyn]'hb).content :=
-  applyOpt_content_at_ne e e.verneedIdx x? _ iDyn
-    (fun i hi => ElfFile.findUniqueTypeIdx_ne_dynamicIdx e _ (by decide) iDyn hIdx i hi) hb hb'
+    ((applyVerneed e x?).sections[iDyn]'hb').content = (e.sections[iDyn]'hb).content := by
+  unfold applyVerneed ElfFile.verneedIdx
+  exact applyTypeOpt_content_at e ShType.SHT_GNU_VERNEED (by decide) x? _ iDyn hIdx hb hb'
 
 theorem applyInterp_content_at (e : ElfFile) (ip? : Option InterpSection) (iDyn : Nat)
     (hInterpNe : ∀ i, e.interpIdx = some i → i ≠ iDyn) (hb : iDyn < e.sections.size)
