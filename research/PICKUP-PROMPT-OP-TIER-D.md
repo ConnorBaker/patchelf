@@ -49,11 +49,31 @@ corollary `Adapter.mapDynamicOp_spliceRegionsDisjoint_of_base`; the two capstone
 UPGRADED to no longer hypothesize `hSplice` — their surface is now the no-op
 base's 6 structural invariants (same as the shrink capstones) + the 2 offset side
 conditions.  The driver `tierD_roundtrip_of_grown_eo` STAYS in
-`OpToElfFactorGrow.lean` hypothesizing `hSplice` (still needed by `addNeeded`).
-**Still open** (the remaining §5.1 work, a separate session is on it): the
-dynstr-growing `growDynstrDynamicOp` ops `addNeeded` / `modify{RPath,Soname}.set`
-(dynstr AND dynamic both grow — a genuinely-new two-field factoring,
-PLAN-GROWING-OPS §3 Commit 5).  See `PLAN-GROWING-OPS.md`.
+`OpToElfFactorGrow.lean` hypothesizing `hSplice` (reused by the dynstr growers).
+
+**Dynstr growers — Tier-D capstones LANDED (hSplice HYPOTHESIZED; the two-field
+factoring DERIVED)** (`Patchelf/Elf/OpToElfFactorGrowDynstr.lean`,
+PLAN-GROWING-OPS §3 Commit 5).  `addNeeded` / `modifyRPath.set` /
+`modifySoname.set` use `growDynstrDynamicOp` (dynstr AND dynamic both grow).  The
+genuinely-new artifact, the **Strategy-A two-field factoring**, is DERIVED: the
+key insight collapses "two fields" to one — `addNeeded typed lib h = { tg with
+dynamic := tg.dynamic.map (·.pushNeeded off) }` by `rfl`, where `tg :=
+(typed.growDynstr lib).1` ABSORBS the entire dynstr growth + dynsym/dynamic
+rebases into the base `toElfFile template tg`, leaving a single `.dynamic` update
+at `iDyn` (NO parallel `.strtab`-commutation suite needed).  Keystone
+`toElfFile_dynamicMapMono_factor` generalizes `toElfFile_mapDynamicOp_factor` to
+a MONOMORPHIC `g` on `.dynamic` (reusing `innerChain_factor_general` verbatim);
+per-op factorings `toElfFile_{addNeeded,modifyRPath_set,modifySoname_set}_factor`
++ corollary `toElfFile_addNeeded_content_at_dynamicIdx`.  The three capstones
+`toElfFile_{addNeeded,modifyRPath_set,modifySoname_set}_tierD_roundtrip_derived`
+instantiate `tierD_roundtrip_of_grown_eo`, so they HYPOTHESIZE the normalized
+form's `spliceRegionsDisjoint` (`hSplice`) — UNLIKE the `mapDynamicOp` growers,
+whose `hSplice` is derived.  **So every growing op named in PLAN-GROWING-OPS now
+has a Tier-D capstone.**  **The ONLY remaining §5.1 growing-ops item** (the
+next concrete task): DERIVE `hSplice` for the dynstr growers — a
+TWO-grown-section analogue of `Adapter.mapDynamicOp_spliceRegionsDisjoint_of_base`
+(the `.dynstr` section grows too); `toElfFile_addNeeded_content_at_dynamicIdx` is
+the building block, but the establisher is NOT done.  See `PLAN-GROWING-OPS.md`.
 
 ---
 
@@ -81,7 +101,7 @@ the open tasks below (they are independent); §5.1 is the canonical/largest,
 ## Working directory and environment
 
     cd /home/cbaker2/ext-sources/patchelf/lean
-    nix develop ..#lean -c lake build              # baseline; expect 112 jobs clean
+    nix develop ..#lean -c lake build              # baseline; expect 113 jobs clean
     nix develop ..#lean -c bash tests/run.sh       # 54/54 shell tests
     grep -rnE "(:= *sorry|by *sorry| sorry$)" Patchelf/   # zero; keep it
 
@@ -96,7 +116,7 @@ gitignored, but don't leave it around).
 
 - No `sorry`s, even temporarily.  If blocked, document the obstacle as
   `-- TODO §<n>: <what you tried, what failed>` and stop with a writeup.
-- Don't weaken or delete any existing theorem/test.  112 lake jobs must
+- Don't weaken or delete any existing theorem/test.  113 lake jobs must
   build; 54 shell tests must pass.
 - Don't re-introduce the `Adapter.toElfFile` bundling, and keep its outer
   `{ e with header := …, phdrs := … }` shape — `toElfFile_header`/`_phdrs`
@@ -155,16 +175,38 @@ base's 6 structural invariants (same as the shrink capstones) + 2 honest offset
 side conditions (the dynamic section sits after the header / phdr table, WEAKER
 than the shrink path's `hSizeBound`).  The generic grow driver
 `tierD_roundtrip_of_grown_eo` (`Patchelf/Elf/OpToElfFactorGrow.lean`) STILL
-hypothesizes `hSplice` — that is the path the NEXT-up op reuses.  **Next up:** the
-dynstr-growing `growDynstrDynamicOp` ops `addNeeded` / `modify{RPath,Soname}.set`
-(dynstr AND dynamic both grow — a genuinely-new two-field factoring,
-PLAN-GROWING-OPS §3 Commit 5).  See `PLAN-GROWING-OPS.md` for the full design.
-Read `Patchelf/Elf/OpToElfFactor.lean`, `Patchelf/Elf/OpToElfFactorGrow.lean`,
-AND `Patchelf/Elf/GrowEOFDisjointOfBase.lean` end-to-end first — the generic
+hypothesizes `hSplice` — that is the path the dynstr growers reuse.
+
+**The `growDynstrDynamicOp` growers now have Tier-D capstones too**
+(`Patchelf/Elf/OpToElfFactorGrowDynstr.lean`, PLAN-GROWING-OPS §3 Commit 5,
+LANDED): `addNeeded` / `modifyRPath.set` / `modifySoname.set` (dynstr AND dynamic
+both grow).  The genuinely-new **Strategy-A two-field factoring** is DERIVED — the
+key insight collapses "two fields" to ONE via the `rfl` identity `addNeeded typed
+lib h = { tg with dynamic := tg.dynamic.map (·.pushNeeded off) }` (where `tg :=
+(typed.growDynstr lib).1` ABSORBS the entire dynstr growth + rebases into the
+base `toElfFile template tg`), so NO parallel `.strtab`-commutation suite was
+needed; the keystone `toElfFile_dynamicMapMono_factor` generalizes
+`toElfFile_mapDynamicOp_factor` to a MONOMORPHIC `g` on `.dynamic`, reusing
+`innerChain_factor_general` verbatim.  The three capstones instantiate
+`tierD_roundtrip_of_grown_eo` and so still HYPOTHESIZE `hSplice` (unlike the
+`mapDynamicOp` growers, whose `hSplice` is derived).  **So every growing op named
+in PLAN-GROWING-OPS now has a Tier-D capstone.**
+
+**Next up (the next concrete task):** DERIVE `hSplice` for the dynstr growers — a
+TWO-grown-section analogue of `Adapter.mapDynamicOp_spliceRegionsDisjoint_of_base`
+(the `.dynstr` section grows too, in addition to `.dynamic`).  The building block
+`toElfFile_addNeeded_content_at_dynamicIdx` (content-at-`iDyn` corollary) is
+landed in `OpToElfFactorGrowDynstr.lean`, but the two-grown-section establisher is
+NOT done.  See `PLAN-GROWING-OPS.md` for the full design.  Read
+`Patchelf/Elf/OpToElfFactor.lean`, `Patchelf/Elf/OpToElfFactorGrow.lean`,
+`Patchelf/Elf/GrowEOFDisjointOfBase.lean`, AND
+`Patchelf/Elf/OpToElfFactorGrowDynstr.lean` end-to-end first — the generic
 factoring/transport/capstone + per-apply commutation suite are reusable for any
 `mapDynamicOp f`; a further `mapDynamicOp` op would need only its `Adapter.lean`
 size bound (shrink) or the grow driver + the no-op-base `hSplice` derivation
-(grow); a `growDynstrDynamicOp` op needs the new two-field factoring.
+(grow); a `growDynstrDynamicOp` op reuses the two-field factoring keystone
+`toElfFile_dynamicMapMono_factor` (the dynstr-grower `hSplice` derivation is the
+open item).
 
 ### Tier-D readers (after orientation)
 
@@ -198,8 +240,23 @@ size bound (shrink) or the grow driver + the no-op-base `hSplice` derivation
   live here, UPGRADED to derive `hSplice` (no longer hypothesize it).  For a new
   `mapDynamicOp` grower: instantiate the grow driver + supply the no-op-base
   structural invariants + 2 offset side conditions through this corollary (~5–10
-  lines).  The `growDynstrDynamicOp` two-field factoring is the open follow-up
-  (`PLAN-GROWING-OPS.md`).
+  lines).
+- `Patchelf/Elf/OpToElfFactorGrowDynstr.lean` — **the dynstr-GROWER (two-field)
+  companion; read after GrowEOFDisjointOfBase.lean.**  Tier-D for the
+  `growDynstrDynamicOp` growers `addNeeded` / `modifyRPath.set` /
+  `modifySoname.set` (dynstr AND dynamic both grow).  The DERIVED Strategy-A
+  two-field factoring: read the file header for the `rfl` insight that collapses
+  "two fields" to one (`addNeeded typed lib h = { tg with dynamic :=
+  tg.dynamic.map (·.pushNeeded off) }`, the dynstr growth ABSORBED into the base
+  `tg := (typed.growDynstr lib).1`).  Keystone `toElfFile_dynamicMapMono_factor`
+  (monomorphic-`g` generalization of `toElfFile_mapDynamicOp_factor`, reuses
+  `innerChain_factor_general` verbatim) + per-op factorings
+  `toElfFile_{addNeeded,modifyRPath_set,modifySoname_set}_factor` + the
+  content-at-`iDyn` corollary `toElfFile_addNeeded_content_at_dynamicIdx` (the
+  building block for the open `hSplice` derivation) + the three capstones
+  `toElfFile_{addNeeded,modifyRPath_set,modifySoname_set}_tierD_roundtrip_derived`
+  (instantiate `tierD_roundtrip_of_grown_eo`, so they HYPOTHESIZE `hSplice` — the
+  open follow-up is the TWO-grown-section establisher; `PLAN-GROWING-OPS.md`).
 - `Patchelf/Elf/OpAdapterPreservation.lean` — the WHOLE file.  Home base.
   In order: Tier-1 worked examples (`toElfFile_setOsAbi_*`,
   `_modifyExecstack_*`); the scaffold (`encode_roundtrip_via_normalized`,
@@ -289,14 +346,28 @@ pathological case at write time, so leaving them as a hypothesis is fine).
    `headerSectionDisjoint`/`phdrSectionDisjoint` survive via the LEFT disjunct
    given the dynamic section sits after the header / phdr table;
    `shdrSectionDisjoint`/`sectionsNonOverlapping` are re-established by
-   `growEOFWith`.  REMAINING (do AFTER the shrinking ops, deferred — a separate
-   session is on it; see `PLAN-GROWING-OPS.md`): the dynstr-growing
-   `growDynstrDynamicOp` ops (`addNeeded`, `addRpathEntry`, `modifyRPath.set`,
-   `modifySoname.set`, `setInterpreter`, `replaceNeeded` grow path,
-   `renameDynamicSymbols`) — both `.dynstr` and `.dynamic` grow, so
-   `toElfFile_mapDynamicOp_factor` does NOT apply; they need a genuinely-new
-   TWO-FIELD factoring (push both a `.strtab` and a `.dynamic` update out through
-   the `applyX` chain).
+   `growEOFWith`.  **The `growDynstrDynamicOp` growers now have Tier-D capstones
+   too** (`OpToElfFactorGrowDynstr.lean`, PLAN-GROWING-OPS §3 Commit 5, LANDED):
+   `addNeeded` / `modifyRPath.set` / `modifySoname.set` (both `.dynstr` and
+   `.dynamic` grow, so `toElfFile_mapDynamicOp_factor` does NOT apply directly).
+   The DERIVED **Strategy-A two-field factoring** collapses "two fields" to ONE
+   via the `rfl` identity `addNeeded typed lib h = { tg with dynamic :=
+   tg.dynamic.map (·.pushNeeded off) }` (the dynstr growth + rebases ABSORBED
+   into the base `tg := (typed.growDynstr lib).1`), so NO parallel
+   `.strtab`-commutation suite was needed; keystone
+   `toElfFile_dynamicMapMono_factor` generalizes `toElfFile_mapDynamicOp_factor`
+   to a MONOMORPHIC `g` on `.dynamic`, reusing `innerChain_factor_general`
+   verbatim.  The three capstones instantiate `tierD_roundtrip_of_grown_eo`, so
+   they HYPOTHESIZE `hSplice` (unlike the `mapDynamicOp` growers, whose `hSplice`
+   is derived).  REMAINING (the next concrete task, deferred — see
+   `PLAN-GROWING-OPS.md`): DERIVE `hSplice` for these dynstr growers — a
+   TWO-grown-section analogue of
+   `Adapter.mapDynamicOp_spliceRegionsDisjoint_of_base` (the `.dynstr` section
+   grows too); `toElfFile_addNeeded_content_at_dynamicIdx` is the building block,
+   but the establisher is NOT done.  (The other `growDynstrDynamicOp`-shaped ops
+   — `addRpathEntry`, `setInterpreter`, `replaceNeeded` grow path,
+   `renameDynamicSymbols` — would reuse the same keystone but are not yet wired
+   up.)
 
 ### §5.1 success criteria
 
@@ -311,8 +382,12 @@ pathological case at write time, so leaving them as a hypothesis is fine).
    `mapDynamicOp` growers (`addDebugTag`/`noDefaultLib`) are also FULLY DERIVED
    (`GrowEOFDisjointOfBase.lean` derives `hSplice` from the no-op base; the
    capstones carry only the no-op base's 6 structural invariants + 2 honest
-   offset side conditions).  Next is the `growDynstrDynamicOp` growers
-   (`addNeeded`, `modify{RPath,Soname}.set`) — the two-field factoring.
+   offset side conditions).  The `growDynstrDynamicOp` growers (`addNeeded`,
+   `modify{RPath,Soname}.set`) now have Tier-D capstones too
+   (`OpToElfFactorGrowDynstr.lean`) — the two-field factoring is DERIVED, but the
+   capstones still HYPOTHESIZE `hSplice`.  **So every growing op named in
+   PLAN-GROWING-OPS now has a Tier-D capstone.**  Next is to DERIVE `hSplice` for
+   the dynstr growers — the TWO-grown-section establisher.
 3. STATUS.md + ROADMAP.md updated; refresh this prompt.
 
 =====================================================================
@@ -410,10 +485,32 @@ table, WEAKER than the shrink path's `hSizeBound`).  Establisher
 module and were UPGRADED to derive `hSplice` (no longer hypothesize it) — their
 surface is now the no-op base's 6 structural invariants (same as the shrink
 capstones) + the 2 offset side conditions.  The generic driver
-`tierD_roundtrip_of_grown_eo` STAYS hypothesizing `hSplice` (still needed by
-`addNeeded`).  112 lake jobs, 54/54 tests, no `sorryAx`.
+`tierD_roundtrip_of_grown_eo` STAYS hypothesizing `hSplice` (reused by the dynstr
+growers).
 
-Open §5.1 (deferred; a separate session is on it, see `PLAN-GROWING-OPS.md`): the
-dynstr-growing `growDynstrDynamicOp` ops (`addNeeded`, `modify{RPath,Soname}.set`)
-— `.dynstr` and `.dynamic` both grow, so `toElfFile_mapDynamicOp_factor` doesn't
-apply; they need a genuinely-new two-field factoring (Commit 5).
+State of §5.1 (latest, commit `c9bf8ce`): the dynstr-growing
+`growDynstrDynamicOp` growers `addNeeded` / `modifyRPath.set` /
+`modifySoname.set` now have Tier-D capstones too
+(`Patchelf/Elf/OpToElfFactorGrowDynstr.lean`, PLAN-GROWING-OPS §3 Commit 5).  The
+genuinely-new **Strategy-A two-field factoring** is DERIVED: the key insight that
+collapses "two fields" to one is `addNeeded typed lib h = { tg with dynamic :=
+tg.dynamic.map (·.pushNeeded off) }` by `rfl`, where `tg := (typed.growDynstr
+lib).1` ABSORBS the entire dynstr growth + dynsym/dynamic rebases into the base
+`toElfFile template tg`, so the only delta is a single `.dynamic` update at
+`iDyn` and NO parallel `.strtab`-commutation suite was needed.  Keystone
+`toElfFile_dynamicMapMono_factor` generalizes `toElfFile_mapDynamicOp_factor` to
+a MONOMORPHIC `g` on `.dynamic` (reusing `innerChain_factor_general` verbatim);
+the three capstones
+`toElfFile_{addNeeded,modifyRPath_set,modifySoname_set}_tierD_roundtrip_derived`
+instantiate `tierD_roundtrip_of_grown_eo`, so — UNLIKE the `mapDynamicOp`
+growers, whose `hSplice` is derived — they still HYPOTHESIZE `hSplice`
+(first-cut caliber).  113 lake jobs (was 112), 54/54 tests, no `sorryAx`.  Every
+growing op named in PLAN-GROWING-OPS now has a Tier-D capstone.
+
+Open §5.1 (the ONLY remaining growing-ops item; deferred — see
+`PLAN-GROWING-OPS.md`): DERIVE `hSplice` for the dynstr growers — a
+TWO-grown-section analogue of `Adapter.mapDynamicOp_spliceRegionsDisjoint_of_base`
+(the `.dynstr` section grows too, in addition to `.dynamic`).  The building block
+`toElfFile_addNeeded_content_at_dynamicIdx` (content-at-`iDyn` corollary) is
+landed in `OpToElfFactorGrowDynstr.lean`, but the two-grown-section establisher is
+NOT done.
