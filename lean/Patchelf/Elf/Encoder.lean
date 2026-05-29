@@ -1031,6 +1031,29 @@ theorem prepLayout_syncDtStrsz_dynStrszCoherent (e : ElfFile)
     rw [syncDtStrszInFile_dynstr_eq]; exact hDs
   exact prepLayoutForEncode_preserves_dynStrszCoherent (syncDtStrszInFile e) hDs' hCoh
 
+/-- `prepLayoutForEncode` preserves `.dynstr`.  Fast path is identity; the
+    layout path composes `growEOFWith_dynstr` + `syncDtAddrTagsInFile_dynstr`.
+    (Used by §5.1 Obligation B to thread the dynstr witness onto the
+    normalized form.) -/
+theorem prepLayoutForEncode_dynstr (e : ElfFile)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (prepLayoutForEncode e).dynstr = e.dynstr := by
+  unfold prepLayoutForEncode prepLayoutForEncodeWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]
+  · simp only [hLay, Bool.false_eq_true, ↓reduceIte]
+    have hGrowDs : (growEOFWith none e).dynstr = some ds := by
+      rw [growEOFWith_dynstr]; exact hDs
+    rw [syncDtAddrTagsInFile_dynstr _ hGrowDs, growEOFWith_dynstr]
+
+/-- `prepLayoutForEncode en = en` when `en.spliceRegionsDisjoint`: `en` is
+    already laid out, so the layout pre-pass is the identity.  (§5.1
+    Obligation B, layout-idempotence half.) -/
+theorem prepLayoutForEncode_eq_self_of_spliceRegionsDisjoint (en : ElfFile)
+    (hSplice : en.spliceRegionsDisjoint) : prepLayoutForEncode en = en :=
+  prepLayoutForEncode_of_layoutAlreadyValid
+    (layoutAlreadyValid_of_spliceRegionsDisjoint en hSplice)
+
 /-! ## Sizes match: writeContent.size = encodedSize.
 
     The encoder's per-section splice writes `s.writeContent` at offset

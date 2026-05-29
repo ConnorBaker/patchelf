@@ -2309,6 +2309,33 @@ theorem syncOk_of_normalized (e : ElfFile)
       = prepLayoutForEncode (syncDtStrszInFile e) :=
   syncDtStrszInFile_eq_id _ (prepLayout_syncDtStrsz_dynStrszCoherent e hDs hFit)
 
+/-- §5.1 Obligation B (core): re-normalizing the normalized form is a no-op.
+    `prepLayoutForEncode ∘ syncDtStrszInFile` is the identity on
+    `en := prepLayoutForEncode (syncDtStrszInFile eo)`.  Mind the ordering:
+    `syncDtStrszInFile en = en` (`syncOk_of_normalized`, Obligation A) is
+    applied first, so the outer `prepLayoutForEncode` then sees `en`
+    directly and `en.spliceRegionsDisjoint` makes it the identity. -/
+theorem renormalize_eq_self (eo : ElfFile)
+    {ds : StringTable} (hDs : eo.dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size)
+    (hSplice : (prepLayoutForEncode (syncDtStrszInFile eo)).spliceRegionsDisjoint) :
+    prepLayoutForEncode (syncDtStrszInFile (prepLayoutForEncode (syncDtStrszInFile eo)))
+      = prepLayoutForEncode (syncDtStrszInFile eo) := by
+  rw [syncOk_of_normalized eo hDs hFit]
+  exact prepLayoutForEncode_eq_self_of_spliceRegionsDisjoint _ hSplice
+
+/-- §5.1 Obligation B: pre-pass idempotence.  `encode eo = encode en`, where
+    `en := prepLayoutForEncode (syncDtStrszInFile eo)`.  By `encode_eq` twice
+    this reduces to `renormalize_eq_self`.  This is the `hIdem` the Tier-2/3
+    round-trip scaffold (`Adapter.encode_roundtrip_via_normalized`) needs. -/
+theorem encode_eq_encode_normalized (eo : ElfFile)
+    {ds : StringTable} (hDs : eo.dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size)
+    (hSplice : (prepLayoutForEncode (syncDtStrszInFile eo)).spliceRegionsDisjoint) :
+    encode eo = encode (prepLayoutForEncode (syncDtStrszInFile eo)) := by
+  rw [encode_eq eo, encode_eq (prepLayoutForEncode (syncDtStrszInFile eo))]
+  rw [renormalize_eq_self eo hDs hFit hSplice]
+
 /-! ## `layoutOk` + `spliceDisjoint` from parser output (gap)
 
     The remaining `spliceDisjoint` field of `EncodePreconditions`
