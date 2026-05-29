@@ -534,6 +534,153 @@ theorem patchDynamicEntries_stripRpath_size_le {ds : StringSection}
   unfold patchDynamicEntries
   exact tail_shrink_rpath typed _ _ (loop_shrink_rpath typed byteDyn)
 
+/-! ## `patchDynamicEntries` output-size bound for `filterNeededBy` (§5.1, removeNeeded)
+
+    `removeNeeded` (= `mapDynamicOp e (·.filterNeededBy lib)`) shrinks the
+    `needed` array.  Unlike `stripRpath` (which nulls two TAIL `unless`-blocks
+    at EQUAL cursor), `filterNeededBy` removes entries the LOOP consumes, so the
+    op- and no-op-side NEEDED cursors run UNEQUAL.  The lockstep relation is
+    therefore a POTENTIAL function `result.size + (needed.size − cursor)` rather
+    than `ShrinkRel`'s cursor-equality: each consumed-but-dropped entry trades
+    one unit of "remaining surplus" for nothing on the op side, so the potential
+    is non-increasing.  All five `unless`-blocks (rpath/runpath/soname/flags1/
+    debug) and their applied-flags are UNCHANGED by `filterNeededBy`, so the tail
+    is monotone in the surplus base, which the surplus-EXACT lemma collapses to
+    the loop-end potential. -/
+
+/-- `appendSurplusNeeded` pushes EXACTLY `needed.size − startIdx` entries (every
+    in-range index fires), so its output size is `result.size + (needed.size −
+    startIdx)`.  The exact count (vs. `_mono`) is what realizes the potential. -/
+theorem appendSurplusNeeded_size_exact {ds : StringSection} (typed : DynamicSection ds)
+    (result : Array DynEntry) (startIdx : Nat) :
+    (appendSurplusNeeded typed result startIdx).size
+      = result.size + (typed.needed.size - startIdx) := by
+  unfold appendSurplusNeeded
+  -- induct on the range bound n := needed.size - startIdx; every k < n has startIdx+k < size.
+  suffices h : ∀ (n : Nat) (acc : Array DynEntry), startIdx + n ≤ typed.needed.size →
+      ((List.range n).foldl (fun acc k =>
+        if hh : startIdx + k < typed.needed.size then
+          acc.push { tag := DynTag.needed, value := (typed.needed[startIdx + k]'hh).val.toUInt64 }
+        else acc) acc).size = acc.size + n by
+    have hle : startIdx + (typed.needed.size - startIdx) ≤ typed.needed.size ∨ typed.needed.size < startIdx := by omega
+    rcases hle with hle | hlt
+    · exact h _ result hle
+    · -- startIdx > size ⇒ range (size-startIdx) = range 0 = []
+      have : typed.needed.size - startIdx = 0 := by omega
+      rw [this]; simp
+  intro n
+  induction n with
+  | zero => intro acc _; simp
+  | succ m ih =>
+      intro acc hbound
+      rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
+      have hh : startIdx + m < typed.needed.size := by omega
+      simp only [dif_pos hh, Array.size_push, ih acc (by omega)]
+      omega
+
+/-- The lockstep potential relation for `filterNeededBy`: the op-side
+    `result.size + (remaining needed)` is no bigger, both cursors are in range,
+    and the five tail-block applied-flags agree (`filterNeededBy` touches none). -/
+abbrev NeededRel {ds : StringSection} (n2 n1 : Nat) (st2 st1 : PatchState ds) : Prop :=
+  st2.result.size + (n2 - st2.typedNeededIdx) ≤ st1.result.size + (n1 - st1.typedNeededIdx) ∧
+  st2.typedNeededIdx ≤ n2 ∧ st1.typedNeededIdx ≤ n1 ∧
+  st2.flags1Applied = st1.flags1Applied ∧ st2.debugApplied = st1.debugApplied ∧
+  st2.rpathApplied = st1.rpathApplied ∧ st2.runpathApplied = st1.runpathApplied ∧
+  st2.sonameApplied = st1.sonameApplied
+
+/-- One loop step preserves `NeededRel` (with `n2 := (filter).needed.size`,
+    `n1 := needed.size`).  The `.needed` arm splits 4-way on each cursor<size and
+    closes by `omega`; every other arm leaves the potential and flags untouched. -/
+theorem patchStep_filterNeeded {ds : StringSection} (typed : DynamicSection ds)
+    (target : ByteArray) (st2 st1 : PatchState ds) (d : DynEntry)
+    (hR : NeededRel (typed.filterNeededBy target).needed.size typed.needed.size st2 st1) :
+    NeededRel (typed.filterNeededBy target).needed.size typed.needed.size
+      (patchStep (typed.filterNeededBy target) st2 d) (patchStep typed st1 d) := by
+  obtain ⟨hPot, hC2, hC1, hF1, hDbg, hRp, hRun, hSn⟩ := hR
+  have hRpE : (typed.filterNeededBy target).rpath = typed.rpath := rfl
+  have hRunE : (typed.filterNeededBy target).runpath = typed.runpath := rfl
+  have hSnE : (typed.filterNeededBy target).soname = typed.soname := rfl
+  have hF1E : (typed.filterNeededBy target).flags1 = typed.flags1 := rfl
+  have hDbgE : (typed.filterNeededBy target).debug = typed.debug := rfl
+  cases hd : d.tag <;>
+    simp only [patchStep, NeededRel, hd, hRpE, hRunE, hSnE, hF1E, hDbgE]
+  case needed =>
+    by_cases h2 : st2.typedNeededIdx < (typed.filterNeededBy target).needed.size <;>
+      by_cases h1 : st1.typedNeededIdx < typed.needed.size <;>
+      simp only [h2, h1, dif_pos, dif_neg, not_false_iff, Array.size_push] <;>
+      refine ⟨by omega, by omega, by omega, hF1, hDbg, hRp, hRun, hSn⟩
+  all_goals (
+    (try split) <;>
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
+    first | (simp only [Array.size_push]; omega) | omega | assumption | rfl | simp_all)
+
+/-- Loop-level: the whole `byteDyn` fold preserves `NeededRel`.  The init needs
+    `(filter).needed.size ≤ needed.size` (`Array.size_filter_le`). -/
+theorem loop_filterNeeded {ds : StringSection} (typed : DynamicSection ds) (target : ByteArray)
+    (byteDyn : Array DynEntry) :
+    NeededRel (typed.filterNeededBy target).needed.size typed.needed.size
+      (byteDyn.foldl (patchStep (typed.filterNeededBy target)) (patchInit ds))
+      (byteDyn.foldl (patchStep typed) (patchInit ds)) := by
+  apply Array.foldl_rel (NeededRel (typed.filterNeededBy target).needed.size typed.needed.size)
+    (patchStep (typed.filterNeededBy target)) (patchStep typed)
+    (fun s t a hh => patchStep_filterNeeded typed target s t a hh) byteDyn
+  have hle : (typed.filterNeededBy target).needed.size ≤ typed.needed.size := by
+    unfold DynamicSection.filterNeededBy; exact Array.size_filter_le
+  refine ⟨?_, ?_, ?_, rfl, rfl, rfl, rfl, rfl⟩ <;> simp only [patchInit] <;> omega
+
+/-- Tail bound for `filterNeededBy`: given `NeededRel` at loop end, the full tail
+    (surplus + 5 `unless`-blocks + null push) of the op side is no larger.  Every
+    `unless`-block value + applied-flag is shared (`filterNeededBy` leaves all
+    non-needed fields), so each layer is monotone in the surplus base; the two
+    surplus bases collapse (via `appendSurplusNeeded_size_exact`) to the
+    `NeededRel` potential `result.size + (needed.size − cursor)`. -/
+theorem tail_filterNeeded {ds : StringSection} (typed : DynamicSection ds) (target : ByteArray)
+    (st2 st1 : PatchState ds)
+    (hR : NeededRel (typed.filterNeededBy target).needed.size typed.needed.size st2 st1) :
+    (let r := appendSurplusNeeded (typed.filterNeededBy target) st2.result st2.typedNeededIdx
+     let r := appendUnless st2.flags1Applied r DynTag.flags1 (typed.filterNeededBy target).flags1
+     let r := appendUnless st2.debugApplied r DynTag.debug (typed.filterNeededBy target).debug
+     let r := appendUnless st2.rpathApplied r DynTag.rpath ((typed.filterNeededBy target).rpath.map (·.val.toUInt64))
+     let r := appendUnless st2.runpathApplied r DynTag.runpath ((typed.filterNeededBy target).runpath.map (·.val.toUInt64))
+     let r := appendUnless st2.sonameApplied r DynTag.soname ((typed.filterNeededBy target).soname.map (·.val.toUInt64))
+     r.push st2.nullEntry).size
+      ≤
+    (let r := appendSurplusNeeded typed st1.result st1.typedNeededIdx
+     let r := appendUnless st1.flags1Applied r DynTag.flags1 typed.flags1
+     let r := appendUnless st1.debugApplied r DynTag.debug typed.debug
+     let r := appendUnless st1.rpathApplied r DynTag.rpath (typed.rpath.map (·.val.toUInt64))
+     let r := appendUnless st1.runpathApplied r DynTag.runpath (typed.runpath.map (·.val.toUInt64))
+     let r := appendUnless st1.sonameApplied r DynTag.soname (typed.soname.map (·.val.toUInt64))
+     r.push st1.nullEntry).size := by
+  obtain ⟨hPot, hC2, hC1, hF1, hDbg, hRp, hRun, hSn⟩ := hR
+  have hF1E : (typed.filterNeededBy target).flags1 = typed.flags1 := rfl
+  have hDbgE : (typed.filterNeededBy target).debug = typed.debug := rfl
+  have hRpE : (typed.filterNeededBy target).rpath = typed.rpath := rfl
+  have hRunE : (typed.filterNeededBy target).runpath = typed.runpath := rfl
+  have hSnE : (typed.filterNeededBy target).soname = typed.soname := rfl
+  -- the 5 unless-layers share value (rfl) + applied-flag (NeededRel): peel monotonically.
+  simp only [Array.size_push, hF1, hDbg, hRp, hRun, hSn, hF1E, hDbgE, hRpE, hRunE, hSnE]
+  refine Nat.add_le_add_right ?_ 1
+  refine appendUnless_size_mono _ _ _ _ _ ?_
+  refine appendUnless_size_mono _ _ _ _ _ ?_
+  refine appendUnless_size_mono _ _ _ _ _ ?_
+  refine appendUnless_size_mono _ _ _ _ _ ?_
+  refine appendUnless_size_mono _ _ _ _ _ ?_
+  -- surplus bases → potential, which NeededRel bounds.
+  rw [appendSurplusNeeded_size_exact, appendSurplusNeeded_size_exact]
+  exact hPot
+
+/-- §5.1 output-size bound for `removeNeeded`: `filterNeededBy`'s byte output is
+    no larger than the no-op output on the same byte template.  Feeds the
+    `SectionOps` shrink-monotonicity lemmas (via the generic
+    `mapDynamicOp_structural_transport`) for removeNeeded's structural discharge. -/
+theorem patchDynamicEntries_filterNeededBy_size_le {ds : StringSection}
+    (byteDyn : Array DynEntry) (typed : DynamicSection ds) (target : ByteArray) :
+    (patchDynamicEntries byteDyn (typed.filterNeededBy target)).size
+      ≤ (patchDynamicEntries byteDyn typed).size := by
+  unfold patchDynamicEntries
+  exact tail_filterNeeded typed target _ _ (loop_filterNeeded typed target byteDyn)
+
 /-! ## toElfFile section-update helpers.
 
     Each `applyX` function updates one section kind on the byte-layer ElfFile,

@@ -880,4 +880,64 @@ theorem toElfFile_modifyRPath_remove_tierD_roundtrip_derived (template : ElfFile
     hHP hHS hPS hHSec hPSec hShSec hS0noop
     hVal hPhdrFit hDs hFit hIdentEo hSizeFitEo hNullEmptyEo hHdrEntryEo hHdrPhoff hHdrShoff hPhdrFitEn hShdrFitEn
 
+/-! ## §G — `removeNeeded` Tier-D round-trip (the payoff)
+
+    `removeNeeded e lib h` is definitionally `mapDynamicOp e (·.filterNeededBy
+    lib.toUTF8)`.  Its structural transport reuses the generic machinery; the
+    ONLY new ingredient is the per-`f` size bound
+    `patchDynamicEntries_filterNeededBy_size_le` (Adapter.lean), proved via the
+    potential-function lockstep relation `NeededRel` (cursors run UNEQUAL, unlike
+    `stripRpath`'s `ShrinkRel`).  This is what the genericization was for: a
+    second shrink shape lands in ~1 instantiation + 1 size bound, not a clone of
+    the ~900-line factoring chain. -/
+
+/-- Tier-D byte round-trip for `removeNeeded` with the 6 structural disjointness
+    invariants + section-0-NULL DERIVED.  Instantiates the generic capstone at
+    `(·.filterNeededBy lib.toUTF8)` + `patchDynamicEntries_filterNeededBy_size_le`;
+    closes by `exact` since `removeNeeded typed lib h` reduces to
+    `mapDynamicOp typed (·.filterNeededBy lib.toUTF8)` definitionally. -/
+theorem toElfFile_removeNeeded_tierD_roundtrip_derived (template : ElfFile) (typed : ValidElfFile)
+    (lib : String)
+    (h : typed.dynamic.isSome) (D : RemoveRpathFactorData template typed h)
+    (hHP : (toElfFile template typed).headerPhdrDisjoint)
+    (hHS : (toElfFile template typed).headerShdrDisjoint)
+    (hPS : (toElfFile template typed).phdrShdrDisjoint)
+    (hHSec : (toElfFile template typed).headerSectionDisjoint)
+    (hPSec : (toElfFile template typed).phdrSectionDisjoint)
+    (hShSec : (toElfFile template typed).shdrSectionDisjoint)
+    (hS0noop : ∀ (h0 : 0 < (toElfFile template typed).sections.size),
+      ((toElfFile template typed).sections[0]'h0).type = ShType.SHT_NULL)
+    (hVal : (toElfFile template (removeNeeded typed lib h)).IsValid)
+    (hPhdrFit : ((toElfFile template (removeNeeded typed lib h)).phdrs.size + 1) < UInt16.size)
+    {ds : StringTable} (hDs : (toElfFile template (removeNeeded typed lib h)).dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size)
+    (hIdentEo : IdentBytesValid (toElfFile template (removeNeeded typed lib h)))
+    (hSizeFitEo : ∀ (i : Nat) (hi : i < (toElfFile template (removeNeeded typed lib h)).sections.size),
+      ((toElfFile template (removeNeeded typed lib h)).sections[i]'hi).shdrSize < UInt64.size)
+    (hNullEmptyEo : ∀ (i : Nat) (hi : i < (toElfFile template (removeNeeded typed lib h)).sections.size),
+      ((toElfFile template (removeNeeded typed lib h)).sections[i]'hi).type = ShType.SHT_NULL →
+      ∃ ty hOk bs, ((toElfFile template (removeNeeded typed lib h)).sections[i]'hi).content = .raw ty hOk bs ∧ bs.size = 0)
+    (hHdrEntryEo : (toElfFile template (removeNeeded typed lib h)).header.entry.val < UInt64.size)
+    (hHdrPhoff : (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).header.phoff.val < UInt64.size)
+    (hHdrShoff : (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).header.shoff.val < UInt64.size)
+    (hPhdrFitEn : ∀ (i : Nat) (hi : i < (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).phdrs.size),
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).phdrs[i]'hi).offset.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).phdrs[i]'hi).vaddr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).phdrs[i]'hi).paddr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).phdrs[i]'hi).filesz.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).phdrs[i]'hi).memsz.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).phdrs[i]'hi).align.val < UInt64.size)
+    (hShdrFitEn : ∀ (i : Nat) (hi : i < (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).sections.size),
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).sections[i]'hi).addr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).sections[i]'hi).offset.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).sections[i]'hi).addralign.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h)))).sections[i]'hi).entsize.val < UInt64.size) :
+    parse (encode (toElfFile template (removeNeeded typed lib h)))
+      = .ok ⟨prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib h))),
+             prepLayout_syncDtStrsz_preserves_valid _ hVal hPhdrFit hDs⟩ :=
+  toElfFile_mapDynamicOp_tierD_roundtrip_derived template typed h (fun d => d.filterNeededBy lib.toUTF8) D
+    (patchDynamicEntries_filterNeededBy_size_le D.bd D.td lib.toUTF8)
+    hHP hHS hPS hHSec hPSec hShSec hS0noop
+    hVal hPhdrFit hDs hFit hIdentEo hSizeFitEo hNullEmptyEo hHdrEntryEo hHdrPhoff hHdrShoff hPhdrFitEn hShdrFitEn
+
 end Patchelf.Elf.Adapter
