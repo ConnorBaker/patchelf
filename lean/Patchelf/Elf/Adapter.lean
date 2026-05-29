@@ -306,17 +306,30 @@ def applyOpt {α : Type} (e : ElfFile) (idx? : Option Nat) (val? : Option α)
   | some i, some v => e.updateSectionContent i (mkContent v)
   | _, _           => e
 
-def applyDynstr (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
+/-- Each `applyX` takes the typed *fields* it needs as explicit arguments,
+    rather than the whole `typed : ValidElfFile`.  Critically, the
+    dependent-`Option` fields (`dynsym`/`dynamic`, indexed by the string
+    section `ds`) are passed with `ds` as a free variable.  This is what
+    makes `toElfFile (op typed)` reduce for ops that don't touch the
+    section fields: a header-only op like `setOsAbi` leaves `ds`,
+    `dynsym`, `dynamic`, … syntactically unchanged, so the dependent
+    matches in `applyDynamic`/`applyDynsym` still compute.  (Passing the
+    bundled `typed` instead made the index `typed.dynstr` become
+    `({typed with header := …}).dynstr`, which blocks the dependent match
+    from reducing even though the two are `rfl`-equal — see ROADMAP §5.1.) -/
+def applyDynstr (e : ElfFile) (ds : StringSection) : ElfFile :=
   match e.dynstrIdx with
   | none     => e
-  | some iDs => e.updateSectionContent iDs (.strtab ⟨typed.dynstr.bytes⟩)
+  | some iDs => e.updateSectionContent iDs (.strtab ⟨ds.bytes⟩)
 
-def applyDynsym (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  applyOpt e e.dynsymIdx typed.dynsym fun ts =>
+def applyDynsym (e : ElfFile) {ds : StringSection}
+    (dynsym? : Option (SymbolSection ds)) : ElfFile :=
+  applyOpt e e.dynsymIdx dynsym? fun ts =>
     .dynsym (ts.symbols.map symbolOfTyped)
 
-def applyDynamic (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  match e.dynamicIdx, typed.dynamic with
+def applyDynamic (e : ElfFile) {ds : StringSection}
+    (dynamic? : Option (DynamicSection ds)) : ElfFile :=
+  match e.dynamicIdx, dynamic? with
   | some iDyn, some typedDyn =>
       match e.dynamic with
       | some byteDyn => e.updateSectionContent iDyn
@@ -328,35 +341,41 @@ def applyDynamic (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
           e.updateSectionContent iDyn (.dynamic (typedDyn.assembleEntries ctx))
   | _, _ => e
 
-def applyVersym (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  applyOpt e e.versymIdx typed.versym .versym
+def applyVersym (e : ElfFile) (versym? : Option (Array UInt16)) : ElfFile :=
+  applyOpt e e.versymIdx versym? .versym
 
-def applySysvHash (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  applyOpt e e.sysvHashIdx typed.sysvHash fun shs =>
+def applySysvHash (e : ElfFile) (sysvHash? : Option SysVHashSection) : ElfFile :=
+  applyOpt e e.sysvHashIdx sysvHash? fun shs =>
     .raw Layout.ShType.SHT_HASH (by decide) (SysVHashTable.write shs.table)
 
-def applyGnuHash (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  applyOpt e e.gnuHashIdx typed.gnuHash fun ghs =>
+def applyGnuHash (e : ElfFile) (gnuHash? : Option GnuHashSection) : ElfFile :=
+  applyOpt e e.gnuHashIdx gnuHash? fun ghs =>
     .raw Layout.ShType.SHT_GNU_HASH (by decide) (GnuHashTable.write ghs.table)
 
-def applyVerneed (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  applyOpt e e.verneedIdx typed.verneed fun vn =>
+def applyVerneed (e : ElfFile) (verneed? : Option VerneedSection) : ElfFile :=
+  applyOpt e e.verneedIdx verneed? fun vn =>
     .raw Layout.ShType.SHT_GNU_VERNEED (by decide) (writeArray Verneed.write vn.entries)
 
-def applyInterp (e : ElfFile) (typed : ValidElfFile) : ElfFile :=
-  applyOpt e e.interpIdx typed.interp fun ip =>
+def applyInterp (e : ElfFile) (interp? : Option InterpSection) : ElfFile :=
+  applyOpt e e.interpIdx interp? fun ip =>
     .raw Layout.ShType.SHT_PROGBITS (by decide) ip.toBytes
 
-/-- Apply a ValidElfFile.s contents back onto a byte-layer ElfFile template.
+/-- Apply a ValidElfFile's contents back onto a byte-layer ElfFile template.
 
-    Structure: compose the per-section updates, then override header
-    and phdrs from typed as the final step.  This structure makes
-    `(toElfFile t typed).header = typed.header` rfl-provable because the
-    final record override IS the outermost constructor. -/
+    Structure: extract the typed fields once (so the dependent-`Option`
+    indices stay free variables — see the `applyX` note above), compose
+    the per-section updates, then override header and phdrs from typed as
+    the final step.  The final record override makes
+    `(toElfFile t typed).header = typed.header` rfl-provable, and the
+    un-bundled section args make `toElfFile t (op typed)` reduce for
+    section-trivial ops. -/
 def toElfFile (template : ElfFile) (typed : ValidElfFile) : ElfFile :=
+  let ds := typed.dynstr
   let e := applyInterp (applyVerneed (applyGnuHash (applySysvHash
              (applyVersym (applyDynamic (applyDynsym
-               (applyDynstr template typed) typed) typed) typed) typed) typed) typed) typed
+               (applyDynstr template ds) (ds := ds) typed.dynsym)
+               (ds := ds) typed.dynamic) typed.versym) typed.sysvHash)
+               typed.gnuHash) typed.verneed) typed.interp
   { e with header := typed.header, phdrs := typed.phdrs }
 
 end Adapter
