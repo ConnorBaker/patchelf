@@ -85,7 +85,8 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
   top-level `growEOFWith_preserves_valid`) — LANDED.
 - §1.2 `_preserves_loadable` ladder (all four branches +
   top-level `growEOFWith_preserves_loadable`, lifted to the
-  pipeline-level `prepLayoutForEncodeWith_preserves_loadable`) — LANDED.
+  pipeline-level `prepLayoutForEncodeWith_preserves_loadable` and the
+  end-to-end `prepLayout_syncDtStrsz_preserves_loadable`) — LANDED.
 - §1.3a `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` — LANDED.
 
 **Patterns to know before touching Tier D / encoder proofs:**
@@ -245,11 +246,23 @@ directly (three via the literal `phdrs` preservation,
 `growEOFWith_dynstr` dispatch lemma threads the `dynstr`
 precondition (needed for `iDyn ≠ shstrndx`) through `growEOFWith`.
 
+**End-to-end closure.** The first pre-encode pass
+(`syncDtStrszInFile`, the DT_STRSZ resync) also preserves
+loadability — `syncDtStrszInFile_preserves_loadable` (`Encoder.lean`),
+structurally identical to `syncDtAddrTagsInFile` (no-op or same-size
+`.dynamic` map).  Plus the precondition-lifting lemmas (`_header`,
+`_dynstr`, `_{headerPhdr,headerSection,phdrSection}Disjoint`,
+`_section0Null`) let it chain with the second pass into the capstone
+`prepLayout_syncDtStrsz_preserves_loadable`:
+`(prepLayoutForEncode (syncDtStrszInFile e)).IsLoadable`.  By
+`encode_eq` that IS the IR `encodeBody` serializes, so the encoder's
+entire pre-write transform provably preserves loadability.
+
 Axioms: `[propext, Classical.choice, Quot.sound]` — no `sorryAx`.
 Actual cost was ~780 LOC across `GrowEOF.lean` (L1 per-phdr facts +
-four branch theorems + top-level dispatch), plus ~190 LOC for the
-pipeline-level lift (`syncDtAddrTagsInFile_preserves_loadable` +
-`growEOFWith_dynstr` + `prepLayoutForEncodeWith_preserves_loadable`).
+four branch theorems + top-level dispatch), ~190 LOC for the
+pipeline-level lift, and ~290 LOC in `Encoder.lean` for the
+first-pass `syncDtStrszInFile` family + the end-to-end capstone.
 
 **Supporting infrastructure landed.** `Patchelf/Elf/SectionOps.lean`
 (~420 LOC) exposes the helpers `growEOFWith` / `syncDtAddrTagsInFile`'s

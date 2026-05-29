@@ -37,15 +37,17 @@
 > top-level `growEOFWith_preserves_loadable`.  Built on new per-phdr
 > facts about `updatePhdrsAfterMove` (PT_LOAD / PT_INTERP /
 > PT_DYNAMIC, threading the `i = lastIdx` filesz/memsz update) plus
-> a `retargetPtPhdr_*` family for the relocate branch.  Lifted one
-> rung higher to the **full pre-encode pipeline**:
-> `syncDtAddrTagsInFile_preserves_loadable` (the DT_* address
-> rewrite post-pass) composes with `growEOFWith_preserves_loadable`
-> to give `prepLayoutForEncodeWith_preserves_loadable`
-> (`Encoder.lean`).  The encoder's entire layout pre-pass now
-> provably preserves full loader-coherence (`IsValid +
-> sectionsNonOverlapping + ptInterpAgreement + ptDynamicAgreement +
-> segmentCongruence`).
+> a `retargetPtPhdr_*` family for the relocate branch.  Lifted to
+> the **full pre-encode pipeline, end-to-end**: both passes preserve
+> loadability — `syncDtStrszInFile_preserves_loadable` (the DT_STRSZ
+> resync, first pass) and `syncDtAddrTagsInFile_preserves_loadable`
+> (the DT_* address rewrite, inside `prepLayoutForEncode`) — composing
+> via `prepLayoutForEncodeWith_preserves_loadable` into the capstone
+> `prepLayout_syncDtStrsz_preserves_loadable` (`Encoder.lean`).  By
+> `encode_eq` that IS the IR `encodeBody` serializes, so the encoder's
+> entire pre-write transform provably takes a loadable input to a
+> loadable output (`IsValid + sectionsNonOverlapping +
+> ptInterpAgreement + ptDynamicAgreement + segmentCongruence`).
 >
 > **Tests: 54/54 shell tests passing; 108/108 Lean build jobs;
 > zero `sorry`s.**
@@ -140,7 +142,7 @@ For the file-by-file architecture, see
 exhaustive declaration inventory, see
 [`INVENTORY.md`](INVENTORY.md).
 
-Total Lean source: ~20,675 LOC. Distribution by category:
+Total Lean source: ~20,950 LOC. Distribution by category:
 
 | Category | LOC | What it is |
 |---|---|---|
@@ -148,7 +150,7 @@ Total Lean source: ~20,675 LOC. Distribution by category:
 | DSL + op-layer infra (`SchemaDSL` + `Schemas` + `Adapter` + `ObservableCombinators`) | ~2,340 | `elf_schema` elaborator + 7 invocations + bridge |
 | Wire codec + types (Splice, Layout, Decode, Parser, ParseHeader, Reader, Writer, Serialize, DynamicParse/Encode) | ~1,670 | Reader/Writer + Splice + parsing primitives + per-clause ParseError |
 | Typed-section types (DynamicSection, StringSection, SymbolSection, ValidElfFile, InterpSection, AuxSections) | ~630 | Typed algebra + StringSection lookup roundtrip |
-| Layout pipeline + validator (`Encoder` + `GrowEOF` + `Validate`) | ~3,470 | growEOF + syncDtAddrTagsInFile + pre-write validator + `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` chain + the pipeline-level `_preserves_loadable` ladder |
+| Layout pipeline + validator (`Encoder` + `GrowEOF` + `Validate`) | ~3,740 | growEOF + syncDtAddrTagsInFile + pre-write validator + `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` chain + the end-to-end `_preserves_loadable` ladder |
 | `SectionOps` | ~420 | `updateSectionContent` + projection / index-preservation / typed-accessor preservation helpers |
 | 14 ops (`Elf/Ops/*.lean`) | ~1,080 | mutating operations |
 | CLI + Main + Log | ~990 | lean4-cli subcommand tree + stderr trace logger |
@@ -458,16 +460,24 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   PT_LOAD congruence: offset/vaddr both `roundUp _ align`, so both
   `≡ 0 (mod align)`.
 
-  Lifted to the full pre-encode pipeline:
-  `syncDtAddrTagsInFile_preserves_loadable` (`GrowEOF.lean`) plus
-  `growEOFWith_dynstr` compose with `growEOFWith_preserves_loadable`
-  into `prepLayoutForEncodeWith_preserves_loadable` (`Encoder.lean`,
-  with `none`-specialized `prepLayoutForEncode_preserves_loadable`).
-  `syncDtAddrTagsInFile` only same-size-`map`s `.dynamic` content, so
-  it preserves `phdrs` verbatim and per-section
-  `(type, offset, encodedSize)` everywhere; the four clauses
-  transport directly.  The dynstr precondition (→ `iDyn ≠ shstrndx`)
-  is the same one `_preserves_valid` needs.
+  Lifted to the full pre-encode pipeline, end-to-end.  Both
+  pre-encode passes preserve loadability:
+  `syncDtAddrTagsInFile_preserves_loadable` (`GrowEOF.lean`, the
+  DT_* address rewrite inside `prepLayoutForEncode`) and
+  `syncDtStrszInFile_preserves_loadable` (`Encoder.lean`, the
+  first-pass DT_STRSZ resync).  Both only same-size-`map` the
+  `.dynamic` section, so they preserve `phdrs` verbatim and
+  per-section `(type, offset, encodedSize)` everywhere; the four
+  clauses transport directly (the dynstr precondition →
+  `iDyn ≠ shstrndx` is the same one `_preserves_valid` needs).
+  Composition: `growEOFWith_dynstr` +
+  `syncDtAddrTagsInFile_preserves_loadable` →
+  `prepLayoutForEncodeWith_preserves_loadable`; then
+  `syncDtStrszInFile`'s precondition-lifting lemmas (`_header`,
+  `_dynstr`, `_{headerPhdr,headerSection,phdrSection}Disjoint`,
+  `_section0Null`) chain it with the first pass into the capstone
+  `prepLayout_syncDtStrsz_preserves_loadable` — which, by
+  `encode_eq`, is exactly the IR `encodeBody` serializes.
 - **`spliceDisjoint` for encoder output — DONE.**
   `Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
   is the composed API the op-level Tier D proofs consume.  See
