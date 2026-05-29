@@ -4519,4 +4519,109 @@ theorem growEOFWithFreshPtLoadReloc_header_entry
         · simp only [hAdd, Bool.false_eq_true, ↓reduceIte] <;>
             first | rfl | exact growEOFWithFreshPtLoadReloc_header_entry pageSize? e
 
+/-! ## Per-section content preservation through `growEOFWith` (§5.1 Obligation C)
+
+    The layout pass relocates sections (changing `offset`/`addr`) but never
+    touches `content`.  Stated as a whole-array `map (·.content)` equation —
+    which carries NO dependent `getElem` bound, so the branch dispatch works
+    like `growEOFWith_dynstr` (the per-element form's dependent `hj` bound
+    triggers "motive not type correct" under `cases`/`split`).  Per-branch
+    map equations are built from the per-element `_sections_content` +
+    `_sections_size` via `Array.ext`; the top-level dispatch cases `pageSize?`
+    first (to eliminate the `match pageSize?` that would otherwise make
+    `split` over-split and the hand-written discriminant mismatch the
+    let-bound one), then `simp only []` zeta-reduces the `have`s so `split`
+    descends the `match lastPtLoadIdx` / `if` cascade. -/
+
+theorem growEOFWithMainBody_sections_map_content
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).sections.map (·.content)
+      = e.sections.map (·.content) := by
+  apply Array.ext
+  · rw [Array.size_map, Array.size_map, growEOFWithMainBody_sections_size]
+  · intro i hi hi2
+    rw [Array.getElem_map, Array.getElem_map, Array.size_map] at *
+    exact growEOFWithMainBody_sections_content pageSize? e lastIdx i hi
+      (by rw [growEOFWithMainBody_sections_size] at hi; exact hi)
+
+theorem growEOFWithFreshPtLoad_sections_map_content
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).sections.map (·.content)
+      = e.sections.map (·.content) := by
+  apply Array.ext
+  · rw [Array.size_map, Array.size_map, growEOFWithFreshPtLoad_sections_size]
+  · intro i hi hi2
+    rw [Array.getElem_map, Array.getElem_map, Array.size_map] at *
+    exact growEOFWithFreshPtLoad_sections_content pageSize? e i hi
+      (by rw [growEOFWithFreshPtLoad_sections_size] at hi; exact hi)
+
+theorem growEOFWithFreshPtLoadReloc_sections_map_content
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).sections.map (·.content)
+      = e.sections.map (·.content) := by
+  apply Array.ext
+  · rw [Array.size_map, Array.size_map, growEOFWithFreshPtLoadReloc_sections_size]
+  · intro i hi hi2
+    rw [Array.getElem_map, Array.getElem_map, Array.size_map] at *
+    exact growEOFWithFreshPtLoadReloc_sections_content pageSize? e i hi
+      (by rw [growEOFWithFreshPtLoadReloc_sections_size] at hi; exact hi)
+
+theorem layoutForEncoding_sections_map_content (e : ElfFile) :
+    (layoutForEncoding e).sections.map (·.content) = e.sections.map (·.content) := by
+  apply Array.ext
+  · rw [Array.size_map, Array.size_map, layoutForEncoding_sections_size]
+  · intro i hi hi2
+    rw [Array.getElem_map, Array.getElem_map, Array.size_map] at *
+    exact layoutForEncoding_sections_content e i hi
+      (by rw [layoutForEncoding_sections_size] at hi; exact hi)
+
+theorem growEOFWith_sections_map_content (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWith pageSize? e).sections.map (·.content) = e.sections.map (·.content) := by
+  rw [growEOFWith.eq_1]
+  cases pageSize? with
+  | none =>
+    simp only []
+    repeat' split
+    all_goals first
+      | rfl
+      | exact layoutForEncoding_sections_map_content e
+      | exact growEOFWithMainBody_sections_map_content none e _
+      | exact growEOFWithFreshPtLoad_sections_map_content none e
+      | exact growEOFWithFreshPtLoadReloc_sections_map_content none e
+  | some n =>
+    simp only []
+    repeat' split
+    all_goals first
+      | rfl
+      | exact layoutForEncoding_sections_map_content e
+      | exact growEOFWithMainBody_sections_map_content (some n) e _
+      | exact growEOFWithFreshPtLoad_sections_map_content (some n) e
+      | exact growEOFWithFreshPtLoadReloc_sections_map_content (some n) e
+
+/-- Per-section `content` preservation, derived from the map equation. -/
+theorem growEOFWith_sections_content (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWith pageSize? e).sections.size) (hjE : j < e.sections.size) :
+    ((growEOFWith pageSize? e).sections[j]'hj).content = (e.sections[j]'hjE).content := by
+  have hmap := growEOFWith_sections_map_content pageSize? e
+  have hj' : j < ((growEOFWith pageSize? e).sections.map (·.content)).size := by
+    rw [Array.size_map]; exact hj
+  have hjE' : j < (e.sections.map (·.content)).size := by rw [Array.size_map]; exact hjE
+  have hpt := congrArg (fun (a : Array SectionContent) => a[j]?) hmap
+  simp only [Array.getElem?_eq_getElem, hj', hjE', Array.getElem_map] at hpt
+  exact Option.some.inj hpt
+
+/-- `shdrSize` is content-determined, hence preserved by `growEOFWith`. -/
+theorem growEOFWith_sections_shdrSize (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWith pageSize? e).sections.size) (hjE : j < e.sections.size) :
+    ((growEOFWith pageSize? e).sections[j]'hj).shdrSize = (e.sections[j]'hjE).shdrSize := by
+  unfold Section.shdrSize Section.encodedSize
+  rw [growEOFWith_sections_content pageSize? e j hj hjE]
+
+/-- `type` is content-determined, hence preserved by `growEOFWith`. -/
+theorem growEOFWith_sections_type (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWith pageSize? e).sections.size) (hjE : j < e.sections.size) :
+    ((growEOFWith pageSize? e).sections[j]'hj).type = (e.sections[j]'hjE).type := by
+  unfold Section.type
+  rw [growEOFWith_sections_content pageSize? e j hj hjE]
+
 end Patchelf.Elf
