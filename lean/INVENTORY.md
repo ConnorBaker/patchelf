@@ -972,9 +972,42 @@ live in `Adapter.lean`, all over the
 
 ---
 
+## Patchelf/Elf/OpToElfFactorGrow.lean (§5.1 op-through-toElfFile factoring, GROWING ops)
+
+Companion to `OpToElfFactor.lean` (the SHRINKING-op derivation).  The FIRST
+Tier-D round-trips for GROWING ops.  A growing op widens a section's
+`encodedSize` at its original offset, so the three per-section disjointness
+invariants on the op output `eo` genuinely BREAK and the shrink-monotonicity
+core (`newDyn.size ≤ oldDyn.size`) does NOT apply; `encode`'s
+`prepLayoutForEncode`/`growEOFWith` RE-LAYS-OUT the file (flags the overlapping
+grown sections stale, relocates them), so the NORMALIZED form is
+`spliceRegionsDisjoint` even though `eo` is not.  All three theorems live in
+`namespace Patchelf.Elf.Adapter`.  (Names only; see the file for full
+signatures.)
+
+| Kind | Name | What it gives |
+|---|---|---|
+| theorem | `tierD_roundtrip_of_grown_eo` | keystone grow driver — identical to `tierD_roundtrip_of_eo_facts` EXCEPT it HYPOTHESIZES the normalized form's `spliceRegionsDisjoint` (`hSplice`) instead of deriving it from `eo`'s per-section disjointness (unprovable for a grown `eo`); every other `EncodePreconditions` field derived from `eo` via `*_normalized_of_eo` + `tierD_roundtrip_of_valid` |
+| theorem | `toElfFile_addDebugTag_tierD_roundtrip_derived` | `addDebugTag` Tier-D (cheapest grower: `mapDynamicOp typed (·.addDebugTag)`, dynstr unchanged, `.dynamic` +≤1) — thin instantiation of the keystone, closes by `exact` |
+| theorem | `toElfFile_noDefaultLib_tierD_roundtrip_derived` | `noDefaultLib` Tier-D (second `mapDynamicOp` grower: `mapDynamicOp typed (·.setNoDefaultLib)`, same shape) |
+
+Mechanism: `hSplice` is the sanctioned "the layout engine produced disjoint
+output" surface — same epistemic footing as the four `< 2^64` position bounds the
+shrink capstone already hypothesizes (runtime `Validate.IsLoadableBytes` guards
+the pathological case at write time).  The generic factoring
+`toElfFile_mapDynamicOp_factor` (from `OpToElfFactor.lean`) carries over VERBATIM
+(`f`-agnostic, size-agnostic) — only the transport differs.  These growers are
+NOT fully derived (they carry `hSplice` as a hypothesis); deriving it from the
+no-op base (`growEOFWith_produces_spliceRegionsDisjoint_of_base`) and the
+dynstr-growing `growDynstrDynamicOp` ops (`addNeeded`,
+`modify{RPath,Soname}.set`, which need a two-field factoring) are deferred — see
+`research/PLAN-GROWING-OPS.md`.
+
+---
+
 ## Summary statistics
 
-- **Files scanned:** 45 Lean files
+- **Files scanned:** 46 Lean files
 - **`sorry` placeholders:** 0
 - **`axiom` declarations:** 0
 - **Master theorem:** `parse_encode_roundtrip` at `Elf/ByteRoundtrip.lean:2327`
