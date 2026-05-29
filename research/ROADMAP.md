@@ -69,32 +69,48 @@ nix develop ../.#lean -c bash tests/run.sh       # 54/54 shell tests expected
 grep -rn "sorry\b" Patchelf/                     # zero matches expected
 ```
 
-**Recommended pickup order:**
+**The single fresh-agent handoff covering ALL open work is
+[`PICKUP-PROMPT-OP-TIER-D.md`](PICKUP-PROMPT-OP-TIER-D.md)** (despite the
+filename it now scopes §5.1 + §3.5b + §4.2 + §5.2, in priority order).
 
-- **§5.1 op-level Tier D — IN PROGRESS, CANONICAL NEXT PICKUP.**
+**Recommended pickup order (the complete open menu):**
+
+- **§5.1 op-level Tier D — IN PROGRESS, CANONICAL NEXT PICKUP (largest).**
   The `Adapter.toElfFile` dependent-type obstacle is RESOLVED (the
   un-bundling refactor, commit `8ffe2cb`).  Tier 1 ops (`setOsAbi`,
   `modifyExecstack`) have full `_preserves_loadable`; the Tier-2/3
   round-trip scaffold + the three **open-core obligations** (A `syncOk`,
   B `hIdem`, C residual `EncodePreconditions`) are now CLOSED, composed
-  into the `tierD_roundtrip` driver, and applied to the two shrinking
-  ops (`toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip`).
-  Obligation C now DERIVES `identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry`
-  (the content-preservation getElem-dispatch is cracked — bound-free
+  into the `tierD_roundtrip` / `tierD_roundtrip_of_eo_facts` drivers, and
+  applied to the two shrinking ops
+  (`toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip`).  Obligation C
+  DERIVES `identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry` (the
+  content-preservation getElem-dispatch is cracked — bound-free
   `map (·.content)` equation); only the 4 position-bound families remain
-  hypotheses.  Open: the **per-op fact discharge** — each op currently
+  hypotheses.  Reusable shrink-monotonicity core
+  (`SectionOps.updateSectionContent_*Disjoint_shrink`) + the
+  `Adapter.{foldl_proj_size_le_add,idForIn_proj_size_le}` loop-size bridges
+  are landed.  Open: the **per-op fact discharge** — each op currently
   takes its `eo` facts (validity + 6 structural input invariants + the 4
   residual `< 2^64` position bounds) as hypotheses; the next step is
   deriving the validity + structural invariants mechanically from the
   typed op + template (parser-derivable / transportable for shrinking
   ops; per-op `growEOFWith` layout reasoning for growing ops).  The 4
-  position bounds stay as a "file < 2^64" precondition.  Fresh-agent
-  handoff: [`PICKUP-PROMPT-OP-TIER-D.md`](PICKUP-PROMPT-OP-TIER-D.md).
-  See §5.1 for the tier map + obligation breakdown.
+  position bounds stay as a "file < 2^64" precondition.  See §5.1 for the
+  tier map + obligation breakdown + the two concrete remaining lemmas.
+- **§5.2 strengthen weak `_observable` theorems** — small, independent,
+  good warm-up.  `removeNeeded` / `addDebugTag` / `noDefaultLib` /
+  `modifyRPath.set` / `modifySoname.set` have weak-or-missing adversarial
+  observables (see the §5.2 table).  No layout reasoning; pure typed-algebra.
 - **§4.2 trailing-array DSL field kind + `Verneed.write_decode`** —
-  independent typed-side completeness item; `.verneed` is stored
-  as `.raw` at the byte layer, so the byte-roundtrip doesn't
-  depend on it.  See §4.2.
+  independent typed-side completeness item; `.verneed` is stored as `.raw`
+  at the byte layer, so the byte-roundtrip doesn't depend on it.  Adds a
+  `trailing Array<SubType>` DSL field kind + forward roundtrips for Verneed
+  / SysVHashTable / GnuHashTable.  See §4.2 + `RESEARCH-SCHEMA-DSL.md`.
+- **§3.5b PT_GNU_STACK append when missing** — small C++-parity feature gap.
+  `set-execstack` on a binary without a PT_GNU_STACK phdr is a no-op;
+  C++ appends one.  The phdr-grow machinery from §3.5a is in place; this is
+  mechanically similar to `freshPtLoad`.  Pick up if/when the use case arises.
 
 **Recently-closed work** (kept for cross-reference):
 

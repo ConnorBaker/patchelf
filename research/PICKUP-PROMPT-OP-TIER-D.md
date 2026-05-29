@@ -1,68 +1,39 @@
-# Pickup prompt: ROADMAP §5.1 — per-op fact discharge for the Tier 2/3 ops
+# Pickup prompt: all remaining work on the patchelf Lean 4 port
 
 Single-shot handoff for a fresh agent with shell access, the Lean build
-environment, and repo read access, but no other context.  Paste the
-fenced block below into that agent.
+environment, and repo read access, but no other context.  Paste the fenced
+block below into that agent.
 
-The §1.1 / §1.2 ladders are fully closed.  The `Adapter.toElfFile`
-dependent-type obstacle is resolved.  Tier-1 ops have full
-`_preserves_loadable`.  **The three §5.1 "open core" obligations
-(A `syncOk`, B `hIdem`, C residual `EncodePreconditions`) are now
-CLOSED**, composed into the `tierD_roundtrip` / `tierD_roundtrip_of_valid`
-driver, and applied to the two shrinking ops (`removeRpath`,
-`removeNeeded`) as full byte round-trips.  Obligation C now DERIVES
-`identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry` (the
-content-preservation getElem-dispatch wall is CRACKED); only the 4
-position-bound families remain hypotheses.  What remains is the **per-op
-fact discharge**: each op currently *takes its `eo` facts as hypotheses*
-(validity + 6 structural input invariants + the 4 residual `< 2^64`
-position bounds); the next step is deriving the validity + structural
-invariants mechanically from the typed op + template.
+Despite the filename, this is now the **comprehensive handoff for every
+open item**, in priority order: §5.1 (op-level Tier D — the large one),
+§5.2 (strengthen weak observables — small warm-up), §4.2 (trailing-array
+DSL + forward roundtrips), §3.5b (PT_GNU_STACK append).  The byte-level
+codec, the layout engine (`growEOF` + fresh-PT_LOAD), the §1.1 parser
+`IsLoadable`, the §1.2 `_preserves_valid` / `_preserves_loadable` ladders,
+and the §5.1 open core (A/B/C) are all CLOSED.
 
 ---
 
 ```
-You are picking up ROADMAP §5.1 in the patchelf Lean 4 port: per-op fact
-discharge for the 12 "Tier 2/3" mutating ops.  The three open-core
-obligations are CLOSED and composed into a driver; Obligation C derives
-all four in-principle-derivable residual fields; the two shrinking ops
-already round-trip.  Your job is to discharge the per-op `eo` facts
-(validity + 6 structural input invariants) from the typed op + template
-instead of taking them as hypotheses.
+You are picking up the patchelf Lean 4 port.  Everything through the
+end-to-end pre-encode `_preserves_loadable` ladder and the §5.1 op-level
+"open core" (Obligations A/B/C) is DONE and machine-checked.  Pick ONE of
+the open tasks below (they are independent); §5.1 is the canonical/largest,
+§5.2 is the easiest warm-up.
 
-## First reads, in this order
+## Orientation reads (do these first, in order)
 
-1. `/home/cbaker2/ext-sources/patchelf/lean/STATUS.md` — top banner +
-   the "Op-level Tier D — open core CLOSED" bullet under "Known gaps".
-2. `/home/cbaker2/ext-sources/patchelf/research/ROADMAP.md` §5.1 — the
-   obligation breakdown + "Remaining per-op work" + the two `-- TODO §5.1`
-   sub-obstacles.
-3. `/home/cbaker2/ext-sources/patchelf/lean/Patchelf/Elf/OpAdapterPreservation.lean`
-   — the WHOLE file.  Home base.  Read in order:
-     * Tier-1 worked examples (`toElfFile_setOsAbi_*`, `_modifyExecstack_*`).
-     * `encode_roundtrip_via_normalized` + `spliceRegionsDisjoint_of_structural`
-       (the scaffold).
-     * `encodePreconditions_of_layoutNormalized` (Obligation C package —
-       read its docstring + the `-- TODO §5.1` block carefully).
-     * `tierD_roundtrip` / `tierD_roundtrip_of_valid` (the composed drivers).
-     * `toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip` (worked
-       examples — note what they take as HYPOTHESES; that is your work).
-4. `/home/cbaker2/ext-sources/patchelf/lean/Patchelf/Elf/Encoder.lean`
-   — Obligation A establishment (`syncDtStrszInFile_establishes_dynStrszCoherent`,
-   `~683`), preservation (`prepLayoutForEncode_preserves_dynStrszCoherent`,
-   `prepLayout_syncDtStrsz_dynStrszCoherent`), Obligation B helpers
-   (`prepLayoutForEncode_{dynstr,eq_self_of_spliceRegionsDisjoint}`), and
-   the validity capstone (`prepLayout_syncDtStrsz_preserves_valid`).
-5. `/home/cbaker2/ext-sources/patchelf/lean/Patchelf/Elf/GrowEOF.lean`
-   — the accessor families you'll compose: `growEOFWith_{dynamic,dynstr,
-   sections_size,header_ident,header_entry}` (top-level dispatch),
-   `syncDtAddrTagsInFile_{dynamic_eq,dynstr,preserves_dynStrszCoherent}`,
-   per-branch `_sections_{content,type,addralign,entsize}` for all 4
-   layout branches.
-6. `/home/cbaker2/ext-sources/patchelf/lean/Patchelf/Elf/Adapter.lean`
-   `toElfFile` (`~372`) — how `eo = toElfFile template (op typed)` is
-   built (apply section edits to template, then set header/phdrs from
-   typed).
+1. `/home/cbaker2/ext-sources/patchelf/lean/STATUS.md` — top banner (what
+   works end-to-end) + "Known gaps" (esp. the "Op-level Tier D" bullet).
+2. `/home/cbaker2/ext-sources/patchelf/lean/ARCHITECTURE.md` — the
+   three-layer stack (byte layer ↔ typed algebra via the Adapter), the
+   validity ladder (IsValid ⊂ IsLoadable ⊂ IsFullyValid), the encoder
+   pipeline, and the op convention.  Skim if short on time; the Tier-D
+   reader below is enough for §5.1.
+3. `/home/cbaker2/ext-sources/patchelf/research/ROADMAP.md` — "Picking up
+   work" (the open menu) + the specific §-section for your chosen task.
+4. `/home/cbaker2/ext-sources/patchelf/lean/INVENTORY.md` — declaration
+   index by file; grep it for any lemma name you need.
 
 ## Working directory and environment
 
@@ -72,179 +43,219 @@ instead of taking them as hypotheses.
     grep -rnE "(:= *sorry|by *sorry| sorry$)" Patchelf/   # zero; keep it
 
 `lake build` from cold is a few minutes — set a generous timeout.
+Build one module fast with `nix develop ..#lean -c lake build Patchelf.Elf.<Mod>`.
 Develop new lemmas in a scratch file (`Patchelf/Scratch.lean`) that
 `import`s the relevant module for a fast feedback loop, then transplant
-into the real file.  DELETE the scratch file before committing.
+into the real file.  DELETE the scratch file before committing (it is
+gitignored, but don't leave it around).
 
-## What the driver gives you, and what each op still owes
+## Hard constraints (all tasks)
 
-`tierD_roundtrip_of_valid eo hVal hPhdrFit hDs hFit hPreEn` produces the
-full round-trip `parse (encode eo) = .ok ⟨prepLayoutForEncode
-(syncDtStrszInFile eo), _⟩`.  The arguments an op must supply about its
-byte output `eo := toElfFile template (op typed)`:
-
-  * `hVal  : eo.IsValid`
-  * `hPhdrFit : (eo.phdrs.size + 1) < UInt16.size`  (trivial — real phnum
-    is already a UInt16; `eo.phdrs = typed.phdrs` by `toElfFile_phdrs`)
-  * `hDs   : eo.dynstr = some ds`,  `hFit : ds.bytes.size < UInt64.size`
-  * `hPreEn : EncodePreconditions (prepLayoutForEncode (syncDtStrszInFile eo))`
-    — build via `encodePreconditions_of_layoutNormalized`, which itself
-    wants the 6 structural input invariants on `syncDtStrszInFile eo`
-    (`hS0`/`hHP`/`hHS`/`hPS`/`hHSec`/`hPSec`) + the 8 residual fit fields.
-
-The shrinking-op theorems take all of these as hypotheses.  YOUR JOB is
-to replace them with derivations from the typed op + template.
-
-## Recommended attack order
-
-### Step 1 — `hVal`, `hPhdrFit`, `hDs`, `hFit` (cheap, do first)
-
-These are the easy four.  `toElfFile_phdrs`/`_header` are `rfl`, so
-`eo.phdrs = typed.phdrs` and `hPhdrFit` is `typed`'s phnum bound (a
-`UInt16`, so `.size + 1 < UInt16.size` follows from `phnum.toNat =
-phdrs.size` in `headerCountsConsistent` if you carry it, or just take it
-— it is genuinely about the typed file, not the layout).  `eo.IsValid`:
-the typed algebra guarantees the structural invariants; look at whether
-`toElfFile`'s output already has an `IsValid` witness or build one from
-`ValidElfFile`'s fields + the `AdapterRoundtrip` theorems.  `eo.dynstr`:
-trace `toElfFile`'s `applyDynstr` — `eo.dynstr = some typed.dynstr` (or
-the grown dynstr); `hFit` is the "file < 2^64" precondition on the op
-input (add it explicitly if not derivable).
-
-### Step 2 — the 6 structural input invariants on `eo` (the substance)
-
-USE `tierD_roundtrip_of_eo_facts`: its surface is already entirely on `eo`
-(the transport through `syncDtStrszInFile` is handled by
-`spliceRegionsDisjoint_of_structural_eo`).  So you only need the 6
-disjointness invariants + section-0-NULL on `eo` itself.
-
-The reusable SHRINK-MONOTONICITY core is in place
-(`SectionOps.updateSectionContent_{headerPhdr,headerShdr,phdrShdr,
-headerSection,phdrSection,shdrSection}Disjoint_shrink` + `_section0Null`):
-a `.dynamic`-rewrite with `newDyn.size ≤ oldDyn.size` preserves every
-disjointness clause + section-0-NULL.  So for a SHRINKING op the two
-concrete remaining lemmas are:
-  (1) **bound `patchDynamicEntries`'s output size**:
-      `(patchDynamicEntries byteDyn (stripRpath/filterNeededBy … typed)).size
-      ≤ byteDyn.size`.  The loop portion is DE-RISKED: `Adapter.idForIn_proj_size_le`
-      (landed) bridges the `Id.run do … forIn` loop to a `≤ (π init).size +
-      byteDyn.size` bound given a per-step ≤1-growth fact on the `result`
-      projection `π` (a finite `match d.tag` case-split — every arm pushes
-      ≤ 1).  What remains: bound the trailing `while`-loop + 5 `unless` append
-      blocks in the desugared do-block (brittle `__do_jp` join-point
-      navigation — consider refactoring `patchDynamicEntries` to expose them
-      compositionally), and for the TIGHT `≤ byteDyn.size` the NEEDED-balance
-      (`typed.needed.size = #DT_NEEDED in byteDyn`, from the `ofElfFile`/parse
-      relationship — so the `while` adds 0).  `Ops/RemoveNeeded.lean`'s
-      `removeNeeded_needed_size_le` (via `Array.size_filter_le`) is the typed
-      side.
-  (2) **factor `eo = toElfFile template (op typed)` as
-      `base.updateSectionContent iDyn (.dynamic newDyn)`** with `newDyn =
-      patchDynamicEntries (template.dynamic) (op typed).dynamic` and `base`'s
-      other sections verbatim from `template`, so the shrink lemmas apply and
-      `eo`'s structural invariants transport from `template`'s parser-derived
-      ones.  `toElfFile` is a chain of `applyX` `updateSectionContent`s; for a
-      shrinking op only `applyDynamic` changes a size-relevant section
-      (`applyDynstr` rewrites `.dynstr` but `removeRpath` doesn't grow it).
-  Start with `removeRpath`.  See ROADMAP §5.1 "Remaining per-op work".
-
-### Step 3 — residual fields (ALREADY DONE; the 4 position bounds stay)
-
-`identValid` / `sizeFit` / `nullEmpty` / `headerFit_entry` are now DERIVED
-by `encodePreconditions_of_layoutNormalized` from the matching facts on
-`eo` (`{identValid,sizeFit,nullEmpty,headerFit_entry}_normalized_of_eo`,
-`ByteRoundtrip.lean`).  The getElem-dispatch wall that previously blocked
-this is cracked: `growEOFWith_sections_content` (and `_shdrSize`/`_type`)
-are derived from the bound-free `growEOFWith_sections_map_content`
-(`map (·.content)`) equation — proved by `rw [growEOFWith.eq_1]; cases
-pageSize?` (kills the `match pageSize?` entanglement) `; simp only []`
-(zeta-reduces the `have`s) `; repeat' split; all_goals first | rfl |
-exact <branch>`.  The `prepLayout_syncDtStrsz_sections_{shdrSize,type}` +
-`_header_{ident,entry}` pipeline lemmas thread these through both
-pre-encode passes (via the `prepLayoutForEncode e = syncDtAddrTagsInFile
-(growEOFWith none e)` rewrite-the-getElem-term idiom).  The 4 position
-bounds (`headerFit_phoff/shoff`, `phdrFit`, `shdrFit`) STAY hypotheses —
-genuinely non-derivable; keep the "file < 2^64" precondition.  So an op no
-longer supplies any residual `en` facts — it supplies `eo.IsValid`,
-`eo`-level `identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry`, the dynstr
-witness, the 6 structural invariants, and the 4 `en` position bounds.
-
-### Then: the other 10 ops
-
-`noDefaultLib`, `addDebugTag`, `clearSymbolVersion`, `addNeeded`,
-`modifyRPath`, `addRpathEntry`, `modifySoname`, `setInterpreter`,
-`replaceNeeded`, `renameDynamicSymbols`.  Growing ops (dynstr/`.dynamic`
-append) need the per-op `growEOFWith` layout reasoning for Step 2; the
-§1.2 `updatePhdrsAfterMove_*` / `retargetPtPhdr_*` families are reusable.
-
-## Tactics / gotchas (learned the hard way)
-
-- DEPENDENT MOTIVE: `cases`/`rw`/`unfold … at hj` fails ("motive is not
-  type correct") when `hj` carries a length bound depending on the
-  rewritten term.  For projection dispatches, do the `by_cases hLay`/
-  `cases hLast`/`by_cases hExt`/`by_cases hAdd` ladder WITHOUT a
-  dependent `hj` in context (see `growEOFWith_dynstr`).  See the
-  `lean-subst-not-rw-dependent-motive` memory.
-- DISPATCH LEAF CLOSER: a layout-branch leaf is sometimes closed by
-  `simp only [hExt, …, ↓reduceIte]` alone (structure-projection reduces
-  to `rfl`) and sometimes needs the per-branch lemma.  Use
-  `simp only [...] <;> first | rfl | exact <branch_lemma> …` — the `<;>`
-  applies the closer to 0-or-1 resulting goals, tolerating both.
-- SCRATCH vs IN-FILE: dispatch-shaped `simp only [hCond, ↓reduceIte]`
-  cascades fire in the real file but NOT in a standalone scratch
-  importing the olean.  Develop sub-lemmas in scratch; transplant
-  dispatch-shaped proofs into the file before judging them.
-
-## Hard constraints
-
-- No `sorry`s, even temporarily.  If blocked, document as
-  `-- TODO §5.1: <what you tried, what failed>` and stop with a writeup.
+- No `sorry`s, even temporarily.  If blocked, document the obstacle as
+  `-- TODO §<n>: <what you tried, what failed>` and stop with a writeup.
 - Don't weaken or delete any existing theorem/test.  109 lake jobs must
   build; 54 shell tests must pass.
-- Don't re-introduce the `toElfFile` bundling.
-- Keep `Adapter.toElfFile`'s outer `{ e with header := …, phdrs := … }`
-  shape — `toElfFile_header`/`_phdrs` are `rfl` and load-bearing.
+- Don't re-introduce the `Adapter.toElfFile` bundling, and keep its outer
+  `{ e with header := …, phdrs := … }` shape — `toElfFile_header`/`_phdrs`
+  are `rfl` and load-bearing.
+- `Encoder.encode` / `encodeBody` are `@[irreducible]`; use the `_eq`
+  companion lemmas to unfold (removing the attribute times out per-byte
+  proofs at >32M heartbeats).
+- Small focused commits in the existing style (`git log --oneline -15`).
+  End commit messages with the Co-Authored-By line the repo uses.  Update
+  STATUS.md + ROADMAP.md + this prompt when you change the open-work state.
 
-## Success criteria
+## Tactics / gotchas (learned the hard way — read before any encoder/layout proof)
+
+- DEPENDENT MOTIVE: `cases`/`rw`/`unfold … at hj` fails ("motive is not
+  type correct") when a hypothesis `hj` carries a length bound depending on
+  the rewritten term.  Two escapes: (a) do the case-split ladder WITHOUT a
+  dependent `hj` in context (see `growEOFWith_dynstr`); (b) state the fact
+  as a bound-FREE whole-array equation, e.g. `map (·.content)` instead of a
+  per-element `getElem` (see `growEOFWith_sections_map_content`).  `subst`
+  an index/Option witness rather than `rw`-ing it (memory:
+  `lean-subst-not-rw-dependent-motive`).
+- DISPATCH over `growEOFWith`'s 5 inlined branches: it inlines its branches
+  behind `let`/`have`, so `split` can't descend.  For PROJECTION lemmas use
+  the `by_cases hLay / cases hLast / by_cases hExt / by_cases hAdd` ladder +
+  `simp only [..., ↓reduceIte] <;> first | rfl | exact <branch_lemma>` (the
+  `<;>` tolerates branches simp already closed).  To get past the
+  `match pageSize?` entanglement in a bound-free goal, use
+  `rw [growEOFWith.eq_1]; cases pageSize?; simp only []; repeat' split`.
+  (Memory: `groweofwith-dispatch-idiom`.)
+- SCRATCH vs IN-FILE: dispatch-shaped `simp only [hCond, ↓reduceIte]`
+  cascades fire in the real file but NOT in a standalone scratch importing
+  the olean.  Develop sub-lemmas in scratch; transplant dispatch-shaped
+  proofs into the file before judging them.
+- `Id.run do` blocks (`let mut` + `for`): convert `forIn` via
+  `Array.forIn_eq_foldlM` (Id collapses `foldlM`; steps are `.yield`);
+  the trailing `while`/`unless` desugars to nested `__do_jp` join-points
+  (brittle — consider `mvcgen` from `Std.Tactic.Do`, or refactor the def).
+- `#print axioms <thm>` on any headline theorem must show only
+  `[propext, Classical.choice, Quot.sound]` + the 3 `bv_decide`
+  readU/writeU axioms — no `sorryAx`.
+
+=====================================================================
+## TASK §5.1 — op-level Tier D: per-op fact discharge (CANONICAL, LARGEST)
+=====================================================================
+
+GOAL: make a mutating op's full byte round-trip self-contained —
+`parse (encode (toElfFile template (op typed))) = .ok ⟨normalized, _⟩` —
+by DERIVING the op output's facts from the typed op + template, instead of
+taking them as hypotheses.  Start with `removeRpath` (simplest shrinking op).
+
+### Tier-D readers (after orientation)
+
+- `Patchelf/Elf/OpAdapterPreservation.lean` — the WHOLE file.  Home base.
+  In order: Tier-1 worked examples (`toElfFile_setOsAbi_*`,
+  `_modifyExecstack_*`); the scaffold (`encode_roundtrip_via_normalized`,
+  `spliceRegionsDisjoint_of_structural{,_eo}`); the Obligation-C package
+  `encodePreconditions_of_layoutNormalized` (read its docstring); the
+  drivers `tierD_roundtrip` / `tierD_roundtrip_of_valid` /
+  `tierD_roundtrip_of_eo_facts`; and the worked examples
+  `toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip` (note what they
+  take as HYPOTHESES — that is your work).
+- `Patchelf/Elf/SectionOps.lean` — the shrink-monotonicity core (search
+  `_Disjoint_shrink`, `_section0Null`, `updateSectionContent_sectionInterval_shrink`).
+- `Patchelf/Elf/Adapter.lean` — `toElfFile` (~432), `patchDynamicEntries`
+  (~255), and the loop-size bridges `foldl_proj_size_le_add` (~201) /
+  `idForIn_proj_size_le` (~222).
+- `Patchelf/Elf/Encoder.lean` — the §1.2/A/B capstones + the
+  `syncDtStrszInFile_*Disjoint` transport family + the
+  `prepLayout_syncDtStrsz_sections_*` pipeline lemmas.
+
+### Use the right driver
+
+`tierD_roundtrip_of_eo_facts` states its ENTIRE surface on `eo := toElfFile
+template (op typed)` — validity, the 6 disjointness invariants +
+section-0-NULL, the four eo-level derived-field facts
+(`identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry`), and only the 4
+residual `< 2^64` position bounds on the normalized form.  So you never
+touch `syncDtStrszInFile eo` or the layout output directly — everything is
+on `eo`, except the 4 position bounds (the sanctioned "file < 2^64"
+precondition; the runtime `Validate.IsLoadableBytes` guards the
+pathological case at write time, so leaving them as a hypothesis is fine).
+
+### What each op still owes, and the order to discharge it
+
+1. EASY: `eo.IsValid`, `(eo.phdrs.size+1) < UInt16.size`, `eo.dynstr = some
+   ds`, `ds.bytes.size < UInt64.size`.  `toElfFile_{header,phdrs}` are
+   `rfl`, so phdrs/header come from `typed`; `eo.IsValid` from the typed
+   algebra / AdapterRoundtrip; `eo.dynstr` by tracing `applyDynstr`; the
+   `< 2^64` fit is the explicit "file < 2^64" precondition.
+2. EASY: the four eo-level derived-field facts — these are about a freshly
+   `toElfFile`-built `eo`; `nullEmpty`/`sizeFit`/`identValid`/`headerFit_entry`
+   on `eo` are parser-derivable from the template (the op doesn't touch
+   SHT_NULL sections / the ident bytes / the entry point).
+3. THE SUBSTANCE: the 6 structural disjointness invariants + section-0-NULL
+   on `eo`.  For a SHRINKING op (`removeRpath`/`removeNeeded`, which only
+   DROP `.dynamic` entries) the reusable shrink-monotonicity lemmas
+   (`SectionOps.updateSectionContent_*Disjoint_shrink`) transport these from
+   the template's parser-derived invariants — IF you supply two op-specific
+   lemmas:
+
+   (a) **`patchDynamicEntries` output-size bound**:
+       `(patchDynamicEntries byteDyn (stripRpath/filterNeededBy … typed)).size
+       ≤ byteDyn.size`.  The LOOP portion is de-risked: `idForIn_proj_size_le`
+       bridges the `Id.run do … forIn` loop to a `≤ (π result).size +
+       byteDyn.size` bound given a per-step ≤1-growth on the `result`
+       projection (a finite `match d.tag` case-split — every arm pushes ≤1).
+       WHAT REMAINS: bound the trailing `while` + 5 `unless` append blocks in
+       the desugared do-block (brittle `__do_jp` navigation — consider
+       refactoring `patchDynamicEntries` to expose loop + appends
+       compositionally, or `mvcgen`), and for the TIGHT `≤ byteDyn.size` use
+       the NEEDED-balance (`typed.needed.size = #DT_NEEDED in byteDyn`, from
+       the `ofElfFile`/parse relationship — so the `while` adds 0).
+       `Ops/RemoveNeeded.lean`'s `removeNeeded_needed_size_le` (via
+       `Array.size_filter_le`) is the typed side.
+
+   (b) **factor `eo = toElfFile template (op typed)` as
+       `base.updateSectionContent iDyn (.dynamic newDyn)`** with `newDyn =
+       patchDynamicEntries (template.dynamic) (op typed).dynamic` and `base`'s
+       other sections verbatim from `template`, so the shrink lemmas apply.
+       `toElfFile` is a chain of `applyX` `updateSectionContent`s; for a
+       shrinking op only `applyDynamic` changes a size-relevant section
+       (`applyDynstr` rewrites `.dynstr` but `removeRpath` doesn't grow it).
+
+   GROWING ops (`addNeeded`, `addRpathEntry`, `modifyRPath.set`,
+   `modifySoname.set`, `setInterpreter`, `replaceNeeded` grow path,
+   `renameDynamicSymbols`, and even `noDefaultLib`/`addDebugTag` which can
+   APPEND a DT_FLAGS_1/DT_DEBUG entry) widen `.dynamic`/`.dynstr`, so the
+   shrink lemmas don't apply — they need per-op `growEOFWith` layout
+   reasoning (the §1.2 `updatePhdrsAfterMove_*` / `retargetPtPhdr_*`
+   families are reusable).  Do these AFTER the shrinking ops.
+
+### §5.1 success criteria
 
 1. `lake build` clean, zero `sorry`s; 54/54 shell tests.
-2. At least one shrinking op (`removeRpath` or `removeNeeded`) has its
-   per-op `eo` structural invariants (Step 2) DERIVED rather than
-   hypothesized, closing the gap between `tierD_roundtrip_of_valid`'s
-   `hPreEn` and a genuine self-contained `parse (encode (toElfFile …)) =
-   .ok …` with no structural-invariant hypotheses (a "file < 2^64"
-   precondition on the 4 position bounds is fine).
-3. STATUS.md + ROADMAP.md updated; refresh this pickup prompt.
+2. At least one shrinking op (`removeRpath`/`removeNeeded`) has its `eo`
+   structural invariants DERIVED rather than hypothesized — i.e. a
+   `parse (encode (toElfFile …)) = .ok …` with no structural-invariant
+   hypotheses (a "file < 2^64" precondition on the 4 position bounds is OK).
+3. STATUS.md + ROADMAP.md updated; refresh this prompt.
 
-(Step 3's residual-field derivation — `sizeFit`/`nullEmpty`/`identValid`/
-`headerFit_entry` — is already DONE; the getElem-dispatch wall is cracked.)
+=====================================================================
+## TASK §5.2 — strengthen weak `_observable` theorems (SMALL WARM-UP)
+=====================================================================
 
-## Output
+Pure typed-algebra; no layout/encoder reasoning.  Each mutating op should
+have an observable theorem that an adversarial identity function FAILS.
+The §5.2 table in ROADMAP.md flags the weak/missing rows: `removeNeeded`
+(weak — identity on files without the lib), `addDebugTag` (weak — identity
+on files already having DT_DEBUG), `noDefaultLib` (`?`), `modifyRPath.set`
+(`?`), `modifySoname.set` (`?`).  Read an existing strong example
+(`setOsAbi_*`, `clearSymbolVersion_*`, `addNeeded_*` in `Elf/Ops/`) and the
+combinators in `Elf/ObservableCombinators.lean`, then add a
+post-condition theorem per weak op stating the observable change precisely
+(e.g. `noDefaultLib` ⇒ `flags1` has the DF_1_NODELETE-ish bit set;
+`modifyRPath.set` ⇒ `rpath = some <the new offset>`).  Files: `Elf/Ops/*.lean`.
 
-Small focused commits in the existing style (`git log --oneline -15`).
-`#print axioms` on the headline op theorem should show only
-`[propext, Classical.choice, Quot.sound]` plus the 3 `bv_decide`
-readU/writeU axioms — no `sorryAx`.
+=====================================================================
+## TASK §4.2 — trailing-array DSL field kind + forward roundtrips
+=====================================================================
+
+Typed-side completeness; does NOT affect the byte roundtrip (`.verneed`/
+`.hash`/`.gnu.hash` are stored as `.raw` at the byte layer).  Read
+`research/RESEARCH-SCHEMA-DSL.md` §"DSL v3" (the design sketch) and
+`Patchelf/Elf/SchemaDSL.lean` (the `elf_schema` elaborator) +
+`Patchelf/Elf/Schemas.lean` (the 7 invocations + the 3 hand-written
+writers: `Verneed`, `SysVHashTable`, `GnuHashTable`).  Add a `trailing
+Array<SubType>` field kind so those become pure DSL invocations, then emit
+the forward roundtrips `Verneed.write_decode` (needs canonicalizing
+`vna_next`/`vn_next`/`vn_cnt`), `SysVHashTable_decode_write`,
+`GnuHashTable_decode_write`.  ~150–200 LOC each.  Independent of §5.1.
+
+=====================================================================
+## TASK §3.5b — PT_GNU_STACK append when missing (SMALL FEATURE GAP)
+=====================================================================
+
+C++-parity: `set-execstack` on a binary WITHOUT a PT_GNU_STACK phdr is
+currently a no-op (`Ops/Execstack.lean` only maps over existing phdrs);
+C++ appends one.  The phdr-array-grow machinery from §3.5a is in place;
+appending is mechanically like `freshPtLoad` in `GrowEOF.lean` — construct a
+PT_GNU_STACK phdr (PF_R | PF_W, zero offset/size) and bump `phnum`.  Add a
+shell test mirroring 53/54.  Lowest priority; do only if a use case needs it.
 ```
 
 ---
 
 ## Notes for the human (not the agent)
 
-Prior sessions closed the substantive open core (Obligations A/B/C),
-cracked the `growEOFWith` content-preservation getElem-dispatch (the
-dependent-motive wall — solved with a bound-free `map (·.content)`
-equation + `cases pageSize?`), DERIVED four of the eight residual
-`EncodePreconditions` fields (`identValid`/`sizeFit`/`nullEmpty`/
-`headerFit_entry`), built the reusable shrink-monotonicity layout core
-(`SectionOps.updateSectionContent_*Disjoint_shrink`), and assembled the
-full `eo`-level driver `tierD_roundtrip_of_eo_facts` (every per-op fact is
-on `eo`, with only the 4 position-bound families as the sanctioned "file <
-2^64" precondition).  The composed drivers + full round-trips for the two
-shrinking ops are in place.  What's left is genuinely op-specific and
-narrowly scoped: a shrinking op still *assumes* its `eo` validity +
-structural invariants rather than *deriving* them from the typed op — the
-two concrete remaining lemmas are (1) a `patchDynamicEntries` output-size
-bound and (2) factoring `toElfFile (op typed)` as a single shrinking
-`updateSectionContent` (see Step 2).  For growing ops it needs the per-op
-`growEOFWith` layout reasoning.  Deferred rather than rushed.
+This prompt was broadened from a §5.1-only handoff to cover **all** open
+roadmap items so a fresh-context agent can take the whole remaining queue.
+Priority/size ordering: §5.1 (large, the substance) ≫ §4.2 (medium,
+independent typed-side) > §5.2 (small warm-up) > §3.5b (small, optional).
+
+State of §5.1 (the deep one): Obligations A/B/C are closed; the
+content-preservation getElem-dispatch wall is cracked; four of eight
+residual `EncodePreconditions` fields are derived; the reusable
+shrink-monotonicity layout core and the `Id`-forIn loop-size bridges are
+landed; the full `eo`-level driver `tierD_roundtrip_of_eo_facts` is in
+place; the two shrinking ops round-trip (taking their `eo` facts as
+hypotheses).  The only genuinely open §5.1 piece is the per-op DISCHARGE of
+those `eo` facts — concretely two lemmas for a shrinking op: a
+`patchDynamicEntries` output-size bound (loop de-risked; trailing
+`while`/`unless` join-point navigation + the NEEDED-balance remain) and the
+`toElfFile`-as-single-`updateSectionContent` factoring.  Deferred rather
+than rushed, because the desugared-`do` join-point navigation is brittle and
+warrants either a `patchDynamicEntries` refactor or `mvcgen`.

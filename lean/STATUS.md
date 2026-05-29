@@ -85,7 +85,11 @@
 > taking their per-op `eo` facts (validity + structural invariants + fits)
 > as hypotheses (parser-derivable / transportable across a shrinking
 > `.dynamic` rewrite; mechanical discharge from the typed op is the
-> remaining per-op layout work).  Fresh-agent handoff at
+> remaining per-op layout work).  The reusable shrink-monotonicity core
+> (`SectionOps.updateSectionContent_*Disjoint_shrink`) + the
+> `Adapter.{foldl_proj_size_le_add,idForIn_proj_size_le}` loop-size bridges
+> are landed, de-risking the per-op discharge.  **Fresh-agent handoff
+> covering ALL remaining work** (§5.1 + §3.5b + §4.2 + §5.2):
 > [`../research/PICKUP-PROMPT-OP-TIER-D.md`](../research/PICKUP-PROMPT-OP-TIER-D.md).
 >
 > **Tests: 54/54 shell tests passing; 109/109 Lean build jobs;
