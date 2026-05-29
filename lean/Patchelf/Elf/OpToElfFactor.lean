@@ -36,6 +36,7 @@
 -/
 module
 public import Patchelf.Elf.OpAdapterPreservation
+public import Patchelf.Elf.Ops.Rpath
 @[expose] public section
 
 namespace Patchelf.Elf
@@ -233,20 +234,6 @@ theorem applyOpt_updateSectionContent_dynamic_comm {α : Type}
           simp only
           exact ElfFile.updateSectionContent_comm e iDyn i (.dynamic dDyn) (mk v) (Ne.symm (hNe i hIdx))
 
--- applyDynamic on stripRpath td = applyDynamic on td, then re-update iDyn with
--- the stripRpath patch (last-wins set-set).
-theorem applyDynamic_stripRpath_factor (e₀ : ElfFile) {ds : StringSection}
-    (td : DynamicSection ds) (iDyn : Nat) (hIdx : e₀.dynamicIdx = some iDyn)
-    (bd : Array DynEntry) (hByte : e₀.dynamic = some bd) :
-    applyDynamic e₀ (ds := ds) (some td.stripRpath)
-      = (applyDynamic e₀ (ds := ds) (some td)).updateSectionContent iDyn
-          (.dynamic (patchDynamicEntries bd td.stripRpath)) := by
-  unfold applyDynamic
-  rw [hIdx, hByte]
-  -- both sides: e₀.updateSectionContent iDyn (.dynamic (patch bd stripRpath))
-  --   vs (e₀.update iDyn (.dynamic (patch bd td))).update iDyn (.dynamic (patch bd stripRpath))
-  rw [ElfFile.updateSectionContent_set_set]
-
 -- Generic type-based outer-apply commutation: an `applyOpt` keyed on
 -- `findUniqueTypeIdx ty` (ty ≠ SHT_DYNAMIC) commutes with a `.dynamic` update at
 -- iDyn.  The four per-type applies (versym/sysv/gnu/verneed) are thin wrappers.
@@ -441,93 +428,6 @@ theorem toElfFile_expand (template : ElfFile) (typed : ValidElfFile) :
               (ds := typed.dynstr) typed.dynamic) typed.versym) typed.sysvHash)
               typed.gnuHash) typed.verneed) typed.interp
           with header := typed.header, phdrs := typed.phdrs } := rfl
-
--- removeRpath agrees with typed on every field except dynamic (which is mapped).
-theorem removeRpath_dynstr (typed : ValidElfFile) (h : typed.dynamic.isSome) :
-    (removeRpath typed h).dynstr = typed.dynstr := rfl
-theorem removeRpath_fields (typed : ValidElfFile) (h : typed.dynamic.isSome) :
-    (removeRpath typed h).dynsym = typed.dynsym ∧ (removeRpath typed h).versym = typed.versym ∧
-    (removeRpath typed h).sysvHash = typed.sysvHash ∧ (removeRpath typed h).gnuHash = typed.gnuHash ∧
-    (removeRpath typed h).verneed = typed.verneed ∧ (removeRpath typed h).interp = typed.interp ∧
-    (removeRpath typed h).header = typed.header ∧ (removeRpath typed h).phdrs = typed.phdrs :=
-  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-theorem removeRpath_dynamic (typed : ValidElfFile) (h : typed.dynamic.isSome) :
-    (removeRpath typed h).dynamic = typed.dynamic.map (fun d => d.stripRpath) := rfl
-
--- Inner-chain factoring (no header/phdrs override): the applyInterp∘…∘applyDynamic
--- chain on stripRpath td equals the no-op chain, updated at iDyn.
-theorem innerChain_removeRpath_factor (template : ElfFile) (typed : ValidElfFile)
-    (td : DynamicSection typed.dynstr) (iDyn : Nat)
-    (hIdx0 : (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym).dynamicIdx = some iDyn)
-    (bd : Array DynEntry)
-    (hByte0 : (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym).dynamic = some bd)
-    (hbN : iDyn < (applyVerneed (applyGnuHash (applySysvHash (applyVersym
-              (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-                (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed).sections.size)
-    (dynN : Array DynEntry)
-    (hContentN : ((applyVerneed (applyGnuHash (applySysvHash (applyVersym
-              (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-                (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed).sections[iDyn]'hbN).content = .dynamic dynN)
-    {dsN : StringTable}
-    (hDsN : (applyVerneed (applyGnuHash (applySysvHash (applyVersym
-              (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-                (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed).dynstr = some dsN)
-    (hInterpNe : ∀ i, (applyVerneed (applyGnuHash (applySysvHash (applyVersym
-              (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-                (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed).interpIdx = some i → i ≠ iDyn) :
-    applyInterp (applyVerneed (applyGnuHash (applySysvHash (applyVersym
-        (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-          (ds := typed.dynstr) (some td.stripRpath)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed) typed.interp
-      = (applyInterp (applyVerneed (applyGnuHash (applySysvHash (applyVersym
-          (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-            (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed) typed.interp).updateSectionContent
-        iDyn (.dynamic (patchDynamicEntries bd td.stripRpath)) := by
-  rw [applyDynamic_stripRpath_factor _ td iDyn hIdx0 bd hByte0]
-  have hIdxBase : (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-      (ds := typed.dynstr) (some td)).dynamicIdx = some iDyn :=
-    (applyDynamic_dynamicIdx _ _ iDyn hIdx0).trans hIdx0
-  rw [outerChain_dynamic_comm _ iDyn (patchDynamicEntries bd td.stripRpath)
-        typed.versym typed.sysvHash typed.gnuHash typed.verneed typed.interp
-        hIdxBase
-        hbN dynN hContentN hDsN hInterpNe]
-
--- Master factoring: eo = base.updateSectionContent iDyn (.dynamic newDyn).
-theorem toElfFile_removeRpath_factor (template : ElfFile) (typed : ValidElfFile)
-    (h : typed.dynamic.isSome) (td : DynamicSection typed.dynstr) (hTd : typed.dynamic = some td)
-    (iDyn : Nat)
-    (hIdx0 : (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym).dynamicIdx = some iDyn)
-    (bd : Array DynEntry)
-    (hByte0 : (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym).dynamic = some bd)
-    (hbN : iDyn < (applyVerneed (applyGnuHash (applySysvHash (applyVersym
-              (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-                (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed).sections.size)
-    (dynN : Array DynEntry)
-    (hContentN : ((applyVerneed (applyGnuHash (applySysvHash (applyVersym
-              (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-                (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed).sections[iDyn]'hbN).content = .dynamic dynN)
-    {dsN : StringTable}
-    (hDsN : (applyVerneed (applyGnuHash (applySysvHash (applyVersym
-              (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-                (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed).dynstr = some dsN)
-    (hInterpNe : ∀ i, (applyVerneed (applyGnuHash (applySysvHash (applyVersym
-              (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-                (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed).interpIdx = some i → i ≠ iDyn) :
-    toElfFile template (removeRpath typed h)
-      = (toElfFile template typed).updateSectionContent iDyn
-          (.dynamic (patchDynamicEntries bd td.stripRpath)) := by
-  have hKey : ∀ (a b : ElfFile), a.header = b.header → a.phdrs = b.phdrs →
-      a.sections = b.sections → a = b := by
-    intro a b h1 h2 h3; cases a; cases b; simp_all
-  apply hKey
-  · rw [toElfFile_header, ElfFile.updateSectionContent_header, toElfFile_header]; rfl
-  · rw [toElfFile_phdrs, ElfFile.updateSectionContent_phdrs, toElfFile_phdrs]; rfl
-  · -- sections: both equal (innerChain-noop.update iDyn _).sections
-    rw [toElfFile_expand, toElfFile_expand]
-    obtain ⟨hDsym, hVsym, hSh, hGh, hVn, hIp, _hHdr, _hPhd⟩ := removeRpath_fields typed h
-    simp only [removeRpath_dynstr, removeRpath_dynamic, hTd, Option.map_some,
-      hDsym, hVsym, hSh, hGh, hVn, hIp]
-    rw [innerChain_removeRpath_factor template typed td iDyn hIdx0 bd hByte0 hbN dynN hContentN hDsN hInterpNe]
-    exact ElfFile.updateSectionContent_sections_eq_of_sections _ _ iDyn _ rfl
 
 /-! ### Generic-over-`f` factoring (`mapDynamicOp`)
 
@@ -729,54 +629,6 @@ structure RemoveRpathFactorData (template : ElfFile) (typed : ValidElfFile)
               (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
                 (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed).dynstr = some dsN
 
--- THE TRANSPORT: eo's 6 structural disjointness invariants + section0Null,
--- derived from the no-op base's, via the factoring + content + shrink lemmas.
-theorem removeRpath_structural_transport (template : ElfFile) (typed : ValidElfFile)
-    (h : typed.dynamic.isSome) (D : RemoveRpathFactorData template typed h)
-    (hHP : (toElfFile template typed).headerPhdrDisjoint)
-    (hHS : (toElfFile template typed).headerShdrDisjoint)
-    (hPS : (toElfFile template typed).phdrShdrDisjoint)
-    (hHSec : (toElfFile template typed).headerSectionDisjoint)
-    (hPSec : (toElfFile template typed).phdrSectionDisjoint)
-    (hShSec : (toElfFile template typed).shdrSectionDisjoint)
-    (hS0 : ∀ (h0 : 0 < (toElfFile template typed).sections.size), ((toElfFile template typed).sections[0]'h0).type = ShType.SHT_NULL) :
-    (toElfFile template (removeRpath typed h)).headerPhdrDisjoint ∧
-    (toElfFile template (removeRpath typed h)).headerShdrDisjoint ∧
-    (toElfFile template (removeRpath typed h)).phdrShdrDisjoint ∧
-    (toElfFile template (removeRpath typed h)).headerSectionDisjoint ∧
-    (toElfFile template (removeRpath typed h)).phdrSectionDisjoint ∧
-    (toElfFile template (removeRpath typed h)).shdrSectionDisjoint ∧
-    (∀ (h0 : 0 < (toElfFile template (removeRpath typed h)).sections.size),
-      ((toElfFile template (removeRpath typed h)).sections[0]'h0).type = ShType.SHT_NULL) := by
-  have hFactor := toElfFile_removeRpath_factor template typed h D.td D.hTd D.iDyn D.hIdx0 D.bd D.hByte0 D.hbN D.dynN D.hContentN D.hDsN D.hInterpNe
-  have hLtBase : D.iDyn < (toElfFile template typed).sections.size := by
-    rw [toElfFile_expand]; simpa using D.hbN
-  -- base content at iDyn = .dynamic (patch bd td), via the chain content lemma.
-  have hChainBound : D.iDyn < (applyInterp (applyVerneed (applyGnuHash (applySysvHash (applyVersym
-        (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-          (ds := typed.dynstr) (some D.td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed) typed.interp).sections.size := by
-    simpa using D.hbN
-  have hContentChain := toElfFile_content_at_dynamicIdx template typed D.td D.iDyn D.hIdx0 D.bd D.hByte0 D.hInterpNe hChainBound
-  have hSecEq : (toElfFile template typed).sections
-      = (applyInterp (applyVerneed (applyGnuHash (applySysvHash (applyVersym
-          (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
-            (ds := typed.dynstr) (some D.td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed) typed.interp).sections := by
-    rw [toElfFile_expand, D.hTd]
-  have hOld : ((toElfFile template typed).sections[D.iDyn]'hLtBase).content
-      = .dynamic (patchDynamicEntries D.bd D.td) := by
-    rw [ElfFile.getElem_content_congr_sections (toElfFile template typed) _ D.iDyn hSecEq hLtBase]
-    exact hContentChain
-  have hShrink : (patchDynamicEntries D.bd D.td.stripRpath).size ≤ (patchDynamicEntries D.bd D.td).size :=
-    patchDynamicEntries_stripRpath_size_le D.bd D.td
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
-  · rw [hFactor]; exact ElfFile.updateSectionContent_headerPhdrDisjoint _ _ _ hHP
-  · rw [hFactor]; exact ElfFile.updateSectionContent_headerShdrDisjoint _ _ _ hHS
-  · rw [hFactor]; exact ElfFile.updateSectionContent_phdrShdrDisjoint _ _ _ hPS
-  · rw [hFactor]; exact ElfFile.updateSectionContent_headerSectionDisjoint_shrink _ D.iDyn hLtBase _ _ hOld hShrink hHSec
-  · rw [hFactor]; exact ElfFile.updateSectionContent_phdrSectionDisjoint_shrink _ D.iDyn hLtBase _ _ hOld hShrink hPSec
-  · rw [hFactor]; exact ElfFile.updateSectionContent_shdrSectionDisjoint_shrink _ D.iDyn hLtBase _ _ hOld hShrink hShSec
-  · rw [hFactor]; exact ElfFile.updateSectionContent_section0Null _ D.iDyn hLtBase _ _ hOld hS0
-
 /-! ### Generic-over-`f` structural transport + Tier-D capstone
 
     `mapDynamicOp_structural_transport` is `removeRpath_structural_transport`
@@ -828,6 +680,32 @@ theorem mapDynamicOp_structural_transport (template : ElfFile) (typed : ValidElf
   · rw [hFactor]; exact ElfFile.updateSectionContent_phdrSectionDisjoint_shrink _ D.iDyn hLtBase _ _ hOld hSizeBound hPSec
   · rw [hFactor]; exact ElfFile.updateSectionContent_shdrSectionDisjoint_shrink _ D.iDyn hLtBase _ _ hOld hSizeBound hShSec
   · rw [hFactor]; exact ElfFile.updateSectionContent_section0Null _ D.iDyn hLtBase _ _ hOld hS0
+
+-- THE TRANSPORT (removeRpath): eo's 6 structural disjointness invariants +
+-- section0Null, derived from the no-op base's.  Now a thin instantiation of the
+-- generic `mapDynamicOp_structural_transport` at `f := (·.stripRpath)` with the
+-- stripRpath size bound (closes by `exact` since `removeRpath typed h` is
+-- definitionally `mapDynamicOp typed (·.stripRpath)`).  Statement unchanged from
+-- the pre-genericization version — the §5.1 regression gate.
+theorem removeRpath_structural_transport (template : ElfFile) (typed : ValidElfFile)
+    (h : typed.dynamic.isSome) (D : RemoveRpathFactorData template typed h)
+    (hHP : (toElfFile template typed).headerPhdrDisjoint)
+    (hHS : (toElfFile template typed).headerShdrDisjoint)
+    (hPS : (toElfFile template typed).phdrShdrDisjoint)
+    (hHSec : (toElfFile template typed).headerSectionDisjoint)
+    (hPSec : (toElfFile template typed).phdrSectionDisjoint)
+    (hShSec : (toElfFile template typed).shdrSectionDisjoint)
+    (hS0 : ∀ (h0 : 0 < (toElfFile template typed).sections.size), ((toElfFile template typed).sections[0]'h0).type = ShType.SHT_NULL) :
+    (toElfFile template (removeRpath typed h)).headerPhdrDisjoint ∧
+    (toElfFile template (removeRpath typed h)).headerShdrDisjoint ∧
+    (toElfFile template (removeRpath typed h)).phdrShdrDisjoint ∧
+    (toElfFile template (removeRpath typed h)).headerSectionDisjoint ∧
+    (toElfFile template (removeRpath typed h)).phdrSectionDisjoint ∧
+    (toElfFile template (removeRpath typed h)).shdrSectionDisjoint ∧
+    (∀ (h0 : 0 < (toElfFile template (removeRpath typed h)).sections.size),
+      ((toElfFile template (removeRpath typed h)).sections[0]'h0).type = ShType.SHT_NULL) :=
+  mapDynamicOp_structural_transport template typed h (fun d => d.stripRpath) D
+    (patchDynamicEntries_stripRpath_size_le D.bd D.td) hHP hHS hPS hHSec hPSec hShSec hS0
 
 -- Generic Tier-D capstone: parameterized on `f` + `hSizeBound`.  Composes
 -- `mapDynamicOp_structural_transport` (deriving the 6 disjointness invariants +
@@ -945,5 +823,61 @@ theorem toElfFile_removeRpath_tierD_roundtrip_derived (template : ElfFile) (type
     removeRpath_structural_transport template typed h D hHP hHS hPS hHSec hPSec hShSec hS0noop
   exact tierD_roundtrip_of_eo_facts _ hVal hPhdrFit hDs hFit hS0eo hHPeo hHSeo hPSeo hHSeceo hPSeceo
     hIdentEo hSizeFitEo hNullEmptyEo hHdrEntryEo hHdrPhoff hHdrShoff hPhdrFitEn hShdrFitEn
+
+/-! ## §F — `modifyRPath .remove` Tier-D round-trip (free second op)
+
+    `modifyRPath e fr .remove p h` is definitionally `mapDynamicOp e (·.stripRpath)`
+    (Ops/Rpath.lean) — the SAME `f` as `removeRpath` — so its Tier-D capstone
+    reuses the SAME `stripRpath` size bound, instantiating the generic capstone
+    at zero new proof cost. -/
+
+/-- Tier-D byte round-trip for `modifyRPath .remove` with the 6 structural
+    disjointness invariants + section-0-NULL DERIVED.  Instantiates
+    `toElfFile_mapDynamicOp_tierD_roundtrip_derived` at `(·.stripRpath)`; closes
+    by `exact` since `modifyRPath typed fr .remove p h` reduces to
+    `mapDynamicOp typed (·.stripRpath)` definitionally. -/
+theorem toElfFile_modifyRPath_remove_tierD_roundtrip_derived (template : ElfFile) (typed : ValidElfFile)
+    (forceRpath : Bool) (newRpath : String)
+    (h : typed.dynamic.isSome) (D : RemoveRpathFactorData template typed h)
+    (hHP : (toElfFile template typed).headerPhdrDisjoint)
+    (hHS : (toElfFile template typed).headerShdrDisjoint)
+    (hPS : (toElfFile template typed).phdrShdrDisjoint)
+    (hHSec : (toElfFile template typed).headerSectionDisjoint)
+    (hPSec : (toElfFile template typed).phdrSectionDisjoint)
+    (hShSec : (toElfFile template typed).shdrSectionDisjoint)
+    (hS0noop : ∀ (h0 : 0 < (toElfFile template typed).sections.size),
+      ((toElfFile template typed).sections[0]'h0).type = ShType.SHT_NULL)
+    (hVal : (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)).IsValid)
+    (hPhdrFit : ((toElfFile template (modifyRPath typed forceRpath .remove newRpath h)).phdrs.size + 1) < UInt16.size)
+    {ds : StringTable} (hDs : (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)).dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size)
+    (hIdentEo : IdentBytesValid (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))
+    (hSizeFitEo : ∀ (i : Nat) (hi : i < (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)).sections.size),
+      ((toElfFile template (modifyRPath typed forceRpath .remove newRpath h)).sections[i]'hi).shdrSize < UInt64.size)
+    (hNullEmptyEo : ∀ (i : Nat) (hi : i < (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)).sections.size),
+      ((toElfFile template (modifyRPath typed forceRpath .remove newRpath h)).sections[i]'hi).type = ShType.SHT_NULL →
+      ∃ ty hOk bs, ((toElfFile template (modifyRPath typed forceRpath .remove newRpath h)).sections[i]'hi).content = .raw ty hOk bs ∧ bs.size = 0)
+    (hHdrEntryEo : (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)).header.entry.val < UInt64.size)
+    (hHdrPhoff : (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).header.phoff.val < UInt64.size)
+    (hHdrShoff : (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).header.shoff.val < UInt64.size)
+    (hPhdrFitEn : ∀ (i : Nat) (hi : i < (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).phdrs.size),
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).phdrs[i]'hi).offset.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).phdrs[i]'hi).vaddr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).phdrs[i]'hi).paddr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).phdrs[i]'hi).filesz.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).phdrs[i]'hi).memsz.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).phdrs[i]'hi).align.val < UInt64.size)
+    (hShdrFitEn : ∀ (i : Nat) (hi : i < (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).sections.size),
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).sections[i]'hi).addr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).sections[i]'hi).offset.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).sections[i]'hi).addralign.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))).sections[i]'hi).entsize.val < UInt64.size) :
+    parse (encode (toElfFile template (modifyRPath typed forceRpath .remove newRpath h)))
+      = .ok ⟨prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifyRPath typed forceRpath .remove newRpath h))),
+             prepLayout_syncDtStrsz_preserves_valid _ hVal hPhdrFit hDs⟩ :=
+  toElfFile_mapDynamicOp_tierD_roundtrip_derived template typed h (fun d => d.stripRpath) D
+    (patchDynamicEntries_stripRpath_size_le D.bd D.td)
+    hHP hHS hPS hHSec hPSec hShSec hS0noop
+    hVal hPhdrFit hDs hFit hIdentEo hSizeFitEo hNullEmptyEo hHdrEntryEo hHdrPhoff hHdrShoff hPhdrFitEn hShdrFitEn
 
 end Patchelf.Elf.Adapter
