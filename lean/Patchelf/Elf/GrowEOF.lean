@@ -1185,6 +1185,14 @@ theorem syncDtAddrEntry_isStringRef (e : ElfFile) (d : DynEntry) :
   unfold DynEntry.isStringRef
   rw [syncDtAddrEntry_tag]
 
+/-- `syncDtAddrEntry` is the identity on any non-address-tag entry; in
+    particular it never changes a DT_STRSZ entry's `value` (DT_STRSZ is
+    not an address tag).  Key fact for §5.1 Obligation A: the layout
+    pre-pass's DT_* address rewrite leaves `dynStrszCoherent` intact. -/
+theorem syncDtAddrEntry_eq_self_of_not_addressTag (e : ElfFile) (d : DynEntry)
+    (h : d.tag.isAddressTag = false) : syncDtAddrEntry e d = d := by
+  unfold syncDtAddrEntry; rw [h]; rfl
+
 /-- On string-ref entries (DT_NEEDED / DT_SONAME / DT_RPATH /
     DT_RUNPATH — none of which are address tags), `syncDtAddrEntry`
     is the identity. -/
@@ -4224,5 +4232,117 @@ theorem growEOFWith_preserves_loadable (pageSize? : Option Nat) (e : ElfFile)
           exact growEOFWithFreshPtLoad_dynstr pageSize? e
         · simp only [hAdd, Bool.false_eq_true, ↓reduceIte]
           exact growEOFWithFreshPtLoadReloc_dynstr pageSize? e
+
+/-- `growEOFWith` preserves the `.dynamic` accessor — mirrors
+    `growEOFWith_dynstr`'s 5-way dispatch over the per-branch `_dynamic`
+    lemmas.  The layout pass only relocates sections / rewrites offsets;
+    it never touches `.dynamic` *content* (that is `syncDtAddrTagsInFile`'s
+    job, in the next pre-encode pass).  Used by Obligation A of §5.1:
+    `dynStrszCoherent` survives the layout pass. -/
+@[simp] theorem growEOFWith_dynamic (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWith pageSize? e).dynamic = e.dynamic := by
+  unfold growEOFWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]
+  · simp only [hLay]
+    cases hLast : lastPtLoadIdx e.phdrs with
+    | none => simp
+    | some lastIdx =>
+      simp only []
+      by_cases hExt : (canExtendLastPtLoad e
+        (roundUp (currentFileEnd e)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (roundUp (maxPtLoadVaddrEnd e.phdrs)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs)
+        lastIdx) = true
+      · simp only [hExt, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+        exact growEOFWithMainBody_dynamic pageSize? e lastIdx
+      · simp only [hExt, Bool.not_false, ↓reduceIte]
+        by_cases hAdd : canAddFreshPtLoad e = true
+        · simp only [hAdd, ↓reduceIte]
+          exact growEOFWithFreshPtLoad_dynamic pageSize? e
+        · simp only [hAdd, Bool.false_eq_true, ↓reduceIte]
+          exact growEOFWithFreshPtLoadReloc_dynamic pageSize? e
+
+/-- `growEOFWith` preserves `dynStrszCoherent` — both `.dynamic` and
+    `.dynstr` accessors are preserved, and `dynStrszCoherent` reads only
+    those.  (§5.1 Obligation A, layout-move half.) -/
+theorem growEOFWith_preserves_dynStrszCoherent (pageSize? : Option Nat) (e : ElfFile)
+    (hCoh : e.dynStrszCoherent) : (growEOFWith pageSize? e).dynStrszCoherent :=
+  ElfFile.dynStrszCoherent_of_accessors_eq e (growEOFWith pageSize? e)
+    (growEOFWith_dynamic pageSize? e) (growEOFWith_dynstr pageSize? e) hCoh
+
+/-- Closed form of `(syncDtAddrTagsInFile e).dynamic`: the `.dynamic`
+    array is mapped pointwise by `syncDtAddrEntry e`.  Holds
+    unconditionally — the no-op branches (`dynamicIdx`/`dynamic` none, or
+    bound failure) all force `e.dynamic = none`, on which both sides are
+    `none`. -/
+theorem syncDtAddrTagsInFile_dynamic_eq (e : ElfFile) :
+    (syncDtAddrTagsInFile e).dynamic
+      = Option.map (fun dyn => dyn.map (syncDtAddrEntry e)) e.dynamic := by
+  cases hDyn : e.dynamic with
+  | none =>
+    have hId : syncDtAddrTagsInFile e = e := by
+      unfold syncDtAddrTagsInFile
+      cases e.dynamicIdx <;> rw [hDyn] <;> rfl
+    rw [hId, hDyn]; rfl
+  | some dyn =>
+    obtain ⟨iDyn, hIdx, hLt, hContent⟩ := ElfFile.dynamic_eq_some_elim e dyn hDyn
+    have hSync : syncDtAddrTagsInFile e
+        = e.updateSectionContent iDyn (.dynamic (dyn.map (syncDtAddrEntry e))) := by
+      unfold syncDtAddrTagsInFile
+      rw [hIdx, hDyn]
+      simp only [dif_pos hLt]
+    rw [hSync]
+    simp only [Option.map_some]
+    unfold ElfFile.dynamic
+    rw [ElfFile.updateSectionContent_dynamicIdx e iDyn _ (by
+          intro hi; simp [SectionContent.type, Section.type, hContent]), hIdx]
+    unfold ElfFile.contentAt
+    have hLt' : iDyn < (e.updateSectionContent iDyn
+        (.dynamic (dyn.map (syncDtAddrEntry e)))).sections.size := by
+      rw [ElfFile.updateSectionContent_sections_size]; exact hLt
+    simp only [Option.bind_some, dif_pos hLt']
+    rw [ElfFile.updateSectionContent_getElem_self e iDyn _ hLt hLt']
+
+/-- `syncDtAddrTagsInFile` preserves the `.dynstr` accessor (mirrors
+    `syncDtStrszInFile_dynstr`; same `iDyn ≠ shstrndx` argument from the
+    dynstr witness). -/
+theorem syncDtAddrTagsInFile_dynstr (e : ElfFile)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (syncDtAddrTagsInFile e).dynstr = e.dynstr := by
+  rcases syncDtAddrTagsInFile_cases e with hEq | ⟨iDyn, hLt, dyn, hContent, hEq⟩
+  · rw [hEq]
+  · rw [hEq]
+    have hShstrNe : iDyn ≠ e.header.shstrndx.toNat :=
+      ElfFile.shstrndx_ne_of_content_dynamic_of_dynstr e hLt hContent hDs
+    apply ElfFile.updateSectionContent_dynstr_eq _ _ _ hShstrNe
+    intro iStr hStr
+    exact (ElfFile.dynstrIdx_target_ne_of_content_dynamic e hLt hContent hDs hStr).symm
+
+/-- `syncDtAddrTagsInFile` preserves `dynStrszCoherent`.  Although it
+    rewrites `.dynamic` via `Array.map (syncDtAddrEntry e)`, that map is
+    the identity on DT_STRSZ entries (not an address tag), and `.dynstr`
+    is preserved — so every DT_STRSZ entry's `value` and the comparison
+    target `ds.bytes.size` are unchanged.  (§5.1 Obligation A, DT_* half.) -/
+theorem syncDtAddrTagsInFile_preserves_dynStrszCoherent (e : ElfFile)
+    {ds : StringTable} (hDs : e.dynstr = some ds) (hCoh : e.dynStrszCoherent) :
+    (syncDtAddrTagsInFile e).dynStrszCoherent := by
+  intro dyn' ds' hD hS i hi hT
+  rw [syncDtAddrTagsInFile_dynstr e hDs] at hS
+  rw [syncDtAddrTagsInFile_dynamic_eq e] at hD
+  cases hDyn0 : e.dynamic with
+  | none => rw [hDyn0] at hD; simp at hD
+  | some dyn0 =>
+    rw [hDyn0] at hD
+    simp only [Option.map_some, Option.some.injEq] at hD
+    subst hD
+    rw [Array.size_map] at hi
+    rw [Array.getElem_map] at hT ⊢
+    rw [syncDtAddrEntry_tag] at hT
+    have hNotAddr : (dyn0[i]'hi).tag.isAddressTag = false := by rw [hT]; rfl
+    rw [syncDtAddrEntry_eq_self_of_not_addressTag e _ hNotAddr]
+    exact hCoh dyn0 ds' hDyn0 hS i hi hT
 
 end Patchelf.Elf

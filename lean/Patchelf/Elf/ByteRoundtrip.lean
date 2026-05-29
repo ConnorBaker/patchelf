@@ -2296,6 +2296,19 @@ theorem syncDtStrszInFile_eq_id (e : ElfFile) (h : e.dynStrszCoherent) :
           exact updateSectionContent_eq_self e iDyn hLt _ hContent
         · rw [dif_neg hLt]
 
+/-- §5.1 Obligation A capstone: `EncodePreconditions.syncOk` on the
+    encoder's normalized form.  `syncDtStrszInFile` is the identity on
+    `prepLayoutForEncode (syncDtStrszInFile e)` because that form is
+    `dynStrszCoherent` (`prepLayout_syncDtStrsz_dynStrszCoherent`):  the
+    first pre-pass already rewrote every DT_STRSZ to `dynstr.bytes.size`,
+    and the layout pass left them alone.  Re-syncing is therefore a no-op. -/
+theorem syncOk_of_normalized (e : ElfFile)
+    {ds : StringTable} (hDs : e.dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size) :
+    syncDtStrszInFile (prepLayoutForEncode (syncDtStrszInFile e))
+      = prepLayoutForEncode (syncDtStrszInFile e) :=
+  syncDtStrszInFile_eq_id _ (prepLayout_syncDtStrsz_dynStrszCoherent e hDs hFit)
+
 /-! ## `layoutOk` + `spliceDisjoint` from parser output (gap)
 
     The remaining `spliceDisjoint` field of `EncodePreconditions`

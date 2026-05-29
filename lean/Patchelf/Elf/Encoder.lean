@@ -682,6 +682,85 @@ theorem syncDtStrszInFile_section0Null (e : ElfFile)
   rw [syncDtStrszInFile_sections_type e 0 h0 h0E]
   exact h h0E
 
+/-! ## `syncDtStrszInFile` establishes `dynStrszCoherent` (§5.1 Obligation A)
+
+    The first pre-encode pass rewrites every DT_STRSZ entry's value to
+    `dynstr.bytes.size.toUInt64`, so its output is `dynStrszCoherent` by
+    construction — provided the dynstr byte length fits in UInt64 (so the
+    `toNat ∘ toUInt64` round-trip is exact).  Composed with the layout
+    pre-pass's preservation (`growEOFWith` + `syncDtAddrTagsInFile`, both
+    leave DT_STRSZ alone), this gives `dynStrszCoherent` of the normalized
+    form — the hypothesis `syncDtStrszInFile_eq_id` needs for
+    `EncodePreconditions.syncOk`. -/
+
+/-- `(syncDtStrszInFile e).dynstr = e.dynstr`, unconditionally (the
+    witness-form `syncDtStrszInFile_dynstr` plus the no-`dynstr` no-op). -/
+theorem syncDtStrszInFile_dynstr_eq (e : ElfFile) :
+    (syncDtStrszInFile e).dynstr = e.dynstr := by
+  cases hDs : e.dynstr with
+  | none =>
+    have : syncDtStrszInFile e = e := by unfold syncDtStrszInFile; rw [hDs]
+    rw [this]; exact hDs
+  | some ds => rw [syncDtStrszInFile_dynstr e hDs]; exact hDs
+
+/-- In the active branch, `(syncDtStrszInFile e).dynamic` is the synced
+    array `syncDtStrsz dyn ds.bytes.size.toUInt64`. -/
+theorem syncDtStrszInFile_dynamic_synced (e : ElfFile) (ds : StringTable)
+    (dyn : Array DynEntry) (hDs : e.dynstr = some ds) (hDyn : e.dynamic = some dyn) :
+    (syncDtStrszInFile e).dynamic = some (syncDtStrsz dyn ds.bytes.size.toUInt64) := by
+  obtain ⟨iDyn, hIdx, hLt, hContent⟩ := ElfFile.dynamic_eq_some_elim e dyn hDyn
+  have hSync : syncDtStrszInFile e
+      = e.updateSectionContent iDyn (.dynamic (syncDtStrsz dyn ds.bytes.size.toUInt64)) := by
+    unfold syncDtStrszInFile
+    rw [hDs, hDyn, hIdx]
+    simp only [dif_pos hLt]
+  rw [hSync]
+  unfold ElfFile.dynamic
+  rw [ElfFile.updateSectionContent_dynamicIdx e iDyn _ (by
+        intro hi; simp [SectionContent.type, Section.type, hContent]), hIdx]
+  unfold ElfFile.contentAt
+  have hLt' : iDyn < (e.updateSectionContent iDyn
+      (.dynamic (syncDtStrsz dyn ds.bytes.size.toUInt64))).sections.size := by
+    rw [ElfFile.updateSectionContent_sections_size]; exact hLt
+  simp only [Option.bind_some, dif_pos hLt']
+  rw [ElfFile.updateSectionContent_getElem_self e iDyn _ hLt hLt']
+
+/-- `e.dynamic = none → (syncDtStrszInFile e).dynamic = none`. -/
+theorem syncDtStrszInFile_dynamic_none (e : ElfFile) (hDyn : e.dynamic = none) :
+    (syncDtStrszInFile e).dynamic = none := by
+  cases hDs : e.dynstr with
+  | none =>
+    have : syncDtStrszInFile e = e := by unfold syncDtStrszInFile; rw [hDs]
+    rw [this]; exact hDyn
+  | some ds =>
+    have : syncDtStrszInFile e = e := by unfold syncDtStrszInFile; rw [hDs, hDyn]
+    rw [this]; exact hDyn
+
+/-- Establishment: `syncDtStrszInFile e` is `dynStrszCoherent`, given the
+    dynstr byte length fits in UInt64.  No-`dynamic` case is vacuous. -/
+theorem syncDtStrszInFile_establishes_dynStrszCoherent (e : ElfFile)
+    (hFit : ∀ ds, e.dynstr = some ds → ds.bytes.size < UInt64.size) :
+    (syncDtStrszInFile e).dynStrszCoherent := by
+  intro dyn' ds' hD hS i hi hT
+  rw [syncDtStrszInFile_dynstr_eq] at hS
+  have hFit' := hFit ds' hS
+  cases hDyn0 : e.dynamic with
+  | none =>
+    rw [syncDtStrszInFile_dynamic_none e hDyn0] at hD
+    exact absurd hD (by simp)
+  | some dyn0 =>
+    rw [syncDtStrszInFile_dynamic_synced e ds' dyn0 hS hDyn0] at hD
+    have hEqArr : syncDtStrsz dyn0 ds'.bytes.size.toUInt64 = dyn' := Option.some.inj hD
+    subst hEqArr
+    unfold syncDtStrsz at hi hT ⊢
+    rw [Array.getElem_map] at hT ⊢
+    rw [syncDtStrszEntry_tag] at hT
+    show (syncDtStrszEntry ds'.bytes.size.toUInt64 (dyn0[i]'_)).value.toNat = ds'.bytes.size
+    unfold syncDtStrszEntry
+    rw [if_pos hT]
+    show (ds'.bytes.size.toUInt64).toNat = ds'.bytes.size
+    exact UInt64.toNat_ofNat_of_lt' hFit'
+
 /-- The per-section step the encoder folds.  Extracted to a named def
     so foldl-induction proofs can match the function shape. -/
 def sectionFoldStep (buf : ByteArray) (s : Section) : ByteArray :=
@@ -915,6 +994,42 @@ theorem prepLayout_syncDtStrsz_preserves_loadable (e : ElfFile)
     (syncDtStrszInFile_headerSectionDisjoint e hHeaderSec)
     (syncDtStrszInFile_phdrSectionDisjoint e hPhdrSec)
     hDs'
+
+/-- `prepLayoutForEncode` preserves `dynStrszCoherent`.  Fast path is the
+    identity; the layout path composes `growEOFWith` (preserves both
+    `.dynamic`/`.dynstr`) with `syncDtAddrTagsInFile` (identity on
+    DT_STRSZ).  Needs `e.dynstr = some ds` for the `syncDtAddrTagsInFile`
+    post-pass.  (§5.1 Obligation A.) -/
+theorem prepLayoutForEncode_preserves_dynStrszCoherent (e : ElfFile)
+    {ds : StringTable} (hDs : e.dynstr = some ds) (hCoh : e.dynStrszCoherent) :
+    (prepLayoutForEncode e).dynStrszCoherent := by
+  unfold prepLayoutForEncode prepLayoutForEncodeWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]; exact hCoh
+  · simp only [hLay, Bool.false_eq_true, ↓reduceIte]
+    have hGrow := growEOFWith_preserves_dynStrszCoherent none e hCoh
+    have hGrowDs : (growEOFWith none e).dynstr = some ds := by
+      rw [growEOFWith_dynstr]; exact hDs
+    exact syncDtAddrTagsInFile_preserves_dynStrszCoherent _ hGrowDs hGrow
+
+/-- The encoder's normalized form `prepLayoutForEncode (syncDtStrszInFile e)`
+    is `dynStrszCoherent`: the first pass establishes it (DT_STRSZ rewritten
+    to `dynstr.bytes.size`), the layout pass preserves it.  Stated with the
+    `.dynstr` witness (the layout pass's `syncDtAddrTagsInFile` post-pass
+    needs it; every `.dynamic`-mutating op has `.dynstr`).  This is exactly
+    what `syncDtStrszInFile_eq_id` needs to discharge
+    `EncodePreconditions.syncOk` on the normalized form (§5.1 Obligation A
+    capstone). -/
+theorem prepLayout_syncDtStrsz_dynStrszCoherent (e : ElfFile)
+    {ds : StringTable} (hDs : e.dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size) :
+    (prepLayoutForEncode (syncDtStrszInFile e)).dynStrszCoherent := by
+  have hCoh : (syncDtStrszInFile e).dynStrszCoherent :=
+    syncDtStrszInFile_establishes_dynStrszCoherent e
+      (fun ds' hDs' => by rw [hDs'] at hDs; cases hDs; exact hFit)
+  have hDs' : (syncDtStrszInFile e).dynstr = some ds := by
+    rw [syncDtStrszInFile_dynstr_eq]; exact hDs
+  exact prepLayoutForEncode_preserves_dynStrszCoherent (syncDtStrszInFile e) hDs' hCoh
 
 /-! ## Sizes match: writeContent.size = encodedSize.
 

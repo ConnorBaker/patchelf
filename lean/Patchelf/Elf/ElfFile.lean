@@ -255,6 +255,36 @@ section_content_accessor_raw verneedRaw  verneedIdx
 section_content_accessor_raw sysvHashRaw sysvHashIdx
 section_content_accessor_raw gnuHashRaw  gnuHashIdx
 
+/-- `e.dynamic = some dyn` exposes the witnessing index, its bound, and
+    the section content there.  Packages the inline `unfold dynamic` /
+    `contentAt` case-analysis that several proofs (`syncDtStrszInFile`,
+    `syncDtAddrTagsInFile` accessors) would otherwise repeat. -/
+theorem dynamic_eq_some_elim (e : ElfFile) (dyn : Array DynEntry)
+    (hDyn : e.dynamic = some dyn) :
+    ∃ iDyn, e.dynamicIdx = some iDyn ∧ ∃ (h : iDyn < e.sections.size),
+      (e.sections[iDyn]'h).content = .dynamic dyn := by
+  unfold ElfFile.dynamic at hDyn
+  cases hIdx : e.dynamicIdx with
+  | none =>
+    rw [hIdx] at hDyn
+    simp only [ElfFile.contentAt, Option.bind_none] at hDyn
+    exact absurd hDyn (by simp)
+  | some iDyn =>
+    rw [hIdx] at hDyn
+    unfold ElfFile.contentAt at hDyn
+    simp only [Option.bind_some] at hDyn
+    by_cases hLt : iDyn < e.sections.size
+    · rw [dif_pos hLt] at hDyn
+      generalize hC : (e.sections[iDyn]'hLt).content = c at hDyn
+      cases c with
+      | dynamic dyn' => simp at hDyn; exact ⟨iDyn, rfl, hLt, by rw [hC, hDyn]⟩
+      | raw _ => simp at hDyn
+      | strtab _ => simp at hDyn
+      | dynsym _ => simp at hDyn
+      | versym _ => simp at hDyn
+      | nobits _ => simp at hDyn
+    · rw [dif_neg hLt] at hDyn; simp at hDyn
+
 /-! ## IsValid -/
 
 /-- Header fields match structural counts.  No reference to `bytes`. -/
@@ -759,6 +789,15 @@ instance (e : ElfFile) : Decidable e.dynStrszCoherent := by
             (dyn[i]'h).value.toNat = ds.bytes.size) ?_
         refine ⟨fun h dyn' ds' hD' hS' => ?_, fun h => h dyn ds rfl rfl⟩
         cases hD'; cases hS'; exact h
+
+/-- `dynStrszCoherent` reads only the `.dynamic` and `.dynstr` accessors,
+    so any transformation that preserves both preserves coherence. -/
+theorem dynStrszCoherent_of_accessors_eq (e e' : ElfFile)
+    (hDyn : e'.dynamic = e.dynamic) (hDs : e'.dynstr = e.dynstr)
+    (hCoh : e.dynStrszCoherent) : e'.dynStrszCoherent := by
+  intro dyn ds hD hS i hi hT
+  rw [hDyn] at hD; rw [hDs] at hS
+  exact hCoh dyn ds hD hS i hi hT
 
 structure dynamicAddressCoherent (e : ElfFile) : Prop where
   strtab_addr  : dynAddressCoherentForTag e DynTag.strtab  e.dynstrIdx
