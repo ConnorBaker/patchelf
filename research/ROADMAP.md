@@ -63,15 +63,17 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 
 **Recommended pickup order:**
 
-- **§5.1 op-level Tier D / per-op `_preserves_loadable` — UNBLOCKED,
-  NON-TRIVIAL, CANONICAL NEXT PICKUP.**
-  Now that the layout pass's `_preserves_loadable` ladder is closed
-  (`growEOFWith_preserves_loadable`), the remaining loader-coherence
-  gap is per-op: each op needs to establish the 5 structural input
-  invariants on its output (and, for the static guarantee, its own
-  `_preserves_loadable`).  Discovered a dependent-type obstacle in
-  `Adapter.toElfFile` when attempting `setOsAbi` as the worked
-  example — see §5.1 for three documented workaround paths.
+- **§5.1 op-level Tier D — IN PROGRESS, CANONICAL NEXT PICKUP.**
+  The `Adapter.toElfFile` dependent-type obstacle is RESOLVED (the
+  un-bundling refactor, commit `8ffe2cb`).  Tier 1 ops (`setOsAbi`,
+  `modifyExecstack` — section positions unchanged) have full
+  `_preserves_loadable` (`OpAdapterPreservation.lean`, commit
+  `8ecaba0`).  Open: the Tier 2/3 ops, whose byte-level `.dynamic`
+  changes size (so their raw `toElfFile` output isn't laid out —
+  loadability is restored by `encode`'s `growEOFWith`).  For those
+  the target is the full Tier D round-trip `parse (encode (toElfFile
+  … (op typed)))`, composing a per-op `_produces_spliceRegionsDisjoint`
+  with the landed §1.2 pipeline.  See §5.1 for the tier map.
 - **§4.2 trailing-array DSL field kind + `Verneed.write_decode`** —
   independent typed-side completeness item; `.verneed` is stored
   as `.raw` at the byte layer, so the byte-roundtrip doesn't
@@ -504,7 +506,7 @@ pattern.  Estimated ~150-200 LOC each.
 
 ### Priority 5 — Code quality
 
-#### 5.1 Op-level byte roundtrip lemmas — UNBLOCKED, NON-TRIVIAL
+#### 5.1 Op-level byte roundtrip lemmas — IN PROGRESS (Tier 1 landed; Tier 2/3 open)
 
 A stronger replacement for the existing `_preserves_valid` lemmas:
 prove `parse (encode (op e)) = .ok ⟨prepLayoutForEncode
@@ -516,49 +518,65 @@ prove `parse (encode (op e)) = .ok ⟨prepLayoutForEncode
 input invariants on its own output (`headerPhdrDisjoint` etc.),
 which are parser-derivable for any op that doesn't widen the file.
 
-**Obstacle for op-level Tier D, discovered.**  `Adapter.toElfFile`
-threads `typed : ValidElfFile` through dependent-type-bearing
-matches (e.g., `applyDynamic`'s match on
-`typed.dynamic : Option (DynamicSection typed.dynstr)`).  When `op`
-is `setOsAbi` — which only changes `header.ident.osAbi` — the
-record-update form `{ typed with header := ... }` doesn't reduce
-inside the dependent matches even though `(setOsAbi abi).dynstr =
-typed.dynstr` holds by `rfl`.  The result: `Adapter.toElfFile
-template (typed.setOsAbi abi)` is *not* `rfl`-equal to
-`Adapter.toElfFile template typed`, blocking the obvious
-"non-section ops are sections-trivial" argument.
+**Dependent-type obstacle — RESOLVED via workaround (a).**  The
+historical blocker: `Adapter.toElfFile` threaded `typed : ValidElfFile`
+through dependent-type-bearing matches (`applyDynamic`'s match on
+`typed.dynamic : Option (DynamicSection typed.dynstr)`).  A header-only
+op like `setOsAbi` made the index become `({typed with header :=
+…}).dynstr` instead of `typed.dynstr`, blocking the dependent match
+from reducing even though the two are `rfl`-equal.
 
-Workarounds for op-level Tier D, in increasing complexity:
-* (a) Rephrase `Adapter.toElfFile`'s applies to take separate
-  arguments instead of `typed : ValidElfFile`, e.g.
-  `applyDynamic (e : ElfFile) (dyn? : Option (DynamicSection ds))
-  (ds : StringSection) : ElfFile`.  Removes the dependent typing
-  problem at the cost of a wider call surface.  Estimated ~200 LOC
-  refactor.
-* (b) Prove an explicit `Adapter.toElfFile`-congruence lemma family
-  (one per op): `toElfFile_<op>_eq` showing
-  `Adapter.toElfFile template (op typed) =
-   { Adapter.toElfFile template typed with header := ... }` directly
-  (not via `rfl`).  Each op gets a custom proof; ~50 LOC per op.
-* (c) Define op-level Tier D in a "structural transport" style:
-  prove `EncodeCompatible (toElfFile template typed) (toElfFile
-  template (op typed))` (where `EncodeCompatible` says headers agree
-  modulo the op's specific change) and a single `EncodePreconditions.transport`.
-  Was attempted; the `syncOk` clause's full ElfFile-equality made the
-  proof tangled under the dependent-type issues.
+Commit `8ffe2cb` applied **workaround (a)**: the `applyX` helpers now
+take the typed *fields* as explicit arguments (with the dependent
+index `ds : StringSection` free), not the bundled `typed`.  This was
+cheaper and lower-risk than the ~200 LOC estimate — the `applyX`
+helpers had zero external callers, and `toElfFile`'s outer
+`{ e with header := …, phdrs := … }` shape was preserved, so
+`toElfFile_header`/`_phdrs` stayed `rfl` and the 4 CLI sites + 8
+`AdapterRoundtrip` theorems were untouched.  `toElfFile template
+(setOsAbi typed abi)` now reduces to `{ toElfFile template typed with
+header := … }` by `rfl`.
 
-For ops that *do* modify section content (most: `addNeeded`,
-`removeNeeded`, `setRpath`, `replaceNeeded`, etc.) the picture is
-different because they do change `sections`; these need their own
-`_preserves_spliceDisjoint` proofs anyway, and the dependent-type
-complication only affects "no-op" sections-trivial ops like
-`setOsAbi`, `noDefaultLib`, `addDebugTag`.
+**Tier map for op-level preservation (discovered while implementing).**
+The ops split sharply by what their *byte-level* `toElfFile` output
+looks like — driven by whether `patchDynamicEntries` (the positional
+`.dynamic` rebuilder) changes the byte-level entry count:
+
+* **Tier 1 — section positions unchanged (LANDED, commit `8ecaba0`).**
+  Only `setOsAbi` (header ident byte) and `modifyExecstack`
+  (PT_GNU_STACK phdr `flags`).  Adapter `sections` are definitionally
+  the no-op output's; `_preserves_loadable` ships for both, via the
+  reusable `isValid_of_phdrs_map` / `isLoadable_of_phdrs_map` helpers
+  in `Patchelf/Elf/OpAdapterPreservation.lean`.
+* **Tier 2/3 — byte-level `.dynamic` size changes (OPEN).**  Every
+  other op.  `patchDynamicEntries`'s trailing `unless flags1Applied`
+  / `unless debugApplied` / NEEDED-append blocks mean even the
+  "trivial-looking" `noDefaultLib` / `addDebugTag` can *append* a
+  DT_FLAGS_1 / DT_DEBUG entry (and `removeRpath`/`removeNeeded`
+  *drop* entries).  So their raw `toElfFile` output has shifted
+  section offsets and is **not laid out** — loadability is restored
+  only by `encode`'s `growEOFWith` pass.  The meaningful theorem for
+  these is therefore the full Tier D round-trip
+  `parse (encode (toElfFile … (op typed)))`, NOT raw
+  `_preserves_loadable`.  That needs: (i) the op establishes the 5
+  structural input invariants (`headerPhdrDisjoint` etc.) on its
+  grown output, then (ii) the §1.2 pipeline
+  (`prepLayout_syncDtStrsz_preserves_loadable`) + the encoder-output
+  `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` carry it to
+  loadable bytes.  Each op needs a per-op `_produces_spliceRegionsDisjoint`
+  on its `toElfFile` output (parser-derivable for ops that don't widen
+  past `currentFileEnd`), composed with the landed §1.2 machinery.
+
+The earlier workarounds (b) per-op congruence and (c) `EncodeCompatible`
+transport are subsumed: (b) is now the `toElfFile_<op>_eq` commutation
+lemma shape used in Tier 1; (c) is unnecessary given the direct
+clause-by-clause transport.
 
 §1.1 (Parser establishes `IsLoadable`) and §1.2
-(`growEOFWith_preserves_loadable`) are both now closed — they pin
-down where the input invariants come from and provide the
-layout-pass preservation the op-level theorems compose with.  The
-`updatePhdrsAfterMove_*` / `retargetPtPhdr_*` per-phdr lemma
+(`growEOFWith_preserves_loadable`, lifted to the end-to-end
+`prepLayout_syncDtStrsz_preserves_loadable`) are both closed — they
+provide the layout-pass preservation the Tier 2/3 op proofs compose
+with.  The `updatePhdrsAfterMove_*` / `retargetPtPhdr_*` per-phdr lemma
 families from §1.2 are reusable for any op-level proof that routes
 through `growEOFWith`.
 

@@ -482,18 +482,24 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   `Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
   is the composed API the op-level Tier D proofs consume.  See
   §"Tier D" above for the supporting chain.
-- **Op-level Tier D — UNBLOCKED, with non-trivial obstacle.**
-  Attempted `setOsAbi` as the worked example (a sections-trivial op:
-  changes only `header.ident.osAbi`) and discovered that
-  `Adapter.toElfFile` threads `typed : ValidElfFile` through
-  dependent-type-bearing matches in `applyDynamic` (matching on
-  `typed.dynamic : Option (DynamicSection typed.dynstr)`).  When
-  `op = setOsAbi`, the record-update form `{ typed with header := ... }`
-  doesn't reduce inside the dependent matches even though
-  `(setOsAbi abi).dynstr = typed.dynstr` is `rfl`-provable — so
-  `Adapter.toElfFile template (typed.setOsAbi abi)` is *not*
-  `rfl`-equal to `Adapter.toElfFile template typed`.  See ROADMAP
-  §5.1 for three documented workaround paths.
+- **Op-level Tier D — IN PROGRESS (Tier 1 landed).**  The
+  `Adapter.toElfFile` dependent-type obstacle is resolved: the
+  `applyX` helpers were un-bundled to take the typed *fields*
+  (dependent index `ds` free) instead of `typed : ValidElfFile`, so
+  a header-only op no longer rewrites the index and the dependent
+  matches reduce.  `Patchelf/Elf/OpAdapterPreservation.lean` ships
+  `toElfFile_{setOsAbi,modifyExecstack}_preserves_loadable` (Tier 1:
+  ops that don't shift byte-level section positions) plus the
+  reusable `isValid_of_phdrs_map` / `isLoadable_of_phdrs_map`.
+
+  The other 12 ops change byte-level `.dynamic` size (even
+  `noDefaultLib`/`addDebugTag` can append a DT_FLAGS_1/DT_DEBUG
+  entry via `patchDynamicEntries`), so their raw adapter output
+  isn't laid out — `encode`'s `growEOFWith` is what restores it.
+  Their target is the full Tier D round-trip
+  `parse (encode (toElfFile … (op typed)))`, composing a per-op
+  `_produces_spliceRegionsDisjoint` with the landed §1.2 pipeline.
+  See ROADMAP §5.1 for the tier map.
 
 ### Priority 2 gaps (test / spec coverage)
 
