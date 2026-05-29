@@ -442,6 +442,184 @@ theorem syncDtStrszInFile_preserves_valid (e : ElfFile) (hVal : e.IsValid) :
             e hVal ds dyn iDyn hDs hDyn hIdx hBound
         · rw [dif_neg hBound]; exact hVal
 
+/-! ## `syncDtStrszInFile` preserves `IsLoadable`
+
+    The FIRST pre-encode pass (`encode = encodeBody ∘ prepLayoutForEncode
+    ∘ syncDtStrszInFile`).  Structurally identical to
+    `syncDtAddrTagsInFile`: either a no-op or a same-size `Array.map` of
+    the `.dynamic` section's entries (`syncDtStrsz = dyn.map
+    (syncDtStrszEntry _)`).  So it preserves `phdrs` verbatim and
+    per-section `(type, offset, encodedSize)` everywhere; the four
+    `IsLoadable` clauses transport directly.  Combined with
+    `prepLayoutForEncodeWith_preserves_loadable`, this gives end-to-end
+    loadability of the IR fed to `encodeBody`. -/
+
+/-- No-op-or-update disjunction for `syncDtStrszInFile` (companion to
+    `syncDtAddrTagsInFile_cases`).  Parameterized by the new DT_STRSZ
+    value `newSize` rather than the `StringTable`, so the existential's
+    `e.dynstr` discriminant doesn't clash with the active-branch `cases`. -/
+theorem syncDtStrszInFile_cases (e : ElfFile) :
+    syncDtStrszInFile e = e ∨
+    ∃ (iDyn : Nat) (h : iDyn < e.sections.size) (dyn : Array DynEntry) (newSize : UInt64),
+      (e.sections[iDyn]'h).content = .dynamic dyn ∧
+      syncDtStrszInFile e =
+        e.updateSectionContent iDyn (.dynamic (syncDtStrsz dyn newSize)) := by
+  rw [show syncDtStrszInFile e = (match e.dynstr, e.dynamic, e.dynamicIdx with
+    | some ds, some dyn, some iDyn =>
+        if _h : iDyn < e.sections.size then
+          e.updateSectionContent iDyn (.dynamic (syncDtStrsz dyn ds.bytes.size.toUInt64))
+        else e
+    | _, _, _ => e) from rfl]
+  cases hDs : e.dynstr with
+  | none => exact Or.inl rfl
+  | some ds =>
+    cases hDyn : e.dynamic with
+    | none => exact Or.inl rfl
+    | some dyn =>
+      cases hIdx : e.dynamicIdx with
+      | none => exact Or.inl rfl
+      | some iDyn =>
+        by_cases hLt : iDyn < e.sections.size
+        · have hContent : (e.sections[iDyn]'hLt).content = .dynamic dyn := by
+            unfold ElfFile.dynamic at hDyn
+            rw [hIdx] at hDyn
+            unfold ElfFile.contentAt at hDyn
+            simp only [Option.bind_some] at hDyn
+            rw [dif_pos hLt] at hDyn
+            generalize hC : (e.sections[iDyn]'hLt).content = c at hDyn
+            cases c with
+            | dynamic dyn' => simp at hDyn; rw [hDyn]
+            | raw _ => simp at hDyn
+            | strtab _ => simp at hDyn
+            | dynsym _ => simp at hDyn
+            | versym _ => simp at hDyn
+            | nobits _ => simp at hDyn
+          refine Or.inr ⟨iDyn, hLt, dyn, ds.bytes.size.toUInt64, hContent, ?_⟩
+          simp only [dif_pos hLt]
+        · exact Or.inl (by simp only [dif_neg hLt])
+
+@[simp] theorem syncDtStrszInFile_phdrs (e : ElfFile) :
+    (syncDtStrszInFile e).phdrs = e.phdrs := by
+  rcases syncDtStrszInFile_cases e with hEq | ⟨iDyn, hLt, dyn, nz, hContent, hEq⟩
+  · rw [hEq]
+  · rw [hEq]; simp
+
+@[simp] theorem syncDtStrszInFile_sections_size (e : ElfFile) :
+    (syncDtStrszInFile e).sections.size = e.sections.size := by
+  rcases syncDtStrszInFile_cases e with hEq | ⟨iDyn, hLt, dyn, nz, hContent, hEq⟩
+  · rw [hEq]
+  · rw [hEq]; simp
+
+/-- Per-section `offset` preserved (every index). -/
+theorem syncDtStrszInFile_sections_offset (e : ElfFile) (j : Nat)
+    (hj : j < (syncDtStrszInFile e).sections.size) (hjE : j < e.sections.size) :
+    ((syncDtStrszInFile e).sections[j]'hj).offset = (e.sections[j]'hjE).offset := by
+  rcases syncDtStrszInFile_cases e with hEq | ⟨iDyn, hLt, dyn, nz, hContent, hEq⟩
+  · simp only [hEq]
+  · simp only [hEq] at hj ⊢
+    exact ElfFile.updateSectionContent_offset e iDyn _ j hjE hj
+
+/-- Per-section `type` preserved (the map keeps `.dynamic`). -/
+theorem syncDtStrszInFile_sections_type (e : ElfFile) (j : Nat)
+    (hj : j < (syncDtStrszInFile e).sections.size) (hjE : j < e.sections.size) :
+    ((syncDtStrszInFile e).sections[j]'hj).type = (e.sections[j]'hjE).type := by
+  rcases syncDtStrszInFile_cases e with hEq | ⟨iDyn, hLt, dyn, nz, hContent, hEq⟩
+  · simp only [hEq]
+  · simp only [hEq] at hj ⊢
+    by_cases hji : j = iDyn
+    · subst hji
+      rw [ElfFile.updateSectionContent_type_self e j _ hjE hj]
+      simp [SectionContent.type, Section.type, hContent]
+    · exact ElfFile.updateSectionContent_type e iDyn _ j hjE hji hj
+
+/-- Per-section `encodedSize` preserved (same-size `Array.map`). -/
+theorem syncDtStrszInFile_sections_encodedSize (e : ElfFile) (j : Nat)
+    (hj : j < (syncDtStrszInFile e).sections.size) (hjE : j < e.sections.size) :
+    ((syncDtStrszInFile e).sections[j]'hj).encodedSize = (e.sections[j]'hjE).encodedSize := by
+  rcases syncDtStrszInFile_cases e with hEq | ⟨iDyn, hLt, dyn, nz, hContent, hEq⟩
+  · simp only [hEq]
+  · simp only [hEq] at hj ⊢
+    show ((e.updateSectionContent iDyn (.dynamic (dyn.map (syncDtStrszEntry nz)))).sections[j]'hj).encodedSize = _
+    exact updateSectionContent_dynamic_map_encodedSize_eq e iDyn hLt dyn hContent
+      (syncDtStrszEntry nz) j hjE hj
+
+/-- `dynamicIdx` preserved (the updated content is still `.dynamic`). -/
+theorem syncDtStrszInFile_dynamicIdx (e : ElfFile) :
+    (syncDtStrszInFile e).dynamicIdx = e.dynamicIdx := by
+  rcases syncDtStrszInFile_cases e with hEq | ⟨iDyn, hLt, dyn, nz, hContent, hEq⟩
+  · rw [hEq]
+  · rw [hEq]
+    exact ElfFile.updateSectionContent_dynamicIdx e iDyn _ (by
+      intro hi; simp [SectionContent.type, Section.type, hContent])
+
+/-- `interpIdx` preserved (needs `iDyn ≠ shstrndx` from the dynstr witness). -/
+theorem syncDtStrszInFile_interpIdx (e : ElfFile)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (syncDtStrszInFile e).interpIdx = e.interpIdx := by
+  rcases syncDtStrszInFile_cases e with hEq | ⟨iDyn, hLt, dyn, nz, hContent, hEq⟩
+  · rw [hEq]
+  · rw [hEq]
+    have hShstrNe : iDyn ≠ e.header.shstrndx.toNat :=
+      ElfFile.shstrndx_ne_of_content_dynamic_of_dynstr e hLt hContent hDs
+    exact ElfFile.updateSectionContent_findIdxByName e iDyn _ _ hShstrNe
+
+/-- `syncDtStrszInFile` preserves `IsLoadable`.  Same `dynstr`
+    precondition as `_preserves_valid`/`syncDtAddrTagsInFile`
+    (yields `iDyn ≠ shstrndx`). -/
+theorem syncDtStrszInFile_preserves_loadable (e : ElfFile) (hLoad : e.IsLoadable)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (syncDtStrszInFile e).IsLoadable := by
+  have hPhdrs := syncDtStrszInFile_phdrs e
+  have hSecSz := syncDtStrszInFile_sections_size e
+  refine
+    { toIsValid := syncDtStrszInFile_preserves_valid e hLoad.toIsValid
+      sections_nonoverlapping := ?_
+      pt_interp_agrees := ?_
+      pt_dynamic_agrees := ?_
+      segment_congruent := ?_ }
+  · intro i hi j hj hNe
+    have hiE : i < e.sections.size := by rw [hSecSz] at hi; exact hi
+    have hjE : j < e.sections.size := by rw [hSecSz] at hj; exact hj
+    have hTi := syncDtStrszInFile_sections_type e i hi hiE
+    have hTj := syncDtStrszInFile_sections_type e j hj hjE
+    have hOi := syncDtStrszInFile_sections_offset e i hi hiE
+    have hOj := syncDtStrszInFile_sections_offset e j hj hjE
+    have hSi := syncDtStrszInFile_sections_encodedSize e i hi hiE
+    have hSj := syncDtStrszInFile_sections_encodedSize e j hj hjE
+    have hBase := hLoad.sections_nonoverlapping i hiE j hjE hNe
+    simp only [hTi, hTj, hOi, hOj, hSi, hSj]
+    exact hBase
+  · unfold ElfFile.ptInterpAgreement
+    rw [syncDtStrszInFile_interpIdx e hDs]
+    cases hI : e.interpIdx with
+    | none => trivial
+    | some iS =>
+      intro hLt iPh hPh hPhT
+      simp only [hPhdrs] at hPh hPhT ⊢
+      have hSecLtE : iS < e.sections.size := by rw [hSecSz] at hLt; exact hLt
+      rw [syncDtStrszInFile_sections_offset e iS hLt hSecLtE]
+      have hBase := hLoad.pt_interp_agrees
+      unfold ElfFile.ptInterpAgreement at hBase
+      rw [hI] at hBase
+      exact hBase hSecLtE iPh hPh hPhT
+  · unfold ElfFile.ptDynamicAgreement
+    rw [syncDtStrszInFile_dynamicIdx e]
+    cases hD : e.dynamicIdx with
+    | none => trivial
+    | some iS =>
+      intro hLt iPh hPh hPhT
+      simp only [hPhdrs] at hPh hPhT ⊢
+      have hSecLtE : iS < e.sections.size := by rw [hSecSz] at hLt; exact hLt
+      rw [syncDtStrszInFile_sections_offset e iS hLt hSecLtE]
+      have hBase := hLoad.pt_dynamic_agrees
+      unfold ElfFile.ptDynamicAgreement at hBase
+      rw [hD] at hBase
+      exact hBase hSecLtE iPh hPh hPhT
+  · unfold ElfFile.segmentCongruence
+    intro iPh hPh hPhT
+    simp only [hPhdrs] at hPh hPhT ⊢
+    exact hLoad.segment_congruent iPh hPh hPhT
+
 /-- The per-section step the encoder folds.  Extracted to a named def
     so foldl-induction proofs can match the function shape. -/
 def sectionFoldStep (buf : ByteArray) (s : Section) : ByteArray :=
