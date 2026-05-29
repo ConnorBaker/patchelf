@@ -34,7 +34,8 @@ namespace Patchelf.Elf.Adapter
 
 open Patchelf.Elf (ElfFile OsAbi ProgramHeader EncodePreconditions ParsedElf
                      parse encode prepLayoutForEncode syncDtStrszInFile
-                     parse_encode_roundtrip prepLayoutForEncode_produces_spliceRegionsDisjoint)
+                     parse_encode_roundtrip prepLayoutForEncode_produces_spliceRegionsDisjoint
+                     IdentBytesValid syncOk_of_normalized encode_eq_encode_normalized)
 open Patchelf.Elf.Layout (PhType ShType)
 
 /-! ## Generic phdrs-map preservation
@@ -239,5 +240,112 @@ theorem spliceRegionsDisjoint_of_structural (eo : ElfFile)
     (prepLayoutForEncode (syncDtStrszInFile eo)).spliceRegionsDisjoint :=
   prepLayoutForEncode_produces_spliceRegionsDisjoint (syncDtStrszInFile eo)
     hS0 hHP hHS hPS hHSec hPSec
+
+/-! ## Obligation C: `EncodePreconditions` on the normalized form
+
+    `encodePreconditions_of_layoutNormalized` assembles the full
+    `EncodePreconditions en` (`en := prepLayoutForEncode (syncDtStrszInFile
+    eo)`) from:
+
+    * **`syncOk`** — Obligation A (`syncOk_of_normalized`): the encoder's
+      first pre-pass rewrites every DT_STRSZ to `dynstr.bytes.size`, so
+      re-syncing `en` is a no-op.  Needs the dynstr witness + the
+      `dynstr.bytes.size < 2^64` fit.
+    * **`spliceDisjoint`** — `spliceRegionsDisjoint_of_structural` (§1.3a):
+      from the 6 structural input invariants on `syncDtStrszInFile eo`.
+    * **the 8 residual fields** (`identValid`, `sizeFit`, `nullEmpty`, the
+      three `headerFit_*`, `phdrFit`, `shdrFit`) — supplied as explicit
+      hypotheses *about the normalized form `en`*.
+
+    Why the residuals are hypotheses, not derived: `en` is an encoder
+    output whose offsets come from `growEOFWith`'s unbounded `roundUp`
+    arithmetic, so the position/size `< 2^64` bounds (`headerFit_phoff`,
+    `headerFit_shoff`, `phdrFit`, `shdrFit`'s `addr`/`offset`) are NOT
+    structurally derivable — every real ELF satisfies them and the runtime
+    `Validate.IsLoadableBytes` guard catches the pathological case at write
+    time, but the proof needs them stated.  `identValid` / `sizeFit` /
+    `nullEmpty` / `headerFit_entry` / `shdrFit`'s `addralign`/`entsize` are
+    in principle derivable through the pipeline's content/header
+    preservation (`growEOFWith_{header_ident,sections_size,…}`); bundling
+    them here keeps the single residual surface, pending the per-section
+    getElem-dispatch plumbing.  See `-- TODO §5.1` below.
+
+    TODO §5.1: derive `identValid` (← `growEOFWith_header_ident` + the
+    `syncDt*` header-preservation lemmas), `headerFit_entry`
+    (← `growEOFWith_header_entry`), and `sizeFit`/`nullEmpty`
+    (← per-section `content` preservation) so ops supply only the genuine
+    position bounds.  Blocked on a robust `growEOFWith_sections_content`
+    dispatch: `cases`/`by_cases` on the layout-branch discriminants fails
+    with "motive is not type correct" against the dependent
+    `hj : j < (growEOFWith …).sections.size` bound, and the let-bound
+    discriminants in the inlined `growEOFWith` body don't match the
+    expanded `hExt` form that the projection dispatches
+    (`growEOFWith_dynstr`/`_header_ident`) rely on. -/
+theorem encodePreconditions_of_layoutNormalized (eo : ElfFile)
+    {ds : Patchelf.Elf.StringTable} (hDs : eo.dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size)
+    -- structural input invariants (→ spliceDisjoint via §1.3a):
+    (hS0 : ∀ (h : 0 < (syncDtStrszInFile eo).sections.size),
+      ((syncDtStrszInFile eo).sections[0]'h).type = ShType.SHT_NULL)
+    (hHP : (syncDtStrszInFile eo).headerPhdrDisjoint)
+    (hHS : (syncDtStrszInFile eo).headerShdrDisjoint)
+    (hPS : (syncDtStrszInFile eo).phdrShdrDisjoint)
+    (hHSec : (syncDtStrszInFile eo).headerSectionDisjoint)
+    (hPSec : (syncDtStrszInFile eo).phdrSectionDisjoint)
+    -- residual fit/validity fields on the normalized form (see docstring):
+    (hIdent : IdentBytesValid (prepLayoutForEncode (syncDtStrszInFile eo)))
+    (hSizeFit : ∀ (i : Nat) (h : i < (prepLayoutForEncode (syncDtStrszInFile eo)).sections.size),
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).shdrSize < UInt64.size)
+    (hNullEmpty : ∀ (i : Nat) (h : i < (prepLayoutForEncode (syncDtStrszInFile eo)).sections.size),
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).type = ShType.SHT_NULL →
+      ∃ ty hOk bs, ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).content
+        = .raw ty hOk bs ∧ bs.size = 0)
+    (hHdrEntry : (prepLayoutForEncode (syncDtStrszInFile eo)).header.entry.val < UInt64.size)
+    (hHdrPhoff : (prepLayoutForEncode (syncDtStrszInFile eo)).header.phoff.val < UInt64.size)
+    (hHdrShoff : (prepLayoutForEncode (syncDtStrszInFile eo)).header.shoff.val < UInt64.size)
+    (hPhdrFit : ∀ (i : Nat) (h : i < (prepLayoutForEncode (syncDtStrszInFile eo)).phdrs.size),
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).phdrs[i]'h).offset.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).phdrs[i]'h).vaddr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).phdrs[i]'h).paddr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).phdrs[i]'h).filesz.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).phdrs[i]'h).memsz.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).phdrs[i]'h).align.val < UInt64.size)
+    (hShdrFit : ∀ (i : Nat) (h : i < (prepLayoutForEncode (syncDtStrszInFile eo)).sections.size),
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).addr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).offset.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).addralign.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).entsize.val < UInt64.size) :
+    EncodePreconditions (prepLayoutForEncode (syncDtStrszInFile eo)) where
+  syncOk := syncOk_of_normalized eo hDs hFit
+  spliceDisjoint := spliceRegionsDisjoint_of_structural eo hS0 hHP hHS hPS hHSec hPSec
+  identValid := hIdent
+  sizeFit := hSizeFit
+  nullEmpty := hNullEmpty
+  headerFit_entry := hHdrEntry
+  headerFit_phoff := hHdrPhoff
+  headerFit_shoff := hHdrShoff
+  phdrFit := hPhdrFit
+  shdrFit := hShdrFit
+
+/-! ## Composed per-op Tier-D round-trip driver
+
+    `tierD_roundtrip` glues all three obligations + the §1.2 validity
+    ladder + the scaffold into a single entry point: given a loadable op
+    output `eo` with the structural input invariants (parser-derivable for
+    ops that don't widen the file) and the residual fit bounds on its
+    normalized form, the encoded bytes parse back to the normalized form.
+
+    An op proves its Tier D by:
+      1. establishing `eo`'s structural invariants + dynstr witness, and
+      2. supplying the residual fit bounds (or the explicit < 2^64 file
+         hypothesis), then calling this driver. -/
+theorem tierD_roundtrip (eo : ElfFile)
+    (hValEn : (prepLayoutForEncode (syncDtStrszInFile eo)).IsValid)
+    (hPreEn : EncodePreconditions (prepLayoutForEncode (syncDtStrszInFile eo)))
+    {ds : Patchelf.Elf.StringTable} (hDs : eo.dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size) :
+    parse (encode eo) = .ok ⟨prepLayoutForEncode (syncDtStrszInFile eo), hValEn⟩ :=
+  encode_roundtrip_via_normalized eo hValEn hPreEn
+    (encode_eq_encode_normalized eo hDs hFit hPreEn.spliceDisjoint)
 
 end Patchelf.Elf.Adapter
