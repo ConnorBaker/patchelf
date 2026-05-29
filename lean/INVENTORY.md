@@ -1086,7 +1086,6 @@ growing op named in PLAN-GROWING-OPS now has a Tier-D round-trip capstone.
 
 ## Summary statistics
 
-- **Files scanned:** 48 Lean files
 - **`sorry` placeholders:** 0
 - **`axiom` declarations:** 0
 - **Master theorem:** `parse_encode_roundtrip` at `Elf/ByteRoundtrip.lean:2327`
