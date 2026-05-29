@@ -242,7 +242,7 @@ theorem idForIn_proj_size_le {α σ β : Type} (as : Array α)
       | done b => simp only [ForInStep.value]; omega)
   simpa using this
 
-/-- Surgical patch of a byte-layer dynamic entry array to reflect the typed's changes.
+/-! ## `patchDynamicEntries`: surgical patch of a byte-layer dynamic entry array.
 
     Key design property: POSITIONAL — every byte-layer DT_NEEDED entry is
     rewritten IN PLACE based on the typed `needed[i]` at the same index.
@@ -250,103 +250,289 @@ theorem idForIn_proj_size_le {α σ β : Type} (as : Array α)
     dynamic `[libfoo, libbar]` renamed `libfoo→libbrand` must produce
     `[libbrand, libbar]`, not `[libbar, libbrand]`).
 
-    Pre-op dynamic entries are matched positionally to the typed `needed` array:
-    the N-th DT_NEEDED pre-op becomes the N-th entry in the typed `.needed`. -/
+    Pre-op dynamic entries are matched positionally to the typed `needed`
+    array: the N-th DT_NEEDED pre-op becomes the N-th entry in the typed
+    `.needed`.
+
+    Implementation note: this was originally a single `Id.run do … for …
+    while … unless …` block.  It is now split into a pure loop fold
+    (`patchStep` over `byteDyn`) plus explicit tail-append helpers
+    (`appendSurplusNeeded` for the `while`, `appendUnless` for the five
+    trailing `unless`-blocks).  The two forms are byte-identical (no theorem
+    or test depends on the internal shape); the compositional form is what
+    lets the §5.1 output-size bound (`patchDynamicEntries_stripRpath_size_le`)
+    compose — the desugared `do`-block's `__do_jp` join-points defeated the
+    size induction. -/
+
+/-- Loop-carried state for the positional dynamic patch: the running
+    `result`, the NEEDED positional cursor, the five "already applied"
+    flags for the trailing-append blocks, and the carried DT_NULL entry. -/
+structure PatchState (ds : StringSection) where
+  result         : Array DynEntry
+  typedNeededIdx : Nat
+  flags1Applied  : Bool
+  debugApplied   : Bool
+  rpathApplied   : Bool
+  runpathApplied : Bool
+  sonameApplied  : Bool
+  nullEntry      : DynEntry
+
+/-- Per-entry loop step (pure).  Mirrors the original `for`-loop body:
+    DT_NULL is carried (last wins), DT_NEEDED is positionally matched to
+    `typed.needed[typedNeededIdx]`, the singleton string-ref / scalar tags
+    push their typed value (recording the corresponding `*Applied` flag),
+    and every other tag is preserved verbatim. -/
+def patchStep {ds : StringSection} (typed : DynamicSection ds)
+    (st : PatchState ds) (d : DynEntry) : PatchState ds :=
+  match d.tag with
+  | .null => { st with nullEntry := d }
+  | .needed =>
+      if hLt : st.typedNeededIdx < typed.needed.size then
+        { st with
+            result := st.result.push { d with value := (typed.needed[st.typedNeededIdx]'hLt).val.toUInt64 }
+            typedNeededIdx := st.typedNeededIdx + 1 }
+      else st
+  | .rpath =>
+      match typed.rpath with
+      | some off => { st with result := st.result.push { d with value := off.val.toUInt64 }, rpathApplied := true }
+      | none => st
+  | .runpath =>
+      match typed.runpath with
+      | some off => { st with result := st.result.push { d with value := off.val.toUInt64 }, runpathApplied := true }
+      | none => st
+  | .soname =>
+      match typed.soname with
+      | some off => { st with result := st.result.push { d with value := off.val.toUInt64 }, sonameApplied := true }
+      | none => st
+  | .flags1 =>
+      match typed.flags1 with
+      | some v => { st with result := st.result.push { d with value := v }, flags1Applied := true }
+      | none => st
+  | .debug =>
+      match typed.debug with
+      | some v => { st with result := st.result.push { d with value := v }, debugApplied := true }
+      | none => st
+  | _ => { st with result := st.result.push d }
+
+/-- Initial loop state (empty result, cursor 0, no flags applied, default
+    DT_NULL). -/
+def patchInit (ds : StringSection) : PatchState ds where
+  result         := #[]
+  typedNeededIdx := 0
+  flags1Applied  := false
+  debugApplied   := false
+  rpathApplied   := false
+  runpathApplied := false
+  sonameApplied  := false
+  nullEntry      := { tag := Patchelf.Elf.DynTag.null, value := 0 }
+
+/-- Append the typed NEEDED entries the loop did not consume (the original
+    trailing `while`: `typed` has more DT_NEEDED than the byte template, i.e.
+    the addNeeded path).  Folds over `range (needed.size - startIdx)`. -/
+def appendSurplusNeeded {ds : StringSection} (typed : DynamicSection ds)
+    (result : Array DynEntry) (startIdx : Nat) : Array DynEntry :=
+  (List.range (typed.needed.size - startIdx)).foldl
+    (fun acc k =>
+      let i := startIdx + k
+      if h : i < typed.needed.size then
+        acc.push { tag := Patchelf.Elf.DynTag.needed, value := (typed.needed[i]'h).val.toUInt64 }
+      else acc)
+    result
+
+/-- One trailing `unless`-block: append a `{tag, v}` entry iff the field was
+    not already applied in the loop and the typed bundle carries a value. -/
+def appendUnless (applied : Bool) (result : Array DynEntry)
+    (tag : DynTag) (val? : Option UInt64) : Array DynEntry :=
+  if applied then result
+  else match val? with
+       | some v => result.push { tag := tag, value := v }
+       | none   => result
+
 def patchDynamicEntries {ds : StringSection} (byteDyn : Array DynEntry)
-    (typed : DynamicSection ds) : Array DynEntry := Id.run do
-  -- Count pre-op DT_NEEDED entries for positional pairing.  Ops never
-  -- reorder: the typed `.needed`[i] corresponds to the i-th pre-op DT_NEEDED entry
-  -- (for entries the typed version still contains; surplus go to the end).
-  let mut result : Array DynEntry := #[]
-  let mut typedNeededIdx : Nat := 0
-  let mut flags1Applied := false
-  let mut debugApplied := false
-  let mut rpathApplied := false
-  let mut runpathApplied := false
-  let mut sonameApplied := false
-  let mut nullEntry : DynEntry := { tag := Patchelf.Elf.DynTag.null, value := 0 }
-  for d in byteDyn do
-    match d.tag with
-    | .null =>
-        nullEntry := d
-    | .needed =>
-        -- Positional match: take the typed needed[typedNeededIdx] (if any).
-        -- Extra pre-op entries (typed dropped some) get filtered; extra typed
-        -- entries (typed added some) are appended after the loop.
-        if hLt : typedNeededIdx < typed.needed.size then
-          let off := (typed.needed[typedNeededIdx]'hLt).val.toUInt64
-          result := result.push { d with value := off }
-          typedNeededIdx := typedNeededIdx + 1
-        -- else: typed has fewer NEEDED entries than pre-op (remove-needed) → skip.
-    | .rpath =>
-        match typed.rpath with
-        | some off =>
-            result := result.push { d with value := off.val.toUInt64 }
-            rpathApplied := true
-        | none => pure ()
-    | .runpath =>
-        match typed.runpath with
-        | some off =>
-            result := result.push { d with value := off.val.toUInt64 }
-            runpathApplied := true
-        | none => pure ()
-    | .soname =>
-        match typed.soname with
-        | some off =>
-            result := result.push { d with value := off.val.toUInt64 }
-            sonameApplied := true
-        | none => pure ()
-    | .flags1 =>
-        match typed.flags1 with
-        | some v =>
-            result := result.push { d with value := v }
-            flags1Applied := true
-        | none => pure ()
-    | .debug =>
-        match typed.debug with
-        | some v =>
-            result := result.push { d with value := v }
-            debugApplied := true
-        | none => pure ()
-    | _ =>
-        -- Other tags: preserve verbatim.
-        result := result.push d
-  -- Append any typed NEEDED entries we didn't consume (typed has more NEEDEDs
-  -- than pre-op → addNeeded path).
-  while h : typedNeededIdx < typed.needed.size do
-    let off := (typed.needed[typedNeededIdx]'h).val.toUInt64
-    result := result.push { tag := Patchelf.Elf.DynTag.needed, value := off }
-    typedNeededIdx := typedNeededIdx + 1
-  -- Append structured fields the typed ValidElfFile has but pre-op didn't.
-  unless flags1Applied do
-    match typed.flags1 with
-    | some v => result := result.push { tag := Patchelf.Elf.DynTag.flags1, value := v }
-    | none => pure ()
-  unless debugApplied do
-    match typed.debug with
-    | some v => result := result.push { tag := Patchelf.Elf.DynTag.debug, value := v }
-    | none => pure ()
-  unless rpathApplied do
-    match typed.rpath with
-    | some off =>
-        result := result.push
-          { tag := Patchelf.Elf.DynTag.rpath, value := off.val.toUInt64 }
-    | none => pure ()
-  unless runpathApplied do
-    match typed.runpath with
-    | some off =>
-        result := result.push
-          { tag := Patchelf.Elf.DynTag.runpath, value := off.val.toUInt64 }
-    | none => pure ()
-  unless sonameApplied do
-    match typed.soname with
-    | some off =>
-        result := result.push
-          { tag := Patchelf.Elf.DynTag.soname, value := off.val.toUInt64 }
-    | none => pure ()
-  -- Append DT_NULL terminator.
-  result := result.push nullEntry
-  return result
+    (typed : DynamicSection ds) : Array DynEntry :=
+  let st := byteDyn.foldl (patchStep typed) (patchInit ds)
+  let r := appendSurplusNeeded typed st.result st.typedNeededIdx
+  let r := appendUnless st.flags1Applied r Patchelf.Elf.DynTag.flags1 typed.flags1
+  let r := appendUnless st.debugApplied r Patchelf.Elf.DynTag.debug typed.debug
+  let r := appendUnless st.rpathApplied r Patchelf.Elf.DynTag.rpath (typed.rpath.map (·.val.toUInt64))
+  let r := appendUnless st.runpathApplied r Patchelf.Elf.DynTag.runpath (typed.runpath.map (·.val.toUInt64))
+  let r := appendUnless st.sonameApplied r Patchelf.Elf.DynTag.soname (typed.soname.map (·.val.toUInt64))
+  r.push st.nullEntry
+
+/-! ## `patchDynamicEntries` output-size bound for shrinking ops (§5.1)
+
+    A shrinking op (`removeRpath`/`removeNeeded`) feeds `patchDynamicEntries`
+    a typed section that is "field-wise smaller" than the no-op one, so its
+    byte output is no larger.  The bound below is *relative* — op output vs.
+    NO-OP output on the SAME `byteDyn` — which is exactly what the
+    `SectionOps.updateSectionContent_*Disjoint_shrink` lemmas consume (and is
+    provable with no parse-balance preconditions, unlike an absolute
+    `≤ byteDyn.size`).
+
+    The proof is a lockstep fold over `byteDyn` (`Array.foldl_rel`) that
+    tracks `ShrinkRel` (result no bigger + matching NEEDED cursor + matching
+    `flags1`/`debug`/`soname` applied-flags), followed by a tail bound:
+    `stripRpath` only nulls `rpath`/`runpath`, so its trailing `unless`-blocks
+    for those become no-ops while every other tail block is shared. -/
+
+/-- Relational fold (list form): if `R` is preserved by each step in lockstep
+    on the same element, `R` holds of the two folds' results. -/
+private theorem List.foldl_rel {α : Type} {S T : Type} (R : S → T → Prop)
+    (f : S → α → S) (g : T → α → T)
+    (hstep : ∀ s t a, R s t → R (f s a) (g t a)) :
+    ∀ (l : List α) (s0 : S) (t0 : T), R s0 t0 → R (l.foldl f s0) (l.foldl g t0) := by
+  intro l
+  induction l with
+  | nil => intro s0 t0 h0; simpa using h0
+  | cons a tl ih =>
+      intro s0 t0 h0
+      rw [List.foldl_cons, List.foldl_cons]
+      exact ih (f s0 a) (g t0 a) (hstep s0 t0 a h0)
+
+/-- Relational fold (array form): two array folds in lockstep preserve `R`. -/
+theorem Array.foldl_rel {α : Type} {S T : Type} (R : S → T → Prop)
+    (f : S → α → S) (g : T → α → T)
+    (hstep : ∀ s t a, R s t → R (f s a) (g t a))
+    (as : Array α) (s0 : S) (t0 : T) (h0 : R s0 t0) :
+    R (as.foldl f s0) (as.foldl g t0) := by
+  rw [← Array.foldl_toList, ← Array.foldl_toList]
+  exact List.foldl_rel R f g hstep as.toList s0 t0 h0
+
+/-- The relation carried by the lockstep loop fold for a shrinking op:
+    the op-side `result` is no bigger, and the NEEDED cursor + the three
+    applied-flags the tail blocks read agree. -/
+def ShrinkRel {ds : StringSection} (st2 st1 : PatchState ds) : Prop :=
+  st2.result.size ≤ st1.result.size ∧ st2.typedNeededIdx = st1.typedNeededIdx ∧
+  st2.flags1Applied = st1.flags1Applied ∧ st2.debugApplied = st1.debugApplied ∧
+  st2.sonameApplied = st1.sonameApplied
+
+/-- One loop step preserves `ShrinkRel` for the `stripRpath` shrink: the two
+    typed sections agree on `needed`/`soname`/`flags1`/`debug`, and `stripRpath`'s
+    `rpath`/`runpath` are `none` (so its `.rpath`/`.runpath` arms never push). -/
+theorem patchStep_shrink_rpath {ds : StringSection} (typed : DynamicSection ds)
+    (st2 st1 : PatchState ds) (d : DynEntry)
+    (hR : ShrinkRel st2 st1) :
+    ShrinkRel (patchStep typed.stripRpath st2 d) (patchStep typed st1 d) := by
+  obtain ⟨hSz, hIdx, _, _, _⟩ := hR
+  have hRp : (typed.stripRpath).rpath = none := rfl
+  have hRun : (typed.stripRpath).runpath = none := rfl
+  have hNd : (typed.stripRpath).needed = typed.needed := rfl
+  have hSn : (typed.stripRpath).soname = typed.soname := rfl
+  have hF1 : (typed.stripRpath).flags1 = typed.flags1 := rfl
+  have hDbg : (typed.stripRpath).debug = typed.debug := rfl
+  cases hd : d.tag <;>
+    simp only [patchStep, ShrinkRel, hd, hRp, hRun, hNd, hSn, hF1, hDbg, hIdx] <;>
+    (try split) <;>
+    refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;>
+    first
+      | (simp only [Array.size_push]; omega)
+      | omega
+      | assumption
+      | rfl
+      | simp_all
+
+/-- Loop-level shrink: the whole `byteDyn` fold preserves `ShrinkRel`. -/
+theorem loop_shrink_rpath {ds : StringSection} (typed : DynamicSection ds)
+    (byteDyn : Array DynEntry) :
+    ShrinkRel (byteDyn.foldl (patchStep typed.stripRpath) (patchInit ds))
+              (byteDyn.foldl (patchStep typed) (patchInit ds)) := by
+  apply Array.foldl_rel ShrinkRel (patchStep typed.stripRpath) (patchStep typed)
+    (fun s t a h => patchStep_shrink_rpath typed s t a h) byteDyn
+  exact ⟨Nat.le_refl _, rfl, rfl, rfl, rfl⟩
+
+/-- `appendSurplusNeeded` is size-monotone in the result it extends (the
+    surplus count `needed.size - startIdx` is shared; only the base differs). -/
+theorem appendSurplusNeeded_size_mono {ds : StringSection} (typed : DynamicSection ds)
+    (r2 r1 : Array DynEntry) (startIdx : Nat) (h : r2.size ≤ r1.size) :
+    (appendSurplusNeeded typed r2 startIdx).size
+      ≤ (appendSurplusNeeded typed r1 startIdx).size := by
+  unfold appendSurplusNeeded
+  apply List.foldl_rel (fun (a b : Array DynEntry) => a.size ≤ b.size)
+  · intro a b k hab
+    dsimp only
+    split <;> (try simp only [Array.size_push]) <;> omega
+  · exact h
+
+/-- `appendUnless` adds at most one entry. -/
+theorem appendUnless_size_le (applied : Bool) (result : Array DynEntry)
+    (tag : DynTag) (val? : Option UInt64) :
+    (appendUnless applied result tag val?).size ≤ result.size + 1 := by
+  unfold appendUnless
+  split
+  · omega
+  · split <;> (try simp only [Array.size_push]) <;> omega
+
+/-- `appendUnless` never shrinks the result. -/
+theorem appendUnless_size_ge (applied : Bool) (result : Array DynEntry)
+    (tag : DynTag) (val? : Option UInt64) :
+    result.size ≤ (appendUnless applied result tag val?).size := by
+  unfold appendUnless
+  split
+  · omega
+  · split <;> (try simp only [Array.size_push]) <;> omega
+
+/-- `appendUnless` with `none` value is a no-op on size. -/
+theorem appendUnless_size_none (applied : Bool) (result : Array DynEntry)
+    (tag : DynTag) :
+    (appendUnless applied result tag none).size = result.size := by
+  unfold appendUnless; split <;> rfl
+
+/-- `appendUnless` is size-monotone in its result argument. -/
+theorem appendUnless_size_mono (applied : Bool) (r2 r1 : Array DynEntry)
+    (tag : DynTag) (val? : Option UInt64) (h : r2.size ≤ r1.size) :
+    (appendUnless applied r2 tag val?).size ≤ (appendUnless applied r1 tag val?).size := by
+  unfold appendUnless
+  split
+  · exact h
+  · split <;> (try simp only [Array.size_push]) <;> omega
+
+/-- Tail bound: given the loop relation on two states with matching
+    `needed`/`soname`/`flags1`/`debug` and `rpath`/`runpath` cleared on the
+    `st2` (op) side, the full tail (surplus + 5 `unless`-blocks + null push)
+    of `st2` is no larger than `st1`'s.  This is the `removeRpath`-shaped tail;
+    `typed.{rpath,runpath}` on the `st2` side are `none`. -/
+theorem tail_shrink_rpath {ds : StringSection} (typed : DynamicSection ds)
+    (st2 st1 : PatchState ds) (hR : ShrinkRel st2 st1) :
+    (let r := appendSurplusNeeded typed st2.result st2.typedNeededIdx
+     let r := appendUnless st2.flags1Applied r DynTag.flags1 typed.flags1
+     let r := appendUnless st2.debugApplied r DynTag.debug typed.debug
+     let r := appendUnless st2.rpathApplied r DynTag.rpath (none : Option UInt64)
+     let r := appendUnless st2.runpathApplied r DynTag.runpath (none : Option UInt64)
+     let r := appendUnless st2.sonameApplied r DynTag.soname (typed.soname.map (·.val.toUInt64))
+     r.push st2.nullEntry).size
+      ≤
+    (let r := appendSurplusNeeded typed st1.result st1.typedNeededIdx
+     let r := appendUnless st1.flags1Applied r DynTag.flags1 typed.flags1
+     let r := appendUnless st1.debugApplied r DynTag.debug typed.debug
+     let r := appendUnless st1.rpathApplied r DynTag.rpath (typed.rpath.map (·.val.toUInt64))
+     let r := appendUnless st1.runpathApplied r DynTag.runpath (typed.runpath.map (·.val.toUInt64))
+     let r := appendUnless st1.sonameApplied r DynTag.soname (typed.soname.map (·.val.toUInt64))
+     r.push st1.nullEntry).size := by
+  obtain ⟨hSz, hIdx, hF1, hDbg, hSn⟩ := hR
+  simp only [Array.size_push, hIdx, hF1, hDbg, hSn]
+  refine Nat.add_le_add_right ?_ 1
+  -- soname layer: shared value → monotone in inner arg
+  refine appendUnless_size_mono _ _ _ _ _ ?_
+  -- LHS runpath + rpath are `none` → no-ops; drop both
+  rw [appendUnless_size_none, appendUnless_size_none]
+  -- RHS: the extra runpath then rpath unless-layers only grow size
+  refine Nat.le_trans ?_ (appendUnless_size_ge _ _ _ _)
+  refine Nat.le_trans ?_ (appendUnless_size_ge _ _ _ _)
+  -- debug + flags1 layers: shared → monotone; surplus: monotone via hSz
+  refine appendUnless_size_mono _ _ _ _ _ ?_
+  refine appendUnless_size_mono _ _ _ _ _ ?_
+  exact appendSurplusNeeded_size_mono _ _ _ _ hSz
+
+/-- §5.1 output-size bound for `removeRpath`: `stripRpath`'s byte output is
+    no larger than the no-op output on the same byte template.  Feeds the
+    `SectionOps` shrink-monotonicity lemmas for the per-op structural-invariant
+    discharge. -/
+theorem patchDynamicEntries_stripRpath_size_le {ds : StringSection}
+    (byteDyn : Array DynEntry) (typed : DynamicSection ds) :
+    (patchDynamicEntries byteDyn (typed.stripRpath)).size
+      ≤ (patchDynamicEntries byteDyn typed).size := by
+  unfold patchDynamicEntries
+  exact tail_shrink_rpath typed _ _ (loop_shrink_rpath typed byteDyn)
 
 /-! ## toElfFile section-update helpers.
 
