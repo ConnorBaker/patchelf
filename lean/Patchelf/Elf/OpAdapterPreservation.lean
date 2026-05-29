@@ -26,13 +26,16 @@ module
 public import Patchelf.Elf.AdapterRoundtrip
 public import Patchelf.Elf.Ops.OsAbi
 public import Patchelf.Elf.Ops.Execstack
+public import Patchelf.Elf.ByteRoundtrip
 
 @[expose] public section
 
 namespace Patchelf.Elf.Adapter
 
-open Patchelf.Elf (ElfFile OsAbi ProgramHeader)
-open Patchelf.Elf.Layout (PhType)
+open Patchelf.Elf (ElfFile OsAbi ProgramHeader EncodePreconditions ParsedElf
+                     parse encode prepLayoutForEncode syncDtStrszInFile
+                     parse_encode_roundtrip prepLayoutForEncode_produces_spliceRegionsDisjoint)
+open Patchelf.Elf.Layout (PhType ShType)
 
 /-! ## Generic phdrs-map preservation
 
@@ -178,5 +181,63 @@ theorem toElfFile_modifyExecstack_preserves_loadable (template : ElfFile)
   rw [toElfFile_modifyExecstack_eq]
   refine isLoadable_of_phdrs_map _ _ ?_ ?_ ?_ ?_ hLoad <;>
     (intro ph; split <;> first | rfl | (cases m <;> rfl))
+
+/-! ## Shared per-op Tier D scaffold (Tier 2/3 ops)
+
+    Tier 2/3 ops change byte-level section sizes (via `patchDynamicEntries`),
+    so their raw `toElfFile` output is NOT laid out — `encode` re-lays it out
+    through `prepLayoutForEncode ∘ syncDtStrszInFile`.  The meaningful claim
+    is therefore the full byte round-trip on the *normalized* form
+    `en := prepLayoutForEncode (syncDtStrszInFile eo)`, the structure
+    `encodeBody` actually serializes (`encode_eq`).
+
+    `encode_roundtrip_via_normalized` is the reusable spine: it reduces any
+    op's Tier D to three obligations on `en`, two of which are largely
+    landed:
+
+    * `hPreEn.spliceDisjoint` — discharged by
+      `spliceRegionsDisjoint_of_structural` below from the 5 structural input
+      invariants on `syncDtStrszInFile eo` (§1.3a's
+      `prepLayoutForEncode_produces_spliceRegionsDisjoint`).
+    * `hValEn` — `en.IsValid`, from the §1.2 `_preserves_valid` ladder
+      (`prepLayoutForEncode` + `syncDtStrszInFile` both preserve `IsValid`).
+    * `hIdem : encode eo = encode en` — the genuine remaining gap: the
+      pre-passes must be idempotent on `en` (so re-normalizing `en` is a
+      no-op and `encodeBody en` round-trips).  This + the residual
+      `EncodePreconditions` fields (`syncOk`/`identValid`/`sizeFit`/
+      `nullEmpty`/the `*Fit` bounds on the normalized form) are the open
+      core of ROADMAP §1.3/§5.1.  They are NOT parser-derivable here because
+      `en` is an encoder output, not a parse result. -/
+
+/-- The reusable Tier-D reduction: a byte round-trip for an arbitrary op
+    output `eo`, routed through its encoder-normalized form
+    `prepLayoutForEncode (syncDtStrszInFile eo)`.  Each op discharges
+    `hValEn` (§1.2), `hPreEn` (§1.3a + residual fields), and `hIdem`
+    (pre-pass idempotence). -/
+theorem encode_roundtrip_via_normalized (eo : ElfFile)
+    (hValEn : (prepLayoutForEncode (syncDtStrszInFile eo)).IsValid)
+    (hPreEn : EncodePreconditions (prepLayoutForEncode (syncDtStrszInFile eo)))
+    (hIdem : encode eo = encode (prepLayoutForEncode (syncDtStrszInFile eo))) :
+    parse (encode eo) = .ok ⟨prepLayoutForEncode (syncDtStrszInFile eo), hValEn⟩ := by
+  rw [hIdem]
+  exact parse_encode_roundtrip ⟨_, hValEn⟩ hPreEn
+
+/-- The hardest `EncodePreconditions` clause (`spliceDisjoint`) for the
+    normalized form, discharged from the 5 structural input invariants on
+    `syncDtStrszInFile eo` plus `hSection0Null`.  This is the §1.3a composed
+    API specialized to the encoder's normalized form; an op supplies these 6
+    facts about `syncDtStrszInFile eo` (parser-derivable for any op that
+    doesn't widen the file past `currentFileEnd`). -/
+theorem spliceRegionsDisjoint_of_structural (eo : ElfFile)
+    (hS0 : ∀ (h : 0 < (syncDtStrszInFile eo).sections.size),
+      ((syncDtStrszInFile eo).sections[0]'h).type = ShType.SHT_NULL)
+    (hHP : (syncDtStrszInFile eo).headerPhdrDisjoint)
+    (hHS : (syncDtStrszInFile eo).headerShdrDisjoint)
+    (hPS : (syncDtStrszInFile eo).phdrShdrDisjoint)
+    (hHSec : (syncDtStrszInFile eo).headerSectionDisjoint)
+    (hPSec : (syncDtStrszInFile eo).phdrSectionDisjoint) :
+    (prepLayoutForEncode (syncDtStrszInFile eo)).spliceRegionsDisjoint :=
+  prepLayoutForEncode_produces_spliceRegionsDisjoint (syncDtStrszInFile eo)
+    hS0 hHP hHS hPS hHSec hPSec
 
 end Patchelf.Elf.Adapter
