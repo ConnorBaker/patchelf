@@ -71,4 +71,6 @@ public import Patchelf.Elf.Ops.ClearSymbolVersion
 public import Patchelf.Elf.Ops.RenameDynamicSymbols
 public import Patchelf.Elf.Ops.Interpreter
 
+public import Patchelf.Elf.OpAdapterPreservation
+
 @[expose] public section
