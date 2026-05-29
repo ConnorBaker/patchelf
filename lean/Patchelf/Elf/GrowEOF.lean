@@ -1596,6 +1596,27 @@ theorem updateSectionContent_dynamic_map_encodedSize_eq
     simp [Array.size_map]
   · rw [ElfFile.updateSectionContent_getElem_ne _ _ _ _ hj hje hj']
 
+/-- `shdrSize` analog of `updateSectionContent_dynamic_map_encodedSize_eq`.
+    At the dyn index the content is `.dynamic _` (non-NOBITS) before and
+    after, so `shdrSize = encodedSize` and the `Array.map` preserves
+    `.size`; elsewhere the section is unchanged. -/
+theorem updateSectionContent_dynamic_map_shdrSize_eq
+    (e : ElfFile) (iDyn : Nat) (hLt : iDyn < e.sections.size)
+    (dyn : Array DynEntry)
+    (hContent : (e.sections[iDyn]'hLt).content = .dynamic dyn)
+    (f : DynEntry → DynEntry)
+    (j : Nat) (hj : j < e.sections.size)
+    (hj' : j < (e.updateSectionContent iDyn (.dynamic (dyn.map f))).sections.size) :
+    ((e.updateSectionContent iDyn (.dynamic (dyn.map f))).sections[j]'hj').shdrSize
+      = (e.sections[j]'hj).shdrSize := by
+  by_cases hje : j = iDyn
+  · subst hje
+    rw [ElfFile.updateSectionContent_getElem_self e j _ hLt hj']
+    unfold Section.shdrSize Section.encodedSize
+    rw [hContent]
+    simp [Array.size_map]
+  · rw [ElfFile.updateSectionContent_getElem_ne _ _ _ _ hj hje hj']
+
 /-! ## `syncDtAddrTagsInFile` preserves `spliceRegionsDisjoint`
 
     `syncDtAddrTagsInFile` either is a no-op (returning `e` unchanged) or
@@ -1753,6 +1774,17 @@ theorem syncDtAddrTagsInFile_sections_encodedSize (e : ElfFile) (j : Nat)
   · simp only [hEq]
   · simp only [hEq] at hj ⊢
     exact updateSectionContent_dynamic_map_encodedSize_eq e iDyn hLt dyn hContent
+      (syncDtAddrEntry e) j hjE hj
+
+/-- Per-section `shdrSize` preserved (the dyn-map keeps `.dynamic`, non-NOBITS,
+    so `shdrSize = encodedSize`, and `Array.map` preserves `.size`). -/
+theorem syncDtAddrTagsInFile_sections_shdrSize (e : ElfFile) (j : Nat)
+    (hj : j < (syncDtAddrTagsInFile e).sections.size) (hjE : j < e.sections.size) :
+    ((syncDtAddrTagsInFile e).sections[j]'hj).shdrSize = (e.sections[j]'hjE).shdrSize := by
+  rcases syncDtAddrTagsInFile_cases e with hEq | ⟨iDyn, hLt, dyn, hContent, hEq⟩
+  · simp only [hEq]
+  · simp only [hEq] at hj ⊢
+    exact updateSectionContent_dynamic_map_shdrSize_eq e iDyn hLt dyn hContent
       (syncDtAddrEntry e) j hjE hj
 
 /-- `interpIdx` preserved (needs `iDyn ≠ shstrndx` from the dynstr witness). -/

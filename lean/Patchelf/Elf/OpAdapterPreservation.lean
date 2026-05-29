@@ -38,7 +38,9 @@ open Patchelf.Elf (ElfFile OsAbi ProgramHeader EncodePreconditions ParsedElf
                      parse encode prepLayoutForEncode syncDtStrszInFile
                      parse_encode_roundtrip prepLayoutForEncode_produces_spliceRegionsDisjoint
                      IdentBytesValid syncOk_of_normalized encode_eq_encode_normalized
-                     prepLayout_syncDtStrsz_preserves_valid)
+                     prepLayout_syncDtStrsz_preserves_valid
+                     identValid_normalized_of_eo sizeFit_normalized_of_eo
+                     headerFit_entry_normalized_of_eo)
 open Patchelf.Elf.Layout (PhType ShType)
 
 /-! ## Generic phdrs-map preservation
@@ -256,34 +258,26 @@ theorem spliceRegionsDisjoint_of_structural (eo : ElfFile)
       `dynstr.bytes.size < 2^64` fit.
     * **`spliceDisjoint`** — `spliceRegionsDisjoint_of_structural` (§1.3a):
       from the 6 structural input invariants on `syncDtStrszInFile eo`.
-    * **the 8 residual fields** (`identValid`, `sizeFit`, `nullEmpty`, the
-      three `headerFit_*`, `phdrFit`, `shdrFit`) — supplied as explicit
+    * **`identValid` / `sizeFit` / `headerFit_entry`** — DERIVED from the
+      matching facts on `eo` via the pipeline's `header.ident` / `shdrSize`
+      / `header.entry` preservation (`{identValid,sizeFit,headerFit_entry}_
+      normalized_of_eo`, `ByteRoundtrip.lean`).  `shdrSize` is preserved
+      because `growEOFWith` only relocates sections (content-determined size)
+      and the `syncDt*` dyn-maps keep the dynamic section non-NOBITS.
+    * **the 5 remaining fields** (`nullEmpty`, `headerFit_phoff`,
+      `headerFit_shoff`, `phdrFit`, `shdrFit`) — supplied as explicit
       hypotheses *about the normalized form `en`*.
 
-    Why the residuals are hypotheses, not derived: `en` is an encoder
-    output whose offsets come from `growEOFWith`'s unbounded `roundUp`
-    arithmetic, so the position/size `< 2^64` bounds (`headerFit_phoff`,
-    `headerFit_shoff`, `phdrFit`, `shdrFit`'s `addr`/`offset`) are NOT
-    structurally derivable — every real ELF satisfies them and the runtime
-    `Validate.IsLoadableBytes` guard catches the pathological case at write
-    time, but the proof needs them stated.  `identValid` / `sizeFit` /
-    `nullEmpty` / `headerFit_entry` / `shdrFit`'s `addralign`/`entsize` are
-    in principle derivable through the pipeline's content/header
-    preservation (`growEOFWith_{header_ident,sections_size,…}`); bundling
-    them here keeps the single residual surface, pending the per-section
-    getElem-dispatch plumbing.  See `-- TODO §5.1` below.
-
-    TODO §5.1: derive `identValid` (← `growEOFWith_header_ident` + the
-    `syncDt*` header-preservation lemmas), `headerFit_entry`
-    (← `growEOFWith_header_entry`), and `sizeFit`/`nullEmpty`
-    (← per-section `content` preservation) so ops supply only the genuine
-    position bounds.  Blocked on a robust `growEOFWith_sections_content`
-    dispatch: `cases`/`by_cases` on the layout-branch discriminants fails
-    with "motive is not type correct" against the dependent
-    `hj : j < (growEOFWith …).sections.size` bound, and the let-bound
-    discriminants in the inlined `growEOFWith` body don't match the
-    expanded `hExt` form that the projection dispatches
-    (`growEOFWith_dynstr`/`_header_ident`) rely on. -/
+    Why those five stay hypotheses: `en` is an encoder output whose offsets
+    come from `growEOFWith`'s unbounded `roundUp` arithmetic, so the
+    position/size `< 2^64` bounds (`headerFit_phoff`, `headerFit_shoff`,
+    `phdrFit`, `shdrFit`'s `addr`/`offset`) are NOT structurally derivable —
+    every real ELF satisfies them and the runtime `Validate.IsLoadableBytes`
+    guard catches the pathological case at write time, but the proof needs
+    them stated.  `nullEmpty` is in-principle derivable (content at a NULL
+    section index is preserved, since the dyn-maps only touch the
+    SHT_DYNAMIC index ≠ NULL) but needs the per-index content-vs-dyn
+    argument; left as a hypothesis for now. -/
 theorem encodePreconditions_of_layoutNormalized (eo : ElfFile)
     {ds : Patchelf.Elf.StringTable} (hDs : eo.dynstr = some ds)
     (hFit : ds.bytes.size < UInt64.size)
@@ -295,15 +289,16 @@ theorem encodePreconditions_of_layoutNormalized (eo : ElfFile)
     (hPS : (syncDtStrszInFile eo).phdrShdrDisjoint)
     (hHSec : (syncDtStrszInFile eo).headerSectionDisjoint)
     (hPSec : (syncDtStrszInFile eo).phdrSectionDisjoint)
-    -- residual fit/validity fields on the normalized form (see docstring):
-    (hIdent : IdentBytesValid (prepLayoutForEncode (syncDtStrszInFile eo)))
-    (hSizeFit : ∀ (i : Nat) (h : i < (prepLayoutForEncode (syncDtStrszInFile eo)).sections.size),
-      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).shdrSize < UInt64.size)
+    -- DERIVED-from-eo fields: identValid / sizeFit / headerFit_entry:
+    (hIdentEo : IdentBytesValid eo)
+    (hSizeFitEo : ∀ (i : Nat) (h : i < eo.sections.size),
+      (eo.sections[i]'h).shdrSize < UInt64.size)
+    (hHdrEntryEo : eo.header.entry.val < UInt64.size)
+    -- residual position bounds + nullEmpty on the normalized form (see docstring):
     (hNullEmpty : ∀ (i : Nat) (h : i < (prepLayoutForEncode (syncDtStrszInFile eo)).sections.size),
       ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).type = ShType.SHT_NULL →
       ∃ ty hOk bs, ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).content
         = .raw ty hOk bs ∧ bs.size = 0)
-    (hHdrEntry : (prepLayoutForEncode (syncDtStrszInFile eo)).header.entry.val < UInt64.size)
     (hHdrPhoff : (prepLayoutForEncode (syncDtStrszInFile eo)).header.phoff.val < UInt64.size)
     (hHdrShoff : (prepLayoutForEncode (syncDtStrszInFile eo)).header.shoff.val < UInt64.size)
     (hPhdrFit : ∀ (i : Nat) (h : i < (prepLayoutForEncode (syncDtStrszInFile eo)).phdrs.size),
@@ -321,10 +316,10 @@ theorem encodePreconditions_of_layoutNormalized (eo : ElfFile)
     EncodePreconditions (prepLayoutForEncode (syncDtStrszInFile eo)) where
   syncOk := syncOk_of_normalized eo hDs hFit
   spliceDisjoint := spliceRegionsDisjoint_of_structural eo hS0 hHP hHS hPS hHSec hPSec
-  identValid := hIdent
-  sizeFit := hSizeFit
+  identValid := identValid_normalized_of_eo eo hIdentEo
+  sizeFit := sizeFit_normalized_of_eo eo hSizeFitEo
   nullEmpty := hNullEmpty
-  headerFit_entry := hHdrEntry
+  headerFit_entry := headerFit_entry_normalized_of_eo eo hHdrEntryEo
   headerFit_phoff := hHdrPhoff
   headerFit_shoff := hHdrShoff
   phdrFit := hPhdrFit

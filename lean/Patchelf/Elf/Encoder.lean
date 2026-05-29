@@ -543,6 +543,18 @@ theorem syncDtStrszInFile_sections_encodedSize (e : ElfFile) (j : Nat)
     exact updateSectionContent_dynamic_map_encodedSize_eq e iDyn hLt dyn hContent
       (syncDtStrszEntry nz) j hjE hj
 
+/-- Per-section `shdrSize` preserved (same-size `Array.map`, content stays
+    `.dynamic` so non-NOBITS). -/
+theorem syncDtStrszInFile_sections_shdrSize (e : ElfFile) (j : Nat)
+    (hj : j < (syncDtStrszInFile e).sections.size) (hjE : j < e.sections.size) :
+    ((syncDtStrszInFile e).sections[j]'hj).shdrSize = (e.sections[j]'hjE).shdrSize := by
+  rcases syncDtStrszInFile_cases e with hEq | ⟨iDyn, hLt, dyn, nz, hContent, hEq⟩
+  · simp only [hEq]
+  · simp only [hEq] at hj ⊢
+    show ((e.updateSectionContent iDyn (.dynamic (dyn.map (syncDtStrszEntry nz)))).sections[j]'hj).shdrSize = _
+    exact updateSectionContent_dynamic_map_shdrSize_eq e iDyn hLt dyn hContent
+      (syncDtStrszEntry nz) j hjE hj
+
 /-- `dynamicIdx` preserved (the updated content is still `.dynamic`). -/
 theorem syncDtStrszInFile_dynamicIdx (e : ElfFile) :
     (syncDtStrszInFile e).dynamicIdx = e.dynamicIdx := by
@@ -1063,6 +1075,105 @@ theorem prepLayout_syncDtStrsz_preserves_valid (e : ElfFile)
     rw [syncDtStrszInFile_dynstr_eq]; exact hDs
   exact prepLayoutForEncode_preserves_valid (syncDtStrszInFile e) hVal'
     (by rw [syncDtStrszInFile_phdrs]; exact hPhdrFit) hDs'
+
+/-! ## Per-section `shdrSize` / `type` + header preservation through the
+    pre-encode pipeline (§5.1 Obligation C residuals).
+
+    Compose the `growEOFWith` content-preservation lemmas with the
+    `syncDtAddrTagsInFile` / `syncDtStrszInFile` dyn-map lemmas.  Threaded
+    via the `prepLayoutForEncode e = syncDtAddrTagsInFile (growEOFWith none
+    e)` equation (`he`), rewriting the `getElem` term and deriving the inner
+    bounds from `*_sections_size` — avoids unfolding the dependent bound. -/
+
+@[simp] theorem prepLayoutForEncode_sections_size (e : ElfFile) :
+    (prepLayoutForEncode e).sections.size = e.sections.size := by
+  unfold prepLayoutForEncode prepLayoutForEncodeWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]
+  · simp only [hLay, Bool.false_eq_true, ↓reduceIte,
+      syncDtAddrTagsInFile_sections_size, growEOFWith_sections_size]
+
+theorem prepLayoutForEncode_sections_shdrSize (e : ElfFile) (j : Nat)
+    (hj : j < (prepLayoutForEncode e).sections.size) (hjE : j < e.sections.size) :
+    ((prepLayoutForEncode e).sections[j]'hj).shdrSize = (e.sections[j]'hjE).shdrSize := by
+  by_cases hLay : layoutAlreadyValid e = true
+  · have he : prepLayoutForEncode e = e := prepLayoutForEncode_of_layoutAlreadyValid hLay
+    simp only [he]
+  · have he : prepLayoutForEncode e = syncDtAddrTagsInFile (growEOFWith none e) := by
+      unfold prepLayoutForEncode prepLayoutForEncodeWith
+      simp only [hLay, Bool.false_eq_true, ↓reduceIte]
+    have hjG : j < (growEOFWith none e).sections.size := by rwa [growEOFWith_sections_size]
+    have hjA : j < (syncDtAddrTagsInFile (growEOFWith none e)).sections.size := by
+      rwa [syncDtAddrTagsInFile_sections_size]
+    rw [show ((prepLayoutForEncode e).sections[j]'hj)
+          = ((syncDtAddrTagsInFile (growEOFWith none e)).sections[j]'hjA) from by simp only [he]]
+    rw [syncDtAddrTagsInFile_sections_shdrSize (growEOFWith none e) j hjA hjG]
+    rw [growEOFWith_sections_shdrSize none e j hjG hjE]
+
+theorem prepLayoutForEncode_sections_type (e : ElfFile) (j : Nat)
+    (hj : j < (prepLayoutForEncode e).sections.size) (hjE : j < e.sections.size) :
+    ((prepLayoutForEncode e).sections[j]'hj).type = (e.sections[j]'hjE).type := by
+  by_cases hLay : layoutAlreadyValid e = true
+  · have he : prepLayoutForEncode e = e := prepLayoutForEncode_of_layoutAlreadyValid hLay
+    simp only [he]
+  · have he : prepLayoutForEncode e = syncDtAddrTagsInFile (growEOFWith none e) := by
+      unfold prepLayoutForEncode prepLayoutForEncodeWith
+      simp only [hLay, Bool.false_eq_true, ↓reduceIte]
+    have hjG : j < (growEOFWith none e).sections.size := by rwa [growEOFWith_sections_size]
+    have hjA : j < (syncDtAddrTagsInFile (growEOFWith none e)).sections.size := by
+      rwa [syncDtAddrTagsInFile_sections_size]
+    rw [show ((prepLayoutForEncode e).sections[j]'hj)
+          = ((syncDtAddrTagsInFile (growEOFWith none e)).sections[j]'hjA) from by simp only [he]]
+    rw [syncDtAddrTagsInFile_sections_type (growEOFWith none e) j hjA hjG]
+    rw [growEOFWith_sections_type none e j hjG hjE]
+
+@[simp] theorem prepLayoutForEncode_header_ident (e : ElfFile) :
+    (prepLayoutForEncode e).header.ident = e.header.ident := by
+  unfold prepLayoutForEncode prepLayoutForEncodeWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]
+  · simp only [hLay, Bool.false_eq_true, ↓reduceIte,
+      syncDtAddrTagsInFile_header, growEOFWith_header_ident]
+
+@[simp] theorem prepLayoutForEncode_header_entry (e : ElfFile) :
+    (prepLayoutForEncode e).header.entry = e.header.entry := by
+  unfold prepLayoutForEncode prepLayoutForEncodeWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]
+  · simp only [hLay, Bool.false_eq_true, ↓reduceIte,
+      syncDtAddrTagsInFile_header, growEOFWith_header_entry]
+
+/-- `shdrSize` preserved through the FULL pre-encode pipeline. -/
+theorem prepLayout_syncDtStrsz_sections_shdrSize (e : ElfFile) (j : Nat)
+    (hj : j < (prepLayoutForEncode (syncDtStrszInFile e)).sections.size)
+    (hjE : j < e.sections.size) :
+    ((prepLayoutForEncode (syncDtStrszInFile e)).sections[j]'hj).shdrSize
+      = (e.sections[j]'hjE).shdrSize := by
+  have hjS : j < (syncDtStrszInFile e).sections.size := by rwa [syncDtStrszInFile_sections_size]
+  rw [prepLayoutForEncode_sections_shdrSize (syncDtStrszInFile e) j hj hjS]
+  rw [syncDtStrszInFile_sections_shdrSize e j hjS hjE]
+
+/-- `type` preserved through the FULL pre-encode pipeline. -/
+theorem prepLayout_syncDtStrsz_sections_type (e : ElfFile) (j : Nat)
+    (hj : j < (prepLayoutForEncode (syncDtStrszInFile e)).sections.size)
+    (hjE : j < e.sections.size) :
+    ((prepLayoutForEncode (syncDtStrszInFile e)).sections[j]'hj).type
+      = (e.sections[j]'hjE).type := by
+  have hjS : j < (syncDtStrszInFile e).sections.size := by rwa [syncDtStrszInFile_sections_size]
+  rw [prepLayoutForEncode_sections_type (syncDtStrszInFile e) j hj hjS]
+  rw [syncDtStrszInFile_sections_type e j hjS hjE]
+
+@[simp] theorem prepLayout_syncDtStrsz_sections_size (e : ElfFile) :
+    (prepLayoutForEncode (syncDtStrszInFile e)).sections.size = e.sections.size := by
+  rw [prepLayoutForEncode_sections_size, syncDtStrszInFile_sections_size]
+
+@[simp] theorem prepLayout_syncDtStrsz_header_ident (e : ElfFile) :
+    (prepLayoutForEncode (syncDtStrszInFile e)).header.ident = e.header.ident := by
+  rw [prepLayoutForEncode_header_ident, syncDtStrszInFile_header]
+
+@[simp] theorem prepLayout_syncDtStrsz_header_entry (e : ElfFile) :
+    (prepLayoutForEncode (syncDtStrszInFile e)).header.entry = e.header.entry := by
+  rw [prepLayoutForEncode_header_entry, syncDtStrszInFile_header]
 
 /-- `prepLayoutForEncode` preserves `.dynstr`.  Fast path is identity; the
     layout path composes `growEOFWith_dynstr` + `syncDtAddrTagsInFile_dynstr`.

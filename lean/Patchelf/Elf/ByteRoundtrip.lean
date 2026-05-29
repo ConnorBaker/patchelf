@@ -2396,6 +2396,68 @@ theorem identBytesValid_of_header (e e' : ElfFile) (hHdr : e.header = e'.header)
   · exact hC
   · exact hD
 
+/-- `IdentBytesValid` keyed on `header.ident` equality (weaker than full
+    `header` equality — the pre-encode pipeline changes `phoff`/`shoff`/`phnum`
+    but preserves `ident`).  Used by §5.1 Obligation C to derive `identValid`
+    on the normalized form. -/
+theorem identBytesValid_of_ident_eq (e e' : ElfFile)
+    (hId : e'.header.ident = e.header.ident) (h : IdentBytesValid e) :
+    IdentBytesValid e' := by
+  have hSize : e'.header.ident.head.size = 7 := by rw [hId]; exact h.head_size
+  refine {
+    head_size := hSize
+    byte0 := ?_, byte1 := ?_, byte2 := ?_, byte3 := ?_
+    classByte := ?_, dataByte := ?_ }
+  all_goals
+    show e'.header.ident.head[_]'(by rw [hSize]; decide) = _
+  all_goals
+    have hHead : e'.header.ident.head = e.header.ident.head := by rw [hId]
+    have h0 := h.byte0
+    have h1 := h.byte1
+    have h2 := h.byte2
+    have h3 := h.byte3
+    have hC := h.classByte
+    have hD := h.dataByte
+    simp only [hHead]
+  · exact h0
+  · exact h1
+  · exact h2
+  · exact h3
+  · exact hC
+  · exact hD
+
+/-! ## §5.1 Obligation C residual derivations on the normalized form
+
+    These derive three of the eight residual `EncodePreconditions` fields on
+    `en := prepLayoutForEncode (syncDtStrszInFile eo)` from the matching
+    facts on `eo`, via the pipeline's `ident` / `entry` / `shdrSize`
+    preservation (`prepLayout_syncDtStrsz_{header_ident,header_entry,
+    sections_shdrSize}`).  The remaining five (`nullEmpty`, `headerFit_phoff/
+    shoff`, `phdrFit`, `shdrFit` addr/offset) stay hypotheses — the position
+    bounds are non-derivable and `nullEmpty` needs the per-index
+    content-vs-dyn argument. -/
+
+/-- `identValid` on `en` from `identValid` on `eo`. -/
+theorem identValid_normalized_of_eo (eo : ElfFile) (h : IdentBytesValid eo) :
+    IdentBytesValid (prepLayoutForEncode (syncDtStrszInFile eo)) :=
+  identBytesValid_of_ident_eq eo _ (by rw [prepLayout_syncDtStrsz_header_ident]) h
+
+/-- `sizeFit` on `en` from `sizeFit` on `eo` (`shdrSize` preserved). -/
+theorem sizeFit_normalized_of_eo (eo : ElfFile)
+    (h : ∀ (i : Nat) (hi : i < eo.sections.size), (eo.sections[i]'hi).shdrSize < UInt64.size) :
+    ∀ (i : Nat) (hi : i < (prepLayoutForEncode (syncDtStrszInFile eo)).sections.size),
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'hi).shdrSize < UInt64.size := by
+  intro i hi
+  have hiE : i < eo.sections.size := by rwa [prepLayout_syncDtStrsz_sections_size] at hi
+  rw [prepLayout_syncDtStrsz_sections_shdrSize eo i hi hiE]
+  exact h i hiE
+
+/-- `headerFit_entry` on `en` from `eo` (`entry` preserved). -/
+theorem headerFit_entry_normalized_of_eo (eo : ElfFile)
+    (h : eo.header.entry.val < UInt64.size) :
+    (prepLayoutForEncode (syncDtStrszInFile eo)).header.entry.val < UInt64.size := by
+  rw [prepLayout_syncDtStrsz_header_entry]; exact h
+
 /-- Composes `parseHeader_byte_facts` with `identBytesValid_of_decodeHeader`
     to give the canonical bridge: a successful `parseHeader bs = .ok h`
     yields `IdentBytesValid` for any ElfFile whose header is `h`. -/
