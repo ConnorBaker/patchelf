@@ -681,6 +681,101 @@ theorem patchDynamicEntries_filterNeededBy_size_le {ds : StringSection}
   unfold patchDynamicEntries
   exact tail_filterNeeded typed target _ _ (loop_filterNeeded typed target byteDyn)
 
+/-! ## `patchDynamicEntries` output-size bound for `removeSoname` (§5.1, modifySoname.remove)
+
+    `modifySoname.remove` (= `mapDynamicOp e (·.removeSoname)`) clears the soname
+    slot — structurally the SAME shape as `stripRpath` (a cleared TAIL field at
+    EQUAL cursor), so it reuses the `ShrinkRel`-style lockstep, but tracking the
+    OTHER four applied-flags (flags1/debug/rpath/runpath) that the shared tail
+    blocks read, with the soname tail block as the one that diverges (its value
+    becomes `none` on the op side). -/
+
+/-- The lockstep relation for the `removeSoname` shrink: result no bigger, NEEDED
+    cursor + the four NON-soname applied-flags agree (the tail blocks the soname
+    clear leaves untouched). -/
+def ShrinkRelSoname {ds : StringSection} (st2 st1 : PatchState ds) : Prop :=
+  st2.result.size ≤ st1.result.size ∧ st2.typedNeededIdx = st1.typedNeededIdx ∧
+  st2.flags1Applied = st1.flags1Applied ∧ st2.debugApplied = st1.debugApplied ∧
+  st2.rpathApplied = st1.rpathApplied ∧ st2.runpathApplied = st1.runpathApplied
+
+/-- One loop step preserves `ShrinkRelSoname`: the two typed sections agree on
+    `needed`/`rpath`/`runpath`/`flags1`/`debug`, and `removeSoname`'s `soname` is
+    `none` (so its `.soname` arm never pushes). -/
+theorem patchStep_shrink_soname {ds : StringSection} (typed : DynamicSection ds)
+    (st2 st1 : PatchState ds) (d : DynEntry)
+    (hR : ShrinkRelSoname st2 st1) :
+    ShrinkRelSoname (patchStep typed.removeSoname st2 d) (patchStep typed st1 d) := by
+  obtain ⟨hSz, hIdx, hF1, hDbg, hRp, hRun⟩ := hR
+  have hRpE : (typed.removeSoname).rpath = typed.rpath := rfl
+  have hRunE : (typed.removeSoname).runpath = typed.runpath := rfl
+  have hSnE : (typed.removeSoname).soname = none := rfl
+  have hNdE : (typed.removeSoname).needed = typed.needed := rfl
+  have hF1E : (typed.removeSoname).flags1 = typed.flags1 := rfl
+  have hDbgE : (typed.removeSoname).debug = typed.debug := rfl
+  cases hd : d.tag <;>
+    simp only [patchStep, ShrinkRelSoname, hd, hRpE, hRunE, hSnE, hNdE, hF1E, hDbgE, hIdx] <;>
+    (try split) <;>
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
+    first
+      | (simp only [Array.size_push]; omega)
+      | omega
+      | assumption
+      | rfl
+      | simp_all
+
+/-- Loop-level shrink: the whole `byteDyn` fold preserves `ShrinkRelSoname`. -/
+theorem loop_shrink_soname {ds : StringSection} (typed : DynamicSection ds)
+    (byteDyn : Array DynEntry) :
+    ShrinkRelSoname (byteDyn.foldl (patchStep typed.removeSoname) (patchInit ds))
+                    (byteDyn.foldl (patchStep typed) (patchInit ds)) := by
+  apply Array.foldl_rel ShrinkRelSoname (patchStep typed.removeSoname) (patchStep typed)
+    (fun s t a h => patchStep_shrink_soname typed s t a h) byteDyn
+  exact ⟨Nat.le_refl _, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Tail bound: given `ShrinkRelSoname`, the full tail of the op side is no larger.
+    The soname tail block is `none` on the op side (no-op); the other four
+    `unless`-blocks share value + applied-flag, so they are monotone in the
+    surplus base. -/
+theorem tail_shrink_soname {ds : StringSection} (typed : DynamicSection ds)
+    (st2 st1 : PatchState ds) (hR : ShrinkRelSoname st2 st1) :
+    (let r := appendSurplusNeeded typed st2.result st2.typedNeededIdx
+     let r := appendUnless st2.flags1Applied r DynTag.flags1 typed.flags1
+     let r := appendUnless st2.debugApplied r DynTag.debug typed.debug
+     let r := appendUnless st2.rpathApplied r DynTag.rpath (typed.rpath.map (·.val.toUInt64))
+     let r := appendUnless st2.runpathApplied r DynTag.runpath (typed.runpath.map (·.val.toUInt64))
+     let r := appendUnless st2.sonameApplied r DynTag.soname (none : Option UInt64)
+     r.push st2.nullEntry).size
+      ≤
+    (let r := appendSurplusNeeded typed st1.result st1.typedNeededIdx
+     let r := appendUnless st1.flags1Applied r DynTag.flags1 typed.flags1
+     let r := appendUnless st1.debugApplied r DynTag.debug typed.debug
+     let r := appendUnless st1.rpathApplied r DynTag.rpath (typed.rpath.map (·.val.toUInt64))
+     let r := appendUnless st1.runpathApplied r DynTag.runpath (typed.runpath.map (·.val.toUInt64))
+     let r := appendUnless st1.sonameApplied r DynTag.soname (typed.soname.map (·.val.toUInt64))
+     r.push st1.nullEntry).size := by
+  obtain ⟨hSz, hIdx, hF1, hDbg, hRp, hRun⟩ := hR
+  simp only [Array.size_push, hIdx, hF1, hDbg, hRp, hRun]
+  refine Nat.add_le_add_right ?_ 1
+  -- soname layer: LHS is `none` (no-op); RHS only grows
+  rw [appendUnless_size_none]
+  refine Nat.le_trans ?_ (appendUnless_size_ge _ _ _ _)
+  -- runpath, rpath, debug, flags1: shared value + applied-flag → monotone
+  refine appendUnless_size_mono _ _ _ _ _ ?_
+  refine appendUnless_size_mono _ _ _ _ _ ?_
+  refine appendUnless_size_mono _ _ _ _ _ ?_
+  refine appendUnless_size_mono _ _ _ _ _ ?_
+  exact appendSurplusNeeded_size_mono _ _ _ _ hSz
+
+/-- §5.1 output-size bound for `modifySoname.remove`: `removeSoname`'s byte output
+    is no larger than the no-op output on the same byte template.  Feeds the
+    generic `mapDynamicOp_structural_transport`. -/
+theorem patchDynamicEntries_removeSoname_size_le {ds : StringSection}
+    (byteDyn : Array DynEntry) (typed : DynamicSection ds) :
+    (patchDynamicEntries byteDyn (typed.removeSoname)).size
+      ≤ (patchDynamicEntries byteDyn typed).size := by
+  unfold patchDynamicEntries
+  exact tail_shrink_soname typed _ _ (loop_shrink_soname typed byteDyn)
+
 /-! ## toElfFile section-update helpers.
 
     Each `applyX` function updates one section kind on the byte-layer ElfFile,

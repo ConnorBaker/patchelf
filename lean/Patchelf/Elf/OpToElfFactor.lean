@@ -37,6 +37,7 @@
 module
 public import Patchelf.Elf.OpAdapterPreservation
 public import Patchelf.Elf.Ops.Rpath
+public import Patchelf.Elf.Ops.Soname
 @[expose] public section
 
 namespace Patchelf.Elf
@@ -937,6 +938,63 @@ theorem toElfFile_removeNeeded_tierD_roundtrip_derived (template : ElfFile) (typ
              prepLayout_syncDtStrsz_preserves_valid _ hVal hPhdrFit hDs⟩ :=
   toElfFile_mapDynamicOp_tierD_roundtrip_derived template typed h (fun d => d.filterNeededBy lib.toUTF8) D
     (patchDynamicEntries_filterNeededBy_size_le D.bd D.td lib.toUTF8)
+    hHP hHS hPS hHSec hPSec hShSec hS0noop
+    hVal hPhdrFit hDs hFit hIdentEo hSizeFitEo hNullEmptyEo hHdrEntryEo hHdrPhoff hHdrShoff hPhdrFitEn hShdrFitEn
+
+/-! ## §H — `modifySoname .remove` Tier-D round-trip (fourth shrink op, closes the family)
+
+    `modifySoname e .remove name h` is definitionally `mapDynamicOp e (·.removeSoname)`.
+    Like `removeRpath`/`modifyRPath.remove`, a TAIL-field clear at equal cursor —
+    its size bound `patchDynamicEntries_removeSoname_size_le` (Adapter.lean) is a
+    `ShrinkRel`-shaped variant tracking the four non-soname applied-flags.  This
+    completes the shrinking-op family: removeRpath, modifyRPath.remove,
+    removeNeeded, modifySoname.remove all instantiate the generic capstone. -/
+
+/-- Tier-D byte round-trip for `modifySoname .remove` with the 6 structural
+    disjointness invariants + section-0-NULL DERIVED.  Instantiates the generic
+    capstone at `(·.removeSoname)`; closes by `exact` since `modifySoname typed
+    .remove name h` reduces to `mapDynamicOp typed (·.removeSoname)` definitionally. -/
+theorem toElfFile_modifySoname_remove_tierD_roundtrip_derived (template : ElfFile) (typed : ValidElfFile)
+    (newName : String)
+    (h : typed.dynamic.isSome) (D : RemoveRpathFactorData template typed h)
+    (hHP : (toElfFile template typed).headerPhdrDisjoint)
+    (hHS : (toElfFile template typed).headerShdrDisjoint)
+    (hPS : (toElfFile template typed).phdrShdrDisjoint)
+    (hHSec : (toElfFile template typed).headerSectionDisjoint)
+    (hPSec : (toElfFile template typed).phdrSectionDisjoint)
+    (hShSec : (toElfFile template typed).shdrSectionDisjoint)
+    (hS0noop : ∀ (h0 : 0 < (toElfFile template typed).sections.size),
+      ((toElfFile template typed).sections[0]'h0).type = ShType.SHT_NULL)
+    (hVal : (toElfFile template (modifySoname typed .remove newName h)).IsValid)
+    (hPhdrFit : ((toElfFile template (modifySoname typed .remove newName h)).phdrs.size + 1) < UInt16.size)
+    {ds : StringTable} (hDs : (toElfFile template (modifySoname typed .remove newName h)).dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size)
+    (hIdentEo : IdentBytesValid (toElfFile template (modifySoname typed .remove newName h)))
+    (hSizeFitEo : ∀ (i : Nat) (hi : i < (toElfFile template (modifySoname typed .remove newName h)).sections.size),
+      ((toElfFile template (modifySoname typed .remove newName h)).sections[i]'hi).shdrSize < UInt64.size)
+    (hNullEmptyEo : ∀ (i : Nat) (hi : i < (toElfFile template (modifySoname typed .remove newName h)).sections.size),
+      ((toElfFile template (modifySoname typed .remove newName h)).sections[i]'hi).type = ShType.SHT_NULL →
+      ∃ ty hOk bs, ((toElfFile template (modifySoname typed .remove newName h)).sections[i]'hi).content = .raw ty hOk bs ∧ bs.size = 0)
+    (hHdrEntryEo : (toElfFile template (modifySoname typed .remove newName h)).header.entry.val < UInt64.size)
+    (hHdrPhoff : (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).header.phoff.val < UInt64.size)
+    (hHdrShoff : (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).header.shoff.val < UInt64.size)
+    (hPhdrFitEn : ∀ (i : Nat) (hi : i < (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).phdrs.size),
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).phdrs[i]'hi).offset.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).phdrs[i]'hi).vaddr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).phdrs[i]'hi).paddr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).phdrs[i]'hi).filesz.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).phdrs[i]'hi).memsz.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).phdrs[i]'hi).align.val < UInt64.size)
+    (hShdrFitEn : ∀ (i : Nat) (hi : i < (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).sections.size),
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).sections[i]'hi).addr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).sections[i]'hi).offset.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).sections[i]'hi).addralign.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h)))).sections[i]'hi).entsize.val < UInt64.size) :
+    parse (encode (toElfFile template (modifySoname typed .remove newName h)))
+      = .ok ⟨prepLayoutForEncode (syncDtStrszInFile (toElfFile template (modifySoname typed .remove newName h))),
+             prepLayout_syncDtStrsz_preserves_valid _ hVal hPhdrFit hDs⟩ :=
+  toElfFile_mapDynamicOp_tierD_roundtrip_derived template typed h (fun d => d.removeSoname) D
+    (patchDynamicEntries_removeSoname_size_le D.bd D.td)
     hHP hHS hPS hHSec hPSec hShSec hS0noop
     hVal hPhdrFit hDs hFit hIdentEo hSizeFitEo hNullEmptyEo hHdrEntryEo hHdrPhoff hHdrShoff hPhdrFitEn hShdrFitEn
 
