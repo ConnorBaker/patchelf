@@ -10,21 +10,25 @@ dependent-type obstacle is resolved.  Tier-1 ops have full
 (A `syncOk`, B `hIdem`, C residual `EncodePreconditions`) are now
 CLOSED**, composed into the `tierD_roundtrip` / `tierD_roundtrip_of_valid`
 driver, and applied to the two shrinking ops (`removeRpath`,
-`removeNeeded`) as full byte round-trips.  What remains is the **per-op
-fact discharge**: each op currently *takes its `eo` facts as
-hypotheses* (validity + 6 structural input invariants + residual `< 2^64`
-fit bounds); the next step is deriving them mechanically from the typed
-op + template.
+`removeNeeded`) as full byte round-trips.  Obligation C now DERIVES
+`identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry` (the
+content-preservation getElem-dispatch wall is CRACKED); only the 4
+position-bound families remain hypotheses.  What remains is the **per-op
+fact discharge**: each op currently *takes its `eo` facts as hypotheses*
+(validity + 6 structural input invariants + the 4 residual `< 2^64`
+position bounds); the next step is deriving the validity + structural
+invariants mechanically from the typed op + template.
 
 ---
 
 ```
 You are picking up ROADMAP §5.1 in the patchelf Lean 4 port: per-op fact
 discharge for the 12 "Tier 2/3" mutating ops.  The three open-core
-obligations are CLOSED and composed into a driver; the two shrinking ops
-already round-trip.  Your job is to (a) discharge the per-op `eo` facts
-from the typed op instead of taking them as hypotheses, and/or (b) clear
-the two documented sub-obstacles so the residual-fit surface shrinks.
+obligations are CLOSED and composed into a driver; Obligation C derives
+all four in-principle-derivable residual fields; the two shrinking ops
+already round-trip.  Your job is to discharge the per-op `eo` facts
+(validity + 6 structural input invariants) from the typed op + template
+instead of taking them as hypotheses.
 
 ## First reads, in this order
 
@@ -123,34 +127,26 @@ section keeps its offset/size, and the file does not widen past
 satisfies them).  This is the per-op `_produces_spliceRegionsDisjoint`
 the ROADMAP describes.  Start here with `removeRpath`.
 
-### Step 3 — the residual fit/validity fields (clear the sub-obstacles)
+### Step 3 — residual fields (ALREADY DONE; the 4 position bounds stay)
 
-`identValid` / `sizeFit` / `nullEmpty` / `headerFit_entry` ARE derivable
-through the pipeline (content/header preservation) — the blocker is a
-robust `growEOFWith_sections_content` getElem-dispatch.  Two documented
-sub-obstacles (see `-- TODO §5.1` in OpAdapterPreservation.lean):
-  1. `cases hLast : lastPtLoadIdx e.phdrs` (needed to expose the layout
-     branch) fails with "motive not type correct" when a
-     `hj : j < (growEOFWith …).sections.size` hypothesis is in context.
-  2. The projection dispatches (`growEOFWith_dynstr`, `_header_ident`)
-     work because `cases hLast` SUBSTITUTES `lastPtLoadIdx`, after which
-     the let-bound layout discriminants match the copy-pasted `hExt` form;
-     a standalone branch-equation lemma can't reproduce that match (the
-     `match pageSize?` aux function differs).
-  Promising routes: (a) revert `hj` to a `∀`-binder before `cases hLast`
-  (tried — `split` then over-splits the irrelevant `match pageSize?`,
-  renaming `pageSize?`); (b) a `getElem`-transport helper keyed on a
-  proven `growEOFWith pe = <branch>` equation closed by `subst` (the
-  whole-ElfFile branch equation resisted `rfl` due to inlined-vs-call
-  elaboration — investigate `Array.ext`/per-field instead); (c) prove
-  `sizeFit`/`nullEmpty` from `eo`'s versions + the per-branch
-  `_sections_content` lemmas threaded through `syncDtStrszInFile`'s
-  `_sections_encodedSize`.  Once `growEOFWith_sections_content` lands,
-  `sizeFit` follows (shdrSize is content-determined) and `nullEmpty` /
-  `identValid` follow similarly; shrink `encodePreconditions_of_layoutNormalized`'s
-  hypothesis list accordingly.  The position bounds (`headerFit_phoff/shoff`,
-  `phdrFit`, `shdrFit` addr/offset) STAY hypotheses — genuinely
-  non-derivable; keep the "file < 2^64" precondition.
+`identValid` / `sizeFit` / `nullEmpty` / `headerFit_entry` are now DERIVED
+by `encodePreconditions_of_layoutNormalized` from the matching facts on
+`eo` (`{identValid,sizeFit,nullEmpty,headerFit_entry}_normalized_of_eo`,
+`ByteRoundtrip.lean`).  The getElem-dispatch wall that previously blocked
+this is cracked: `growEOFWith_sections_content` (and `_shdrSize`/`_type`)
+are derived from the bound-free `growEOFWith_sections_map_content`
+(`map (·.content)`) equation — proved by `rw [growEOFWith.eq_1]; cases
+pageSize?` (kills the `match pageSize?` entanglement) `; simp only []`
+(zeta-reduces the `have`s) `; repeat' split; all_goals first | rfl |
+exact <branch>`.  The `prepLayout_syncDtStrsz_sections_{shdrSize,type}` +
+`_header_{ident,entry}` pipeline lemmas thread these through both
+pre-encode passes (via the `prepLayoutForEncode e = syncDtAddrTagsInFile
+(growEOFWith none e)` rewrite-the-getElem-term idiom).  The 4 position
+bounds (`headerFit_phoff/shoff`, `phdrFit`, `shdrFit`) STAY hypotheses —
+genuinely non-derivable; keep the "file < 2^64" precondition.  So an op no
+longer supplies any residual `en` facts — it supplies `eo.IsValid`,
+`eo`-level `identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry`, the dynstr
+witness, the 6 structural invariants, and the 4 `en` position bounds.
 
 ### Then: the other 10 ops
 
@@ -196,11 +192,11 @@ append) need the per-op `growEOFWith` layout reasoning for Step 2; the
    hypothesized, closing the gap between `tierD_roundtrip_of_valid`'s
    `hPreEn` and a genuine self-contained `parse (encode (toElfFile …)) =
    .ok …` with no structural-invariant hypotheses (a "file < 2^64"
-   precondition is fine).
-3. Ideally: Step 3 sub-obstacle cleared (`growEOFWith_sections_content`)
-   so `sizeFit`/`nullEmpty`/`identValid` are derived, shrinking the
-   residual hypothesis surface.
-4. STATUS.md + ROADMAP.md updated; refresh this pickup prompt.
+   precondition on the 4 position bounds is fine).
+3. STATUS.md + ROADMAP.md updated; refresh this pickup prompt.
+
+(Step 3's residual-field derivation — `sizeFit`/`nullEmpty`/`identValid`/
+`headerFit_entry` — is already DONE; the getElem-dispatch wall is cracked.)
 
 ## Output
 
@@ -214,13 +210,16 @@ readU/writeU axioms — no `sorryAx`.
 
 ## Notes for the human (not the agent)
 
-This session closed the substantive open core (Obligations A/B/C) and
-shipped the composed `tierD_roundtrip` driver + full round-trips for the
-two shrinking ops, with the position/size `< 2^64` bounds taken as the
-sanctioned explicit precondition.  What's left is honest plumbing: each
-op still *assumes* its `eo` validity + structural invariants + residual
-fits rather than *deriving* them from the typed op.  For shrinking ops
-this is parser-derivable transport; the residual-fit derivation is gated
-on a `growEOFWith_sections_content` getElem-dispatch that hit a genuine
-Lean dependent-motive wall (documented as `-- TODO §5.1`), so it was
-deferred rather than rushed.
+Two sessions closed the substantive open core (Obligations A/B/C),
+cracked the `growEOFWith` content-preservation getElem-dispatch (the
+dependent-motive wall — solved with a bound-free `map (·.content)`
+equation + `cases pageSize?`), and DERIVED four of the eight residual
+`EncodePreconditions` fields (`identValid`/`sizeFit`/`nullEmpty`/
+`headerFit_entry`) on the normalized form.  The composed `tierD_roundtrip`
+driver + full round-trips for the two shrinking ops are in place, with
+only the 4 position-bound families (`headerFit_phoff`/`shoff`, `phdrFit`,
+`shdrFit`) taken as the sanctioned "file < 2^64" precondition.  What's
+left is honest plumbing: each op still *assumes* its `eo` validity +
+structural invariants rather than *deriving* them from the typed op.  For
+shrinking ops this is parser-derivable transport; for growing ops it needs
+the per-op `growEOFWith` layout reasoning.  Deferred rather than rushed.

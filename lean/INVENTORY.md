@@ -898,16 +898,27 @@ signatures.)
 | theorem | `toElfFile_removeRpath_tierD_roundtrip` | full Tier-D round-trip for `removeRpath` |
 | theorem | `toElfFile_removeNeeded_tierD_roundtrip` | full Tier-D round-trip for `removeNeeded` |
 
-Supporting §5.1 lemmas live in their home modules: Obligation A
-establishment/preservation in `Encoder.lean`
-(`syncDtStrszInFile_establishes_dynStrszCoherent`,
-`prepLayout_syncDtStrsz_dynStrszCoherent`) + `GrowEOF.lean`
-(`growEOFWith_dynamic`, `syncDtAddrTagsInFile_preserves_dynStrszCoherent`,
-`syncDtAddrEntry_eq_self_of_not_addressTag`); Obligation A/B capstones
-(`syncOk_of_normalized`, `renormalize_eq_self`, `encode_eq_encode_normalized`)
-in `ByteRoundtrip.lean`; the validity capstone
-(`prepLayout_syncDtStrsz_preserves_valid`) + Obligation B helpers in
-`Encoder.lean`.
+`encodePreconditions_of_layoutNormalized` derives 4 of its 8 residual
+fields (`identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry`) from the
+matching facts on `eo`; only the 4 position-bound families
+(`headerFit_phoff`/`shoff`, `phdrFit`, `shdrFit`) remain hypotheses.
+
+Supporting §5.1 lemmas live in their home modules:
+- Obligation A establishment/preservation in `Encoder.lean`
+  (`syncDtStrszInFile_establishes_dynStrszCoherent`,
+  `prepLayout_syncDtStrsz_dynStrszCoherent`) + `GrowEOF.lean`
+  (`growEOFWith_dynamic`, `syncDtAddrTagsInFile_preserves_dynStrszCoherent`,
+  `syncDtAddrEntry_eq_self_of_not_addressTag`).
+- Obligation A/B capstones (`syncOk_of_normalized`, `renormalize_eq_self`,
+  `encode_eq_encode_normalized`) in `ByteRoundtrip.lean`; validity capstone
+  (`prepLayout_syncDtStrsz_preserves_valid`) + Obligation B helpers in
+  `Encoder.lean`.
+- Content-preservation getElem-dispatch (Obligation C residual derivation):
+  `growEOFWith_sections_{map_content,content,shdrSize,type}` + per-branch
+  `_sections_map_content` (`GrowEOF.lean`); pipeline
+  `prepLayout_syncDtStrsz_sections_{shdrSize,type}` + `_header_{ident,entry}`
+  (`Encoder.lean`); `{identValid,sizeFit,nullEmpty,headerFit_entry}_normalized_of_eo`
+  + `identBytesValid_of_ident_eq` (`ByteRoundtrip.lean`).
 
 ---
 

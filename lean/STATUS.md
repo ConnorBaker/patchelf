@@ -65,11 +65,17 @@
 >   is a no-op (`syncOk` + layout idempotence from `en.spliceRegionsDisjoint`),
 >   so `encode eo = encode en` via `encode_eq` twice.
 > * **C — residual `EncodePreconditions`** (`encodePreconditions_of_layoutNormalized`):
->   `syncOk` (A) + `spliceDisjoint` (§1.3a scaffold) derived; the 8
->   fit/validity fields supplied as explicit hypotheses on `en` — the
->   position/size `< 2^64` bounds are genuinely non-derivable for an
->   encoder output (unbounded `roundUp` offsets), the sanctioned "file <
->   2^64" intervention.
+>   `syncOk` (A) + `spliceDisjoint` (§1.3a scaffold) +
+>   `identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry` all DERIVED — the
+>   last four via the pipeline's per-section `content`/`shdrSize`/`type` +
+>   `header.ident`/`entry` preservation (the `growEOFWith` content-map
+>   getElem-dispatch wall is cracked: state preservation as a bound-free
+>   `map (·.content)` equation, `cases pageSize?` to kill the `match
+>   pageSize?` entanglement, then `simp only []; repeat' split`).  Only the
+>   4 position-bound families (`headerFit_phoff`/`shoff`, `phdrFit`,
+>   `shdrFit`) remain hypotheses — genuinely non-derivable for an encoder
+>   output (unbounded `roundUp` offsets), the sanctioned "file < 2^64"
+>   intervention.
 >
 > Composed driver `tierD_roundtrip` / `tierD_roundtrip_of_valid` glues
 > A+B+C + the §1.2 validity capstone (`prepLayout_syncDtStrsz_preserves_valid`,
@@ -540,9 +546,16 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   * **C → residual `EncodePreconditions`** —
     `encodePreconditions_of_layoutNormalized`
     (`OpAdapterPreservation.lean`): `syncOk` (A) + `spliceDisjoint`
-    (§1.3a) derived; the 8 fit/validity fields are hypotheses on `en`
-    (position/size `< 2^64` bounds genuinely non-derivable for the
-    `roundUp`-laid-out encoder output — the sanctioned "file < 2^64"
+    (§1.3a) + `identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry` all
+    DERIVED from the matching facts on `eo`, via per-section
+    `content`/`shdrSize`/`type` + `header.{ident,entry}` preservation
+    through the whole pre-encode pipeline.  The `growEOFWith`
+    content-preservation getElem-dispatch (`growEOFWith_sections_content`,
+    GrowEOF.lean) is unblocked via a bound-free `map (·.content)` equation
+    (`cases pageSize?` then `simp only []; repeat' split`).  Only the 4
+    position-bound families (`headerFit_phoff`/`shoff`, `phdrFit`,
+    `shdrFit`) remain hypotheses — `< 2^64` bounds genuinely non-derivable
+    for the `roundUp`-laid-out encoder output (the sanctioned "file < 2^64"
     intervention; runtime `Validate.IsLoadableBytes` guards the
     pathological case).
 
@@ -551,8 +564,9 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   into `parse (encode eo) = .ok ⟨en, _⟩`.  Shipped worked examples:
   `toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip` (the two
   shrinking ops).  Remaining per-op work: mechanically discharge each
-  op's `eo` facts (validity + 6 structural invariants + residual fits)
-  from the typed op — currently stated as hypotheses.  See ROADMAP §5.1.
+  op's `eo` facts (validity + 6 structural invariants + the 4 position
+  bounds) from the typed op — currently stated as hypotheses.  See
+  ROADMAP §5.1.
 
 ### Priority 2 gaps (test / spec coverage)
 

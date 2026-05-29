@@ -78,15 +78,17 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
   round-trip scaffold + the three **open-core obligations** (A `syncOk`,
   B `hIdem`, C residual `EncodePreconditions`) are now CLOSED, composed
   into the `tierD_roundtrip` driver, and applied to the two shrinking
-  ops (`toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip`).  Open:
-  the **per-op fact discharge** — each op currently takes its `eo`
-  facts (validity + 6 structural input invariants + residual `< 2^64`
-  fit bounds) as hypotheses; the next step is deriving them
-  mechanically from the typed op + template (parser-derivable /
-  transportable for shrinking ops; per-op `growEOFWith` layout
-  reasoning for growing ops).  Two partial sub-obstacles are documented
-  inline as `-- TODO §5.1` in `OpAdapterPreservation.lean` (the
-  `growEOFWith_sections_content` getElem-dispatch).  Fresh-agent
+  ops (`toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip`).
+  Obligation C now DERIVES `identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry`
+  (the content-preservation getElem-dispatch is cracked — bound-free
+  `map (·.content)` equation); only the 4 position-bound families remain
+  hypotheses.  Open: the **per-op fact discharge** — each op currently
+  takes its `eo` facts (validity + 6 structural input invariants + the 4
+  residual `< 2^64` position bounds) as hypotheses; the next step is
+  deriving the validity + structural invariants mechanically from the
+  typed op + template (parser-derivable / transportable for shrinking
+  ops; per-op `growEOFWith` layout reasoning for growing ops).  The 4
+  position bounds stay as a "file < 2^64" precondition.  Fresh-agent
   handoff: [`PICKUP-PROMPT-OP-TIER-D.md`](PICKUP-PROMPT-OP-TIER-D.md).
   See §5.1 for the tier map + obligation breakdown.
 - **§4.2 trailing-array DSL field kind + `Verneed.write_decode`** —
@@ -622,14 +624,23 @@ are now proven:
 * **C — residual `EncodePreconditions`**
   (`encodePreconditions_of_layoutNormalized`, `OpAdapterPreservation.lean`):
   derives `syncOk` (A) + `spliceDisjoint` (§1.3a
-  `spliceRegionsDisjoint_of_structural`); the remaining 8 fields
-  (`identValid`, `sizeFit`, `nullEmpty`, `headerFit_{entry,phoff,shoff}`,
-  `phdrFit`, `shdrFit`) are taken as explicit hypotheses on `en`.  The
-  position/size `< 2^64` bounds are genuinely NOT structurally derivable:
-  `en`'s offsets come from `growEOFWith`'s unbounded `roundUp` arithmetic.
-  This is the sanctioned "file < 2^64" precondition — every real ELF
-  satisfies it and the runtime `Validate.IsLoadableBytes` guards the
-  pathological case at write time.
+  `spliceRegionsDisjoint_of_structural`) + four of the eight residual fields
+  — `identValid`, `sizeFit`, `nullEmpty`, `headerFit_entry` — from the
+  matching facts on `eo`, via the pre-encode pipeline's per-section
+  `content`/`shdrSize`/`type` + `header.{ident,entry}` preservation
+  (`{identValid,sizeFit,nullEmpty,headerFit_entry}_normalized_of_eo`).  This
+  needed cracking the `growEOFWith` content-preservation getElem-dispatch:
+  the per-element form's dependent `hj` bound defeats `cases`/`split`, so
+  `growEOFWith_sections_content` is derived from a bound-free
+  `growEOFWith_sections_map_content` (`map (·.content)`) equation — proved
+  by `rw [growEOFWith.eq_1]; cases pageSize?` (kills the `match pageSize?`
+  entanglement) `; simp only []` (zeta-reduces the `have`s) `; repeat' split`.
+  Only the 4 position-bound families (`headerFit_phoff`/`shoff`, `phdrFit`,
+  `shdrFit`) remain explicit hypotheses on `en` — genuinely NOT structurally
+  derivable (`en`'s offsets come from `growEOFWith`'s unbounded `roundUp`
+  arithmetic).  This is the sanctioned "file < 2^64" precondition — every
+  real ELF satisfies it and the runtime `Validate.IsLoadableBytes` guards
+  the pathological case at write time.
 
 **Composed driver + worked examples.**
 `tierD_roundtrip` / `tierD_roundtrip_of_valid` (`OpAdapterPreservation.lean`)
@@ -638,22 +649,24 @@ glue A+B+C + the new `IsValid` capstone `prepLayout_syncDtStrsz_preserves_valid`
 into `parse (encode eo) = .ok ⟨en, _⟩`.  The two shrinking ops ship full
 round-trips: `toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip`.
 
+The content-preservation getElem-dispatch that previously blocked deriving
+`identValid`/`sizeFit`/`nullEmpty` is now CRACKED (bound-free
+`map (·.content)` equation, see Obligation C above), so all four
+in-principle-derivable residual fields are derived; only the 4 position
+bounds stay hypotheses.
+
 **Remaining per-op work** (now well-scoped, no longer an open core): each
 op must discharge its own `eo` facts — `eo.IsValid`, the 6 structural input
-invariants on `syncDtStrszInFile eo`, the dynstr witness, and the residual
-fit bounds — from the typed op + template, instead of taking them as
+invariants on `syncDtStrszInFile eo`, the dynstr witness, and the 4 residual
+position bounds — from the typed op + template, instead of taking them as
 hypotheses.  For shrinking ops these are parser-derivable / transportable
 across the `.dynamic` rewrite (the file does not widen); for growing ops
 (`addNeeded`, dynstr-growing) they need the per-op `growEOFWith` layout
-reasoning.  Two partial sub-obstacles surfaced and are documented inline as
-`-- TODO §5.1` in `OpAdapterPreservation.lean`: deriving
-`identValid`/`sizeFit`/`nullEmpty` through the pipeline is blocked on a
-robust `growEOFWith_sections_content` getElem-dispatch (the
-dependent-`hj`-bound `cases`/`split` fails with "motive not type correct",
-and the let-bound layout discriminants in the inlined `growEOFWith` body
-don't match the expanded `hExt` form that the projection dispatches rely
-on — that match only works after a `cases hLast` substitution, which the
-dependent bound forbids).
+reasoning.  The reusable per-section content/header/shdrSize preservation
+lemmas (`growEOFWith_sections_{content,shdrSize,type}`,
+`prepLayout_syncDtStrsz_sections_*`) cover the byte-level structural facts;
+what each op still owes is relating its `toElfFile` output's structural
+invariants to the parser-derived ones on the template.
 
 §1.1 (Parser establishes `IsLoadable`) and §1.2
 (`growEOFWith_preserves_loadable`, lifted to the end-to-end
