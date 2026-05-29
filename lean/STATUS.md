@@ -82,7 +82,7 @@
 > (`prepLayout_syncDtStrsz_preserves_valid`) into
 > `parse (encode eo) = .ok ⟨en, _⟩`.
 >
-> **§5.1 structural invariants now DERIVED for all three shrinking ops, via
+> **§5.1 structural invariants now DERIVED for all four shrinking ops, via
 > generic `mapDynamicOp f` machinery.**  Module `Patchelf/Elf/OpToElfFactor.lean`
 > discharges the 6 structural disjointness invariants + section-0-NULL on the op
 > output *without* hypothesizing them: it factors `toElfFile template
@@ -105,8 +105,8 @@
 > witness + `< 2^64` fit, the four derived-field facts, the four `< 2^64`
 > position bounds).
 >
-> **Three ops instantiate it** (each `mapDynamicOp e f` definitionally, so the
-> capstone closes by `exact`):
+> **All four shrinking ops instantiate it** (each `mapDynamicOp e f`
+> definitionally, so the capstone closes by `exact`):
 > * `toElfFile_removeRpath_tierD_roundtrip_derived` (`f := ·.stripRpath`) — the
 >   §5.1 regression gate; statement + axioms unchanged across the genericization.
 > * `toElfFile_modifyRPath_remove_tierD_roundtrip_derived` (same `f`, reusing
@@ -118,13 +118,15 @@
 >   (needed.size − cursor)` (the op/no-op NEEDED cursors run UNEQUAL, unlike
 >   `stripRpath`'s cursor-equal `ShrinkRel`) + `appendSurplusNeeded_size_exact`
 >   + the `tail_filterNeeded` composition.
+> * `toElfFile_modifySoname_remove_tierD_roundtrip_derived` (`f := ·.removeSoname`,
+>   bound `patchDynamicEntries_removeSoname_size_le` — a `ShrinkRel`-shaped variant
+>   tracking the four non-soname applied-flags, soname being the diverging tail).
 >
 > The earlier `toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip` (in
 > `OpAdapterPreservation.lean`) still ship taking their `eo` facts directly as
 > hypotheses.  Still open: the growing ops' (`addNeeded`/dynstr-growing)
-> `growEOFWith` layout reasoning — see ROADMAP §5.1.  (`modifySoname.remove` is a
-> ready fourth shrink op: needs a `removeSoname` size bound, a soname-tail
-> `ShrinkRel` variant.)  The reusable shrink-monotonicity core
+> `growEOFWith` layout reasoning — see ROADMAP §5.1.  The reusable
+> shrink-monotonicity core
 > (`SectionOps.updateSectionContent_*Disjoint_shrink`) + the
 > `Adapter.{foldl_proj_size_le_add,idForIn_proj_size_le}` loop-size bridges are
 > landed.  **Fresh-agent handoff covering ALL remaining work**
@@ -236,7 +238,7 @@ Total Lean source: ~22,100 LOC. Distribution by category:
 | `SectionOps` | ~420 | `updateSectionContent` + projection / index-preservation / typed-accessor preservation helpers |
 | 14 ops (`Elf/Ops/*.lean`) | ~1,080 | mutating operations |
 | Op-level Tier D (`OpAdapterPreservation`) | ~440 | Tier-1 op `_preserves_loadable` + phdrs-map helpers + the Tier-2/3 round-trip scaffold, Obligation-C package, `tierD_roundtrip` drivers, and the two shrinking-op round-trips (§5.1) |
-| Op→`toElfFile` factoring (`OpToElfFactor`) | ~945 | Generic `mapDynamicOp f` structural-invariant derivation: `updateSectionContent` algebra + the 3 `applyTypeOpt_*` generic outer-apply lemmas (4× collapse) + `toElfFile_mapDynamicOp_factor` + `mapDynamicOp_structural_transport` + the generic capstone `_mapDynamicOp_tierD_roundtrip_derived`, instantiated for `removeRpath` / `modifyRPath.remove` / `removeNeeded` (§5.1) |
+| Op→`toElfFile` factoring (`OpToElfFactor`) | ~1000 | Generic `mapDynamicOp f` structural-invariant derivation: `updateSectionContent` algebra + the 3 `applyTypeOpt_*` generic outer-apply lemmas (4× collapse) + `toElfFile_mapDynamicOp_factor` + `mapDynamicOp_structural_transport` + the generic capstone `_mapDynamicOp_tierD_roundtrip_derived`, instantiated for all 4 shrinking ops: `removeRpath` / `modifyRPath.remove` / `removeNeeded` / `modifySoname.remove` (§5.1) |
 | CLI + Main + Log | ~990 | lean4-cli subcommand tree + stderr trace logger |
 | Tactic (`SpliceSimproc*`) | ~200 | `simp_splice` macro + `[splice_simp]` simp set |
 | Misc (root, ElfFile, DynamicLemmas) | ~980 | structural |
@@ -566,7 +568,7 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   `Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
   is the composed API the op-level Tier D proofs consume.  See
   §"Tier D" above for the supporting chain.
-- **Op-level Tier D — open core CLOSED; all three shrinking ops' structural invariants DERIVED.**
+- **Op-level Tier D — open core CLOSED; all four shrinking ops' structural invariants DERIVED.**
   The `Adapter.toElfFile` dependent-type obstacle is resolved (the
   `applyX` helpers take typed *fields*, dependent index `ds` free).
   `Patchelf/Elf/OpAdapterPreservation.lean` ships
@@ -620,7 +622,7 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   preserves all 6 disjointness clauses + section-0-NULL (monotone in the
   section's `encodedSize`).
 
-  **All three shrinking ops: structural invariants now DERIVED** via generic
+  **All four shrinking ops: structural invariants now DERIVED** via generic
   `mapDynamicOp f` machinery (`Patchelf/Elf/OpToElfFactor.lean`).  The factoring
   `eo = (toElfFile template typed).updateSectionContent iDyn (.dynamic newDyn)`
   is `toElfFile_mapDynamicOp_factor` (generic over `f`), with the no-op output's
@@ -647,6 +649,10 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
     `appendSurplusNeeded_size_exact` + the `tail_filterNeeded` composition (all 5
     `unless`-blocks unchanged, monotone in the surplus base, collapsing to the
     loop-end potential).
+  * `modifySoname.remove` (`f := ·.removeSoname`) — bound
+    `patchDynamicEntries_removeSoname_size_le`, a `ShrinkRel`-shaped variant
+    (`ShrinkRelSoname` tracks the four non-soname applied-flags; the soname tail
+    block is the one that clears).  Closes the shrinking-op family 4/4.
 
   The 4× type-based outer-apply duplication
   (`apply{Versym,SysvHash,GnuHash,Verneed}_*`) is collapsed to 3 generic lemmas
@@ -658,8 +664,7 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
 
   Still open (ROADMAP §5.1): the growing ops (`addNeeded`/dynstr-growing), which
   widen the file and need per-op `growEOFWith` layout reasoning instead of the
-  shrink core.  (`modifySoname.remove` is a ready fourth shrink op — a
-  `removeSoname` soname-tail size bound away.)
+  shrink core.  The shrinking-op family is now COMPLETE (4/4).
 
 ### Priority 2 gaps (test / spec coverage)
 
@@ -713,8 +718,10 @@ type-based outer-apply duplication into 3 `applyTypeOpt_*` generic lemmas;
 an instantiation (statement + axioms byte-identical — the regression gate held)
 and add `modifyRPath.remove` as a free second op; (5) `removeNeeded` — the payoff
 — landing the one new proof (`patchDynamicEntries_filterNeededBy_size_le` via the
-`NeededRel` potential function) + its capstone instantiation.  Three shrinking
-ops now have DERIVED structural invariants; a fourth shape costs ~1 size bound.
+`NeededRel` potential function) + its capstone instantiation.  A sixth commit
+added `modifySoname.remove` (`patchDynamicEntries_removeSoname_size_le`, a
+`ShrinkRel` variant), closing the shrinking-op family 4/4 — confirming the
+predicted ~1-size-bound cost of each additional shrink shape.
 
 **§5.1 `removeRpath` structural derivation (earlier).** Two commits: (1) a
 compositional `patchDynamicEntries` refactor (pure loop fold + explicit

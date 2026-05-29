@@ -935,8 +935,9 @@ Supporting §5.1 lemmas live in their home modules:
 Op-output structural-invariant DERIVATION (criterion 2), generic over
 `mapDynamicOp f`.  Factors `toElfFile template (mapDynamicOp typed f)` as a single
 `.dynamic`-shrink `updateSectionContent` on the no-op output and transports the
-structural invariants; `removeRpath` / `modifyRPath.remove` / `removeNeeded`
-instantiate it.  (Names only; see the file for full signatures.)
+structural invariants; all four shrinking ops — `removeRpath` /
+`modifyRPath.remove` / `removeNeeded` / `modifySoname.remove` — instantiate it.
+(Names only; see the file for full signatures.)
 
 | Kind | Name | What it gives |
 |---|---|---|
@@ -957,14 +958,17 @@ instantiate it.  (Names only; see the file for full signatures.)
 | theorem | `removeRpath_structural_transport` / `toElfFile_removeRpath_tierD_roundtrip_derived` | `removeRpath` instantiation (`f := ·.stripRpath`) — the §5.1 regression gate; statement + axioms unchanged |
 | theorem | `toElfFile_modifyRPath_remove_tierD_roundtrip_derived` | `modifyRPath.remove` instantiation (same `f`, free) |
 | theorem | `toElfFile_removeNeeded_tierD_roundtrip_derived` | `removeNeeded` instantiation (`f := ·.filterNeededBy lib.toUTF8`) |
+| theorem | `toElfFile_modifySoname_remove_tierD_roundtrip_derived` | `modifySoname.remove` instantiation (`f := ·.removeSoname`) — closes the shrink family 4/4 |
 
 Per-`f` relative size bounds + the compositional `patchDynamicEntries` machinery
-live in `Adapter.lean`: `patchDynamicEntries_stripRpath_size_le` (`ShrinkRel` +
-`tail_shrink_rpath`) and `patchDynamicEntries_filterNeededBy_size_le` (the
-`NeededRel` potential function + `appendSurplusNeeded_size_exact` +
-`patchStep_filterNeeded`/`loop_filterNeeded`/`tail_filterNeeded`), both over the
+live in `Adapter.lean`, all over the
 `PatchState`/`patchStep`/`patchInit`/`appendSurplusNeeded`/`appendUnless` +
-`Array.foldl_rel` core.
+`Array.foldl_rel` core: `patchDynamicEntries_stripRpath_size_le` (`ShrinkRel` +
+`tail_shrink_rpath`), `patchDynamicEntries_filterNeededBy_size_le` (the
+`NeededRel` potential function + `appendSurplusNeeded_size_exact` +
+`patchStep_filterNeeded`/`loop_filterNeeded`/`tail_filterNeeded`), and
+`patchDynamicEntries_removeSoname_size_le` (`ShrinkRelSoname` +
+`patchStep_shrink_soname`/`loop_shrink_soname`/`tail_shrink_soname`).
 
 ---
 

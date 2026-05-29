@@ -12,20 +12,22 @@ codec, the layout engine (`growEOF` + fresh-PT_LOAD), the §1.1 parser
 `IsLoadable`, the §1.2 `_preserves_valid` / `_preserves_loadable` ladders,
 and the §5.1 open core (A/B/C) are all CLOSED.
 
-**§5.1 update (latest):** **all three shrinking ops** now have their op-output
+**§5.1 update (latest):** **all FOUR shrinking ops** now have their op-output
 structural invariants DERIVED (criterion 2 met) — see
 `Patchelf/Elf/OpToElfFactor.lean`.  The factoring/transport/capstone are now
 GENERIC over `mapDynamicOp f` (`toElfFile_mapDynamicOp_factor` /
 `mapDynamicOp_structural_transport` / `toElfFile_mapDynamicOp_tierD_roundtrip_derived`),
 instantiated by `removeRpath` (`toElfFile_removeRpath_tierD_roundtrip_derived`,
 the regression gate), `modifyRPath.remove`
-(`toElfFile_modifyRPath_remove_tierD_roundtrip_derived`, free), and `removeNeeded`
-(`toElfFile_removeNeeded_tierD_roundtrip_derived`).  The per-`f` size bounds live
-in `Adapter.lean`: `patchDynamicEntries_stripRpath_size_le` (`ShrinkRel`) and
-`patchDynamicEntries_filterNeededBy_size_le` (the `NeededRel` potential function).
-The remaining §5.1 work is the **growing ops** (need `growEOFWith` layout
-reasoning, not the shrink core).  (`modifySoname.remove` is a ready fourth shrink
-op: a `removeSoname` size bound away, then instantiate the generic capstone.)
+(`toElfFile_modifyRPath_remove_tierD_roundtrip_derived`, free), `removeNeeded`
+(`toElfFile_removeNeeded_tierD_roundtrip_derived`), and `modifySoname.remove`
+(`toElfFile_modifySoname_remove_tierD_roundtrip_derived`).  The per-`f` size
+bounds live in `Adapter.lean`: `patchDynamicEntries_stripRpath_size_le`
+(`ShrinkRel`), `patchDynamicEntries_filterNeededBy_size_le` (the `NeededRel`
+potential function), and `patchDynamicEntries_removeSoname_size_le`
+(`ShrinkRelSoname`).  The remaining §5.1 work is the **growing ops** (need
+`growEOFWith` layout reasoning, not the shrink core) — the shrinking-op family
+is now complete.
 
 ---
 
@@ -117,13 +119,13 @@ gitignored, but don't leave it around).
 GOAL: make a mutating op's full byte round-trip self-contained —
 `parse (encode (toElfFile template (op typed))) = .ok ⟨normalized, _⟩` —
 by DERIVING the op output's facts from the typed op + template, instead of
-taking them as hypotheses.  **All three shrinking ops are DONE**, via generic
-`mapDynamicOp f` machinery: `removeRpath`, `modifyRPath.remove`, `removeNeeded`.
-The next shrink op is `modifySoname.remove` (just a `removeSoname` size bound,
-then instantiate the generic capstone); then the growing ops.  Read
-`Patchelf/Elf/OpToElfFactor.lean` end-to-end first — its generic
-factoring/transport/capstone + per-apply commutation suite are reusable for any
-`mapDynamicOp f`; a new shrink op needs only its `Adapter.lean` size bound.
+taking them as hypotheses.  **All FOUR shrinking ops are DONE**, via generic
+`mapDynamicOp f` machinery: `removeRpath`, `modifyRPath.remove`, `removeNeeded`,
+`modifySoname.remove`.  Next up: the growing ops (need `growEOFWith` layout
+reasoning, not the shrink core).  Read `Patchelf/Elf/OpToElfFactor.lean`
+end-to-end first — its generic factoring/transport/capstone + per-apply
+commutation suite are reusable for any `mapDynamicOp f`; any further shrink op
+would need only its `Adapter.lean` size bound.
 
 ### Tier-D readers (after orientation)
 
@@ -227,10 +229,10 @@ pathological case at write time, so leaving them as a hypothesis is fine).
    structural invariants DERIVED rather than hypothesized — i.e. a
    `parse (encode (toElfFile …)) = .ok …` with no structural-invariant
    hypotheses (a "file < 2^64" precondition on the 4 position bounds is OK).
-   **DONE for all three shrinking ops** — `removeRpath` /
-   `modifyRPath.remove` / `removeNeeded` (`OpToElfFactor.lean`), via the
-   generic `mapDynamicOp f` capstone.  Next shrink op: `modifySoname.remove`
-   (one `removeSoname` size bound).  Then the growing ops.
+   **DONE for all four shrinking ops** — `removeRpath` / `modifyRPath.remove` /
+   `removeNeeded` / `modifySoname.remove` (`OpToElfFactor.lean`), via the generic
+   `mapDynamicOp f` capstone.  The shrink family is complete; next is the growing
+   ops.
 3. STATUS.md + ROADMAP.md updated; refresh this prompt.
 
 =====================================================================
