@@ -67,4 +67,31 @@ theorem noDefaultLib_mutate_value
     unfold DynamicSection.setNoDefaultLib DF_1_NODEFLIB
     rw [hSome]; rfl
 
+/-- Adversary-rejecting observable (mirrors `addDebugTag_observable_strong`).
+    An identity `noDefaultLib` would satisfy the basic `_observable`
+    (`flags1` has the bit set) only on files that ALREADY had DF_1_NODEFLIB;
+    this case-splits on the input so the op is observably non-trivial unless
+    its precondition was idempotent.  Either DT_FLAGS_1 was present with value
+    `v` and the post value is `v ||| DF_1_NODEFLIB`, OR it was absent and the
+    post value is exactly `DF_1_NODEFLIB`. -/
+theorem noDefaultLib_observable_strong (e : ValidElfFile) (h : e.dynamic.isSome) :
+    ∃ (dyn : DynamicSection e.dynstr) (dyn' : DynamicSection e.dynstr),
+      e.dynamic = some dyn ∧ (noDefaultLib e h).dynamic = some dyn' ∧
+        ((∃ v, dyn.flags1 = some v ∧ dyn'.flags1 = some (v ||| DF_1_NODEFLIB)) ∨
+         (dyn.flags1 = none ∧ dyn'.flags1 = some DF_1_NODEFLIB)) := by
+  obtain ⟨dyn, hDyn⟩ := Option.isSome_iff_exists.mp h
+  refine ⟨dyn, dyn.setNoDefaultLib, hDyn, ?_, ?_⟩
+  · unfold noDefaultLib mapDynamicOp; simp [hDyn]
+  · by_cases hSome : dyn.flags1.isSome
+    · obtain ⟨v, hv⟩ := Option.isSome_iff_exists.mp hSome
+      refine .inl ⟨v, hv, ?_⟩
+      show (dyn.setNoDefaultLib).flags1 = _
+      unfold DynamicSection.setNoDefaultLib DF_1_NODEFLIB
+      rw [hv]; rfl
+    · have hNone : dyn.flags1 = none := Option.not_isSome_iff_eq_none.mp hSome
+      refine .inr ⟨hNone, ?_⟩
+      show (dyn.setNoDefaultLib).flags1 = _
+      unfold DynamicSection.setNoDefaultLib DF_1_NODEFLIB
+      rw [hNone]; rfl
+
 end Patchelf.Elf

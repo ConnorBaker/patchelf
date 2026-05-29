@@ -51,4 +51,29 @@ theorem modifySoname_set_observable
     e newName _ h hNoNulls
     (fun _ => by unfold DynamicSection.setSonameOff; simp)
 
+/-- Non-corruption companion: `.set` touches ONLY the soname slot.  The other
+    dynamic fields survive as their rebased originals — `needed.size` is
+    unchanged, `flags1`/`debug` are equal (rebase doesn't cast scalars).  Rules
+    out an adversary that sets the soname but drops a DT_NEEDED entry or clobbers
+    a flags/debug slot. -/
+theorem modifySoname_set_preserves
+    (e : ValidElfFile) (newName : String) (h : e.dynamic.isSome)
+    (dyn : DynamicSection e.dynstr) (hDyn : e.dynamic = some dyn) :
+    ∃ (dyn' : DynamicSection (modifySoname e .set newName h).dynstr),
+      (modifySoname e .set newName h).dynamic = some dyn' ∧
+      dyn'.needed.size = dyn.needed.size ∧
+      dyn'.flags1 = dyn.flags1 ∧ dyn'.debug = dyn.debug := by
+  refine ⟨(dyn.rebase (StringSection.size_le_append e.dynstr newName)).setSonameOff
+            (e.dynstr.appendOffset newName), ?_, ?_, ?_, ?_⟩
+  · show (growDynstrDynamicOp e newName (fun _ off d => d.setSonameOff off)).dynamic = _
+    unfold growDynstrDynamicOp ValidElfFile.growDynstr
+    rw [hDyn]; rfl
+  · show (DynamicSection.setSonameOff (dyn.rebase _) _).needed.size = _
+    unfold DynamicSection.setSonameOff
+    exact DynamicSection.rebase_needed_size _ _
+  · show (DynamicSection.setSonameOff (dyn.rebase _) _).flags1 = _
+    rfl
+  · show (DynamicSection.setSonameOff (dyn.rebase _) _).debug = _
+    rfl
+
 end Patchelf.Elf

@@ -61,4 +61,29 @@ theorem modifyRPath_set_runpath_observable
     e newRpath _ h hNoNulls
     (fun _ => by unfold DynamicSection.setRpathTag; simp)
 
+/-- Non-corruption companion: `.set` touches ONLY the rpath/runpath slots.  The
+    other dynamic fields survive as their rebased originals — `needed.size` is
+    unchanged, `flags1`/`debug` are equal — for either `forceRpath` mode.  Rules
+    out an adversary that sets the rpath but drops a DT_NEEDED entry or clobbers
+    a flags/debug slot. -/
+theorem modifyRPath_set_preserves
+    (e : ValidElfFile) (newRpath : String) (fr : Bool) (h : e.dynamic.isSome)
+    (dyn : DynamicSection e.dynstr) (hDyn : e.dynamic = some dyn) :
+    ∃ (dyn' : DynamicSection (modifyRPath e fr .set newRpath h).dynstr),
+      (modifyRPath e fr .set newRpath h).dynamic = some dyn' ∧
+      dyn'.needed.size = dyn.needed.size ∧
+      dyn'.flags1 = dyn.flags1 ∧ dyn'.debug = dyn.debug := by
+  refine ⟨(dyn.rebase (StringSection.size_le_append e.dynstr newRpath)).setRpathTag fr
+            (e.dynstr.appendOffset newRpath), ?_, ?_, ?_, ?_⟩
+  · show (growDynstrDynamicOp e newRpath (fun _ off d => d.setRpathTag fr off)).dynamic = _
+    unfold growDynstrDynamicOp ValidElfFile.growDynstr
+    rw [hDyn]; rfl
+  · show (DynamicSection.setRpathTag (dyn.rebase _) fr _).needed.size = _
+    unfold DynamicSection.setRpathTag
+    cases fr <;> exact DynamicSection.rebase_needed_size _ _
+  · show (DynamicSection.setRpathTag (dyn.rebase _) fr _).flags1 = _
+    unfold DynamicSection.setRpathTag; cases fr <;> rfl
+  · show (DynamicSection.setRpathTag (dyn.rebase _) fr _).debug = _
+    unfold DynamicSection.setRpathTag; cases fr <;> rfl
+
 end Patchelf.Elf
