@@ -207,8 +207,9 @@ on files already having DT_DEBUG), `noDefaultLib` (`?`), `modifyRPath.set`
 (`setOsAbi_*`, `clearSymbolVersion_*`, `addNeeded_*` in `Elf/Ops/`) and the
 combinators in `Elf/ObservableCombinators.lean`, then add a
 post-condition theorem per weak op stating the observable change precisely
-(e.g. `noDefaultLib` ⇒ `flags1` has the DF_1_NODELETE-ish bit set;
-`modifyRPath.set` ⇒ `rpath = some <the new offset>`).  Files: `Elf/Ops/*.lean`.
+(e.g. `noDefaultLib` ⇒ `flags1` has the DF_1_NODEFLIB bit `0x800` set —
+see `DynamicSection.setNoDefaultLib`; `modifyRPath.set` ⇒ `rpath = some
+<the new offset>`).  Files: `Elf/Ops/*.lean`.
 
 =====================================================================
 ## TASK §4.2 — trailing-array DSL field kind + forward roundtrips
