@@ -83,7 +83,9 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 
 **The single fresh-agent handoff covering ALL open work is
 [`PICKUP-PROMPT-OP-TIER-D.md`](PICKUP-PROMPT-OP-TIER-D.md)** (despite the
-filename it now scopes §5.1 + §3.5b + §4.2 + §5.2, in priority order).
+filename it now scopes §5.1 + §3.5b + §4.2, in priority order; §5.2 is now
+closed).  The growing-ops half of §5.1 has its own design plan,
+[`PLAN-GROWING-OPS.md`](PLAN-GROWING-OPS.md).
 
 **Recommended pickup order (the complete open menu):**
 
@@ -126,10 +128,12 @@ filename it now scopes §5.1 + §3.5b + §4.2 + §5.2, in priority order).
   and need per-op `growEOFWith` layout reasoning instead of the shrink core.  The
   shrinking-op family is COMPLETE (4/4).  See §5.1 for the full chain + the
   reusable generic `OpToElfFactor` primitives.
-- **§5.2 strengthen weak `_observable` theorems** — small, independent,
-  good warm-up.  `removeNeeded` / `addDebugTag` / `noDefaultLib` /
-  `modifyRPath.set` / `modifySoname.set` have weak-or-missing adversarial
-  observables (see the §5.2 table).  No layout reasoning; pure typed-algebra.
+- **§5.2 strengthen weak `_observable` theorems — DONE.**  Every mutating op now
+  has an adversary-rejecting observable: `noDefaultLib_observable_strong` (the
+  last genuinely-missing case-split) + `modify{RPath,Soname}.set`'s
+  non-corruption `_set_preserves` companions landed this cycle, joining the
+  earlier `addDebugTag_observable_strong` / `removeNeeded_needed_size_lt`.  See
+  the §5.2 table — all rows are now "yes".  Pure typed-algebra, no layout.
 - **§4.2 trailing-array DSL field kind + `Verneed.write_decode`** —
   independent typed-side completeness item; `.verneed` is stored as `.raw`
   at the byte layer, so the byte-roundtrip doesn't depend on it.  Adds a
@@ -795,19 +799,25 @@ an adversarial identity function fails.  Current status per op:
 | setOsAbi | yes + preserves_everything_else | yes (changed + no-other-fields-changed) |
 | modifyExecstack | yes (set + clear) | yes (PF_X set on all PT_GNU_STACK) |
 | removeRpath | yes | partial (∀ i, tag ≠ rpathish) |
-| removeNeeded | yes | weak (identity on files without lib) |
+| removeNeeded | yes + `_needed_size_lt` | yes (strictly smaller `needed` when a match existed) |
 | clearSymbolVersion | yes (cleared + preserved_other) | yes |
 | setInterpreter | yes | yes (.interp = encoded path) |
-| addDebugTag | yes | weak (identity on files with DT_DEBUG) |
-| noDefaultLib | yes | ? |
+| addDebugTag | yes + `_observable_strong` | yes (present→preserved ∨ absent→`some 0` case-split) |
+| noDefaultLib | yes + `_observable_strong` | yes (present→`v\|\|\|DF_1_NODEFLIB` ∨ absent→`DF_1_NODEFLIB` case-split) |
 | addNeeded | yes | yes (`needed[0]` points at appended dynstr name; matches C++ front-insert) |
 | addRpathEntry | yes | yes |
-| modifyRPath.remove / .set | yes / ? | partial |
-| modifySoname.delete / .set | yes / ? | partial |
+| modifyRPath.remove / .set | yes / yes + `_set_preserves` | yes (`.set`: dynstr.lookup off = name, identity can't fake; + non-corruption companion) |
+| modifySoname.remove / .set | yes / yes + `_set_preserves` | yes (`.set`: dynstr.lookup off = name; + non-corruption companion) |
 | replaceNeeded / replaceNeededReuse | yes / yes | yes |
 | renameDynamicSymbols | yes | yes (`.st_name` points at appended `.dynstr` entry) |
 
-Strengthening the "weak" rows is tracked in §2.1.
+§5.2 is now COMPLETE — every mutating op has at least one adversary-rejecting
+observable.  The last gaps closed: `noDefaultLib_observable_strong` (the one
+genuinely-missing case-split), and `modify{RPath,Soname}.set`'s non-corruption
+companions `_set_preserves` (the `.set` ops already rejected identity via the
+`dynstr.lookup off = name` clause; these add the "touches only its slot" axis
+matching the fully-"yes" `setOsAbi`/`clearSymbolVersion` rows).  Earlier cycles
+landed `addDebugTag_observable_strong` and `removeNeeded_needed_size_lt`.
 
 #### 5.3 `SectionOps.lean` flatness — REOPENED
 

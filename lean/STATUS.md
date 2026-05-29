@@ -130,8 +130,10 @@
 > (`SectionOps.updateSectionContent_*Disjoint_shrink`) + the
 > `Adapter.{foldl_proj_size_le_add,idForIn_proj_size_le}` loop-size bridges are
 > landed.  **Fresh-agent handoff covering ALL remaining work**
-> (§5.1 + §3.5b + §4.2 + §5.2):
+> (§5.1 + §3.5b + §4.2; §5.2 now closed):
 > [`../research/PICKUP-PROMPT-OP-TIER-D.md`](../research/PICKUP-PROMPT-OP-TIER-D.md).
+> The growing-ops half of §5.1 has a dedicated design plan,
+> [`../research/PLAN-GROWING-OPS.md`](../research/PLAN-GROWING-OPS.md).
 >
 > **Tests: 54/54 shell tests passing; 110/110 Lean build jobs;
 > zero `sorry`s.**
@@ -670,6 +672,14 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
 
 (All landed: `addDebugTag_observable_strong`,
 `removeNeeded_needed_size_lt`, and shell test 00.  See ROADMAP §2.)
+
+**§5.2 op-observable completeness — DONE.**  Every mutating op now has an
+adversary-rejecting observable.  Final gaps closed: `noDefaultLib_observable_strong`
+(present→`v|||DF_1_NODEFLIB` ∨ absent→`DF_1_NODEFLIB` case-split, mirroring
+`addDebugTag_observable_strong`) + `modify{RPath,Soname}_set_preserves`
+(non-corruption companions — the `.set` ops already rejected identity via the
+`dynstr.lookup off = name` clause; these add the "touches only its slot,
+preserves `needed.size`/`flags1`/`debug`" axis).  All `[propext, Quot.sound]`.
 
 ### Priority 3 gaps (C++ patchelf parity)
 
