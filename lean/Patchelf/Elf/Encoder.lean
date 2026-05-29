@@ -699,6 +699,29 @@ theorem syncDtStrszInFile_phdrSectionDisjoint (e : ElfFile)
   simp only [syncDtStrszInFile_header, syncDtStrszInFile_phdrs, hT, hO, hS]
   exact h i hiE
 
+theorem syncDtStrszInFile_headerShdrDisjoint (e : ElfFile)
+    (h : e.headerShdrDisjoint) : (syncDtStrszInFile e).headerShdrDisjoint := by
+  unfold ElfFile.headerShdrDisjoint at h ⊢
+  simp only [syncDtStrszInFile_header, syncDtStrszInFile_sections_size]
+  exact h
+
+theorem syncDtStrszInFile_phdrShdrDisjoint (e : ElfFile)
+    (h : e.phdrShdrDisjoint) : (syncDtStrszInFile e).phdrShdrDisjoint := by
+  unfold ElfFile.phdrShdrDisjoint at h ⊢
+  simp only [syncDtStrszInFile_header, syncDtStrszInFile_phdrs, syncDtStrszInFile_sections_size]
+  exact h
+
+theorem syncDtStrszInFile_shdrSectionDisjoint (e : ElfFile)
+    (h : e.shdrSectionDisjoint) : (syncDtStrszInFile e).shdrSectionDisjoint := by
+  unfold ElfFile.shdrSectionDisjoint at h ⊢
+  intro i hi
+  have hiE : i < e.sections.size := by rw [syncDtStrszInFile_sections_size] at hi; exact hi
+  have hT := syncDtStrszInFile_sections_type e i hi hiE
+  have hO := syncDtStrszInFile_sections_offset e i hi hiE
+  have hS := syncDtStrszInFile_sections_encodedSize e i hi hiE
+  simp only [syncDtStrszInFile_header, syncDtStrszInFile_sections_size, hT, hO, hS]
+  exact h i hiE
+
 theorem syncDtStrszInFile_section0Null (e : ElfFile)
     (h : ∀ (h : 0 < e.sections.size), (e.sections[0]'h).type = ShType.SHT_NULL) :
     ∀ (h0 : 0 < (syncDtStrszInFile e).sections.size),

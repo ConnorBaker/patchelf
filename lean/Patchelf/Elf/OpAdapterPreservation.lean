@@ -40,7 +40,11 @@ open Patchelf.Elf (ElfFile OsAbi ProgramHeader EncodePreconditions ParsedElf
                      IdentBytesValid syncOk_of_normalized encode_eq_encode_normalized
                      prepLayout_syncDtStrsz_preserves_valid
                      identValid_normalized_of_eo sizeFit_normalized_of_eo
-                     headerFit_entry_normalized_of_eo nullEmpty_normalized_of_eo)
+                     headerFit_entry_normalized_of_eo nullEmpty_normalized_of_eo
+                     syncDtStrszInFile_section0Null
+                     syncDtStrszInFile_headerPhdrDisjoint syncDtStrszInFile_headerShdrDisjoint
+                     syncDtStrszInFile_phdrShdrDisjoint syncDtStrszInFile_headerSectionDisjoint
+                     syncDtStrszInFile_phdrSectionDisjoint)
 open Patchelf.Elf.Layout (PhType ShType)
 
 /-! ## Generic phdrs-map preservation
@@ -246,6 +250,26 @@ theorem spliceRegionsDisjoint_of_structural (eo : ElfFile)
   prepLayoutForEncode_produces_spliceRegionsDisjoint (syncDtStrszInFile eo)
     hS0 hHP hHS hPS hHSec hPSec
 
+/-- `spliceRegionsDisjoint_of_structural` stated on `eo` directly: the 6
+    structural input invariants + section-0-NULL are transported through the
+    first pre-encode pass (`syncDtStrszInFile`, which preserves all of them —
+    it only same-size-maps `.dynamic`).  This is the form ops actually want:
+    they establish the invariants on their `toElfFile` output `eo`, not on
+    `syncDtStrszInFile eo`. -/
+theorem spliceRegionsDisjoint_of_structural_eo (eo : ElfFile)
+    (hS0 : ∀ (h : 0 < eo.sections.size), (eo.sections[0]'h).type = ShType.SHT_NULL)
+    (hHP : eo.headerPhdrDisjoint) (hHS : eo.headerShdrDisjoint)
+    (hPS : eo.phdrShdrDisjoint) (hHSec : eo.headerSectionDisjoint)
+    (hPSec : eo.phdrSectionDisjoint) :
+    (prepLayoutForEncode (syncDtStrszInFile eo)).spliceRegionsDisjoint :=
+  spliceRegionsDisjoint_of_structural eo
+    (syncDtStrszInFile_section0Null eo hS0)
+    (syncDtStrszInFile_headerPhdrDisjoint eo hHP)
+    (syncDtStrszInFile_headerShdrDisjoint eo hHS)
+    (syncDtStrszInFile_phdrShdrDisjoint eo hPS)
+    (syncDtStrszInFile_headerSectionDisjoint eo hHSec)
+    (syncDtStrszInFile_phdrSectionDisjoint eo hPSec)
+
 /-! ## Obligation C: `EncodePreconditions` on the normalized form
 
     `encodePreconditions_of_layoutNormalized` assembles the full
@@ -280,14 +304,14 @@ theorem spliceRegionsDisjoint_of_structural (eo : ElfFile)
 theorem encodePreconditions_of_layoutNormalized (eo : ElfFile)
     {ds : Patchelf.Elf.StringTable} (hDs : eo.dynstr = some ds)
     (hFit : ds.bytes.size < UInt64.size)
-    -- structural input invariants (→ spliceDisjoint via §1.3a):
-    (hS0 : ∀ (h : 0 < (syncDtStrszInFile eo).sections.size),
-      ((syncDtStrszInFile eo).sections[0]'h).type = ShType.SHT_NULL)
-    (hHP : (syncDtStrszInFile eo).headerPhdrDisjoint)
-    (hHS : (syncDtStrszInFile eo).headerShdrDisjoint)
-    (hPS : (syncDtStrszInFile eo).phdrShdrDisjoint)
-    (hHSec : (syncDtStrszInFile eo).headerSectionDisjoint)
-    (hPSec : (syncDtStrszInFile eo).phdrSectionDisjoint)
+    -- structural input invariants on `eo` (→ spliceDisjoint via §1.3a,
+    -- transported through `syncDtStrszInFile`):
+    (hS0 : ∀ (h : 0 < eo.sections.size), (eo.sections[0]'h).type = ShType.SHT_NULL)
+    (hHP : eo.headerPhdrDisjoint)
+    (hHS : eo.headerShdrDisjoint)
+    (hPS : eo.phdrShdrDisjoint)
+    (hHSec : eo.headerSectionDisjoint)
+    (hPSec : eo.phdrSectionDisjoint)
     -- DERIVED-from-eo fields: identValid / sizeFit / nullEmpty / headerFit_entry:
     (hIdentEo : IdentBytesValid eo)
     (hSizeFitEo : ∀ (i : Nat) (h : i < eo.sections.size),
@@ -313,7 +337,7 @@ theorem encodePreconditions_of_layoutNormalized (eo : ElfFile)
       ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).entsize.val < UInt64.size) :
     EncodePreconditions (prepLayoutForEncode (syncDtStrszInFile eo)) where
   syncOk := syncOk_of_normalized eo hDs hFit
-  spliceDisjoint := spliceRegionsDisjoint_of_structural eo hS0 hHP hHS hPS hHSec hPSec
+  spliceDisjoint := spliceRegionsDisjoint_of_structural_eo eo hS0 hHP hHS hPS hHSec hPSec
   identValid := identValid_normalized_of_eo eo hIdentEo
   sizeFit := sizeFit_normalized_of_eo eo hSizeFitEo
   nullEmpty := nullEmpty_normalized_of_eo eo hNullEmptyEo
