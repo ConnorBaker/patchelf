@@ -74,5 +74,6 @@ public import Patchelf.Elf.Ops.Interpreter
 public import Patchelf.Elf.OpAdapterPreservation
 public import Patchelf.Elf.OpToElfFactor
 public import Patchelf.Elf.OpToElfFactorGrow
+public import Patchelf.Elf.GrowEOFDisjointOfBase
 
 @[expose] public section

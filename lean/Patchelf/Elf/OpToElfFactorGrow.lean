@@ -36,8 +36,6 @@
 -/
 module
 public import Patchelf.Elf.OpToElfFactor
-public import Patchelf.Elf.Ops.AddDebugTag
-public import Patchelf.Elf.Ops.NoDefaultLib
 @[expose] public section
 
 namespace Patchelf.Elf.Adapter
@@ -102,110 +100,8 @@ theorem tierD_roundtrip_of_grown_eo (eo : ElfFile)
 
 end Patchelf.Elf.Adapter
 
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable IdentBytesValid parse encode prepLayoutForEncode
-                     syncDtStrszInFile prepLayout_syncDtStrsz_preserves_valid)
-open Patchelf.Elf.Layout (ShType)
-
-/-! ## §A — `addDebugTag` Tier-D round-trip (cheapest grower)
-
-    `addDebugTag e h` is definitionally `mapDynamicOp e (·.addDebugTag)`
-    (`Ops/AddDebugTag.lean`): dynstr UNCHANGED, `.dynamic` grows by ≤1 (the
-    DT_DEBUG `appendUnless` block flips `none → some 0` when DT_DEBUG is absent).
-    A thin instantiation of `tierD_roundtrip_of_grown_eo` at
-    `eo := toElfFile template (addDebugTag typed h)` — closes by `exact` (every
-    hypothesis is stated on that `eo` / its normalized form). -/
-
-/-- Tier-D byte round-trip for `addDebugTag`.  The op-output structural
-    invariants are NOT hypothesized as such; instead the grow driver routes
-    through the layout pass, hypothesizing only the normalized form's
-    `spliceRegionsDisjoint` (`hSplice`) — the sanctioned "layout engine produced
-    disjoint output" surface — plus the standard `eo`-derived facts + `< 2^64`
-    position bounds. -/
-theorem toElfFile_addDebugTag_tierD_roundtrip_derived (template : ElfFile) (typed : ValidElfFile)
-    (h : typed.dynamic.isSome)
-    (hVal : (toElfFile template (addDebugTag typed h)).IsValid)
-    (hPhdrFit : ((toElfFile template (addDebugTag typed h)).phdrs.size + 1) < UInt16.size)
-    {ds : StringTable} (hDs : (toElfFile template (addDebugTag typed h)).dynstr = some ds)
-    (hFit : ds.bytes.size < UInt64.size)
-    (hSplice : (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).spliceRegionsDisjoint)
-    (hIdentEo : IdentBytesValid (toElfFile template (addDebugTag typed h)))
-    (hSizeFitEo : ∀ (i : Nat) (hi : i < (toElfFile template (addDebugTag typed h)).sections.size),
-      ((toElfFile template (addDebugTag typed h)).sections[i]'hi).shdrSize < UInt64.size)
-    (hNullEmptyEo : ∀ (i : Nat) (hi : i < (toElfFile template (addDebugTag typed h)).sections.size),
-      ((toElfFile template (addDebugTag typed h)).sections[i]'hi).type = ShType.SHT_NULL →
-      ∃ ty hOk bs, ((toElfFile template (addDebugTag typed h)).sections[i]'hi).content = .raw ty hOk bs ∧ bs.size = 0)
-    (hHdrEntryEo : (toElfFile template (addDebugTag typed h)).header.entry.val < UInt64.size)
-    (hHdrPhoff : (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).header.phoff.val < UInt64.size)
-    (hHdrShoff : (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).header.shoff.val < UInt64.size)
-    (hPhdrFitEn : ∀ (i : Nat) (hi : i < (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).phdrs.size),
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).phdrs[i]'hi).offset.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).phdrs[i]'hi).vaddr.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).phdrs[i]'hi).paddr.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).phdrs[i]'hi).filesz.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).phdrs[i]'hi).memsz.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).phdrs[i]'hi).align.val < UInt64.size)
-    (hShdrFitEn : ∀ (i : Nat) (hi : i < (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).sections.size),
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).sections[i]'hi).addr.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).sections[i]'hi).offset.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).sections[i]'hi).addralign.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h)))).sections[i]'hi).entsize.val < UInt64.size) :
-    parse (encode (toElfFile template (addDebugTag typed h)))
-      = .ok ⟨prepLayoutForEncode (syncDtStrszInFile (toElfFile template (addDebugTag typed h))),
-             prepLayout_syncDtStrsz_preserves_valid _ hVal hPhdrFit hDs⟩ :=
-  tierD_roundtrip_of_grown_eo (toElfFile template (addDebugTag typed h))
-    hVal hPhdrFit hDs hFit hSplice hIdentEo hSizeFitEo hNullEmptyEo hHdrEntryEo
-    hHdrPhoff hHdrShoff hPhdrFitEn hShdrFitEn
-
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable IdentBytesValid parse encode prepLayoutForEncode
-                     syncDtStrszInFile prepLayout_syncDtStrsz_preserves_valid)
-open Patchelf.Elf.Layout (ShType)
-
-/-! ## §B — `noDefaultLib` Tier-D round-trip (second `mapDynamicOp` grower)
-
-    `noDefaultLib e h` is definitionally `mapDynamicOp e (·.setNoDefaultLib)`
-    (`Ops/NoDefaultLib.lean`): dynstr UNCHANGED, `.dynamic` grows by ≤1 (the
-    DT_FLAGS_1 `appendUnless` block; `setNoDefaultLib` always sets `flags1`, so
-    the entry is added iff DT_FLAGS_1 was absent).  Identical shape to
-    `addDebugTag` — instantiates the same grow driver. -/
-
-/-- Tier-D byte round-trip for `noDefaultLib` (see `addDebugTag` capstone). -/
-theorem toElfFile_noDefaultLib_tierD_roundtrip_derived (template : ElfFile) (typed : ValidElfFile)
-    (h : typed.dynamic.isSome)
-    (hVal : (toElfFile template (noDefaultLib typed h)).IsValid)
-    (hPhdrFit : ((toElfFile template (noDefaultLib typed h)).phdrs.size + 1) < UInt16.size)
-    {ds : StringTable} (hDs : (toElfFile template (noDefaultLib typed h)).dynstr = some ds)
-    (hFit : ds.bytes.size < UInt64.size)
-    (hSplice : (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).spliceRegionsDisjoint)
-    (hIdentEo : IdentBytesValid (toElfFile template (noDefaultLib typed h)))
-    (hSizeFitEo : ∀ (i : Nat) (hi : i < (toElfFile template (noDefaultLib typed h)).sections.size),
-      ((toElfFile template (noDefaultLib typed h)).sections[i]'hi).shdrSize < UInt64.size)
-    (hNullEmptyEo : ∀ (i : Nat) (hi : i < (toElfFile template (noDefaultLib typed h)).sections.size),
-      ((toElfFile template (noDefaultLib typed h)).sections[i]'hi).type = ShType.SHT_NULL →
-      ∃ ty hOk bs, ((toElfFile template (noDefaultLib typed h)).sections[i]'hi).content = .raw ty hOk bs ∧ bs.size = 0)
-    (hHdrEntryEo : (toElfFile template (noDefaultLib typed h)).header.entry.val < UInt64.size)
-    (hHdrPhoff : (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).header.phoff.val < UInt64.size)
-    (hHdrShoff : (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).header.shoff.val < UInt64.size)
-    (hPhdrFitEn : ∀ (i : Nat) (hi : i < (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).phdrs.size),
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).phdrs[i]'hi).offset.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).phdrs[i]'hi).vaddr.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).phdrs[i]'hi).paddr.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).phdrs[i]'hi).filesz.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).phdrs[i]'hi).memsz.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).phdrs[i]'hi).align.val < UInt64.size)
-    (hShdrFitEn : ∀ (i : Nat) (hi : i < (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).sections.size),
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).sections[i]'hi).addr.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).sections[i]'hi).offset.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).sections[i]'hi).addralign.val < UInt64.size ∧
-      ((prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h)))).sections[i]'hi).entsize.val < UInt64.size) :
-    parse (encode (toElfFile template (noDefaultLib typed h)))
-      = .ok ⟨prepLayoutForEncode (syncDtStrszInFile (toElfFile template (noDefaultLib typed h))),
-             prepLayout_syncDtStrsz_preserves_valid _ hVal hPhdrFit hDs⟩ :=
-  tierD_roundtrip_of_grown_eo (toElfFile template (noDefaultLib typed h))
-    hVal hPhdrFit hDs hFit hSplice hIdentEo hSizeFitEo hNullEmptyEo hHdrEntryEo
-    hHdrPhoff hHdrShoff hPhdrFitEn hShdrFitEn
-
-end Patchelf.Elf.Adapter
+/-! The `mapDynamicOp` grower capstones (`addDebugTag`, `noDefaultLib`) live in
+    `GrowEOFDisjointOfBase.lean`, downstream of this driver and the `hSplice`
+    establisher `mapDynamicOp_spliceRegionsDisjoint_of_base` — so they DERIVE
+    `hSplice` from the no-op base's structural invariants + two offset side
+    conditions, rather than hypothesizing it. -/
