@@ -16,17 +16,18 @@
   (`applyVersym`…`applyInterp`, each at a section index ≠ the dynamic index)
   yields the factoring.
 
-  Structure:
-  * §A — generic `updateSectionContent` algebra (`_comm`, `_set_set`, content
-    congruences) and the `applyOpt`-commutation primitive.
-  * §B — per-apply commutation / `dynamicIdx`-preservation / `sections.size`-
-    preservation / content-at-`iDyn` lemmas (4 type-based applies + interp).
-  * §C — the chain factoring (`toElfFile_removeRpath_factor`) and content
-    extraction (`toElfFile_content_at_dynamicIdx`).
-  * §D — the structural-invariant transport (`removeRpath_structural_transport`),
-    composing the factoring + content + the `patchDynamicEntries` size bound
-    (`Adapter.patchDynamicEntries_stripRpath_size_le`, `Adapter.lean`) with the
-    `SectionOps.updateSectionContent_*Disjoint_shrink` family.
+  Structure (two namespace blocks):
+  * `namespace Patchelf.Elf` — generic `updateSectionContent` algebra
+    (`_comm`, `_set_set`, content congruences, `findUniqueTypeIdx` facts).
+  * `namespace Patchelf.Elf.Adapter` — the `applyOpt`-commutation primitive,
+    per-apply commutation / `dynamicIdx`-preservation / `sections.size`-
+    preservation / content-at-`iDyn` lemmas, the chain factoring
+    (`toElfFile_removeRpath_factor`), content extraction
+    (`toElfFile_content_at_dynamicIdx`), and the structural-invariant transport
+    (`removeRpath_structural_transport`) composing the factoring + content + the
+    `patchDynamicEntries` size bound (`Adapter.patchDynamicEntries_stripRpath_size_le`,
+    `Adapter.lean`) with the `SectionOps.updateSectionContent_*Disjoint_shrink`
+    family, plus the §E Tier-D capstone.
 
   The `applyInterp` commutation/content lemmas take the interp-vs-dynamic index
   distinctness as a hypothesis (`hInterpNe`); the `RemoveRpathFactorData` bundle
@@ -36,9 +37,9 @@
 module
 public import Patchelf.Elf.OpAdapterPreservation
 @[expose] public section
+
 namespace Patchelf.Elf
 open Patchelf.Elf.Layout (ShType)
-
 
 -- Sections of a double update, via getElem characterization (no rw under dep bound).
 theorem ElfFile.updateSectionContent_comm (e : ElfFile) (i j : Nat) (ci cj : SectionContent)
@@ -86,38 +87,6 @@ theorem ElfFile.updateSectionContent_comm (e : ElfFile) (i j : Nat) (ci cj : Sec
           ElfFile.updateSectionContent_getElem_ne _ i ci k hb hki hb1,
           ElfFile.updateSectionContent_getElem_ne _ i ci k hb2 hki,
           ElfFile.updateSectionContent_getElem_ne _ j cj k hb hkj hb2]
-
-end Patchelf.Elf
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
-
--- Generic: applyOpt with a FIXED type-based index commutes with a dynamic update
--- at iDyn, provided (a) the index recomputed on the updated file equals the same
--- target, and (b) that target ≠ iDyn.
-theorem applyOpt_updateSectionContent_dynamic_comm {α : Type}
-    (e : ElfFile) (iDyn : Nat) (dDyn : Array DynEntry)
-    (idxOf : ElfFile → Option Nat) (val? : Option α) (mk : α → SectionContent)
-    (hIdxPres : idxOf (e.updateSectionContent iDyn (.dynamic dDyn)) = idxOf e)
-    (hNe : ∀ i, idxOf e = some i → i ≠ iDyn) :
-    applyOpt (e.updateSectionContent iDyn (.dynamic dDyn)) (idxOf (e.updateSectionContent iDyn (.dynamic dDyn))) val? mk
-      = (applyOpt e (idxOf e) val? mk).updateSectionContent iDyn (.dynamic dDyn) := by
-  rw [hIdxPres]
-  unfold applyOpt
-  cases hIdx : idxOf e with
-  | none => simp
-  | some i =>
-      cases val? with
-      | none => simp
-      | some v =>
-          simp only
-          exact ElfFile.updateSectionContent_comm e iDyn i (.dynamic dDyn) (mk v) (Ne.symm (hNe i hIdx))
-
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf
-open Patchelf.Elf.Layout (ShType)
 
 -- Content at i after updating i with c is c.content-of (bound-free conclusion).
 theorem ElfFile.getElem_content_congr_sections (a b : ElfFile) (i : Nat)
@@ -172,31 +141,6 @@ theorem ElfFile.updateSectionContent_set_set (e : ElfFile) (i : Nat) (a b : Sect
             ElfFile.updateSectionContent_getElem_ne _ i b k hb hki hbb]
   · simp only [ElfFile.updateSectionContent, dif_neg hi]
 
-end Patchelf.Elf
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
-
--- applyDynamic on stripRpath td = applyDynamic on td, then re-update iDyn with
--- the stripRpath patch (last-wins set-set).
-theorem applyDynamic_stripRpath_factor (e₀ : ElfFile) {ds : StringSection}
-    (td : DynamicSection ds) (iDyn : Nat) (hIdx : e₀.dynamicIdx = some iDyn)
-    (bd : Array DynEntry) (hByte : e₀.dynamic = some bd) :
-    applyDynamic e₀ (ds := ds) (some td.stripRpath)
-      = (applyDynamic e₀ (ds := ds) (some td)).updateSectionContent iDyn
-          (.dynamic (patchDynamicEntries bd td.stripRpath)) := by
-  unfold applyDynamic
-  rw [hIdx, hByte]
-  -- both sides: e₀.updateSectionContent iDyn (.dynamic (patch bd stripRpath))
-  --   vs (e₀.update iDyn (.dynamic (patch bd td))).update iDyn (.dynamic (patch bd stripRpath))
-  rw [ElfFile.updateSectionContent_set_set]
-
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf
-open Patchelf.Elf.Layout (ShType)
-
 -- If iDyn is the dynamic index, the section there has type SHT_DYNAMIC.
 theorem ElfFile.type_at_dynamicIdx (e : ElfFile) (iDyn : Nat) (h : e.dynamicIdx = some iDyn) :
     ∃ hb : iDyn < e.sections.size, (e.sections[iDyn]'hb).type = ShType.SHT_DYNAMIC := by
@@ -213,11 +157,6 @@ theorem ElfFile.updateSectionContent_dynamic_findUniqueTypeIdx (e : ElfFile)
   intro hi
   rw [hTy]; rfl
 
-end Patchelf.Elf
-
-namespace Patchelf.Elf
-open Patchelf.Elf.Layout (ShType)
-
 -- A findUniqueTypeIdx for a NON-dynamic type cannot equal the dynamic index.
 theorem ElfFile.findUniqueTypeIdx_ne_dynamicIdx (e : ElfFile) (ty : ShType)
     (hTyNe : ty ≠ ShType.SHT_DYNAMIC) (iDyn : Nat) (hDyn : e.dynamicIdx = some iDyn)
@@ -227,11 +166,86 @@ theorem ElfFile.findUniqueTypeIdx_ne_dynamicIdx (e : ElfFile) (ty : ShType)
   obtain ⟨hb', hTyI⟩ := ElfFile.findUniqueTypeIdx_section_type e ty i hi
   rw [hTyD] at hTyI; exact hTyNe hTyI.symm
 
+-- Record header/phdrs override commutes with a sections update.
+theorem ElfFile.updateSectionContent_sections_eq_of_sections (a b : ElfFile) (i : Nat)
+    (c : SectionContent) (hs : a.sections = b.sections) :
+    (a.updateSectionContent i c).sections = (b.updateSectionContent i c).sections := by
+  by_cases hi : i < a.sections.size
+  · rw [ElfFile.updateSectionContent_sections a i c hi,
+        ElfFile.updateSectionContent_sections b i c (hs ▸ hi)]
+    simp only [hs]
+  · have hi' : ¬ i < b.sections.size := by rw [← hs]; exact hi
+    simp only [updateSectionContent, dif_neg hi, dif_neg hi']
+    exact hs
+
+theorem ElfFile.with_header_phdrs_updateSectionContent (e : ElfFile)
+    (hdr : ElfHeader) (phs : Array ProgramHeader) (i : Nat) (c : SectionContent) :
+    ({ e with header := hdr, phdrs := phs } : ElfFile).updateSectionContent i c
+      = { e.updateSectionContent i c with header := hdr, phdrs := phs } := by
+  unfold updateSectionContent
+  by_cases hi : i < e.sections.size <;> simp [hi]
+
+-- updateSectionContent preserves findUniqueTypeIdx ty when BOTH the new content
+-- and the original content at i have type ≠ ty.
+theorem ElfFile.updateSectionContent_findUniqueTypeIdx_both_ne (e : ElfFile)
+    (i : Nat) (c : SectionContent) (ty : ShType)
+    (hcNe : c.type ≠ ty)
+    (hOrigNe : ∀ hi : i < e.sections.size, (e.sections[i]'hi).type ≠ ty) :
+    (e.updateSectionContent i c).findUniqueTypeIdx ty = e.findUniqueTypeIdx ty := by
+  unfold ElfFile.findUniqueTypeIdx
+  by_cases hi : i < e.sections.size
+  · rw [show (e.updateSectionContent i c).sections =
+            e.sections.set i { e.sections[i]'hi with content := c } hi from
+          ElfFile.updateSectionContent_sections e i c hi]
+    apply ElfFile.firstIdxWhereIn_update_both_false _ _ i hi
+    · show decide (({ e.sections[i]'hi with content := c } : Section).type = ty) = false
+      simp [Section.type, hcNe]
+    · exact decide_eq_false_iff_not.mpr (hOrigNe hi)
+  · simp [ElfFile.updateSectionContent, dif_neg hi]
+
 end Patchelf.Elf
 
+
 namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
+open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent EncodePreconditions
+                     parse encode prepLayoutForEncode syncDtStrszInFile IdentBytesValid
+                     prepLayout_syncDtStrsz_preserves_valid)
 open Patchelf.Elf.Layout (ShType)
+
+-- Generic: applyOpt with a FIXED type-based index commutes with a dynamic update
+-- at iDyn, provided (a) the index recomputed on the updated file equals the same
+-- target, and (b) that target ≠ iDyn.
+theorem applyOpt_updateSectionContent_dynamic_comm {α : Type}
+    (e : ElfFile) (iDyn : Nat) (dDyn : Array DynEntry)
+    (idxOf : ElfFile → Option Nat) (val? : Option α) (mk : α → SectionContent)
+    (hIdxPres : idxOf (e.updateSectionContent iDyn (.dynamic dDyn)) = idxOf e)
+    (hNe : ∀ i, idxOf e = some i → i ≠ iDyn) :
+    applyOpt (e.updateSectionContent iDyn (.dynamic dDyn)) (idxOf (e.updateSectionContent iDyn (.dynamic dDyn))) val? mk
+      = (applyOpt e (idxOf e) val? mk).updateSectionContent iDyn (.dynamic dDyn) := by
+  rw [hIdxPres]
+  unfold applyOpt
+  cases hIdx : idxOf e with
+  | none => simp
+  | some i =>
+      cases val? with
+      | none => simp
+      | some v =>
+          simp only
+          exact ElfFile.updateSectionContent_comm e iDyn i (.dynamic dDyn) (mk v) (Ne.symm (hNe i hIdx))
+
+-- applyDynamic on stripRpath td = applyDynamic on td, then re-update iDyn with
+-- the stripRpath patch (last-wins set-set).
+theorem applyDynamic_stripRpath_factor (e₀ : ElfFile) {ds : StringSection}
+    (td : DynamicSection ds) (iDyn : Nat) (hIdx : e₀.dynamicIdx = some iDyn)
+    (bd : Array DynEntry) (hByte : e₀.dynamic = some bd) :
+    applyDynamic e₀ (ds := ds) (some td.stripRpath)
+      = (applyDynamic e₀ (ds := ds) (some td)).updateSectionContent iDyn
+          (.dynamic (patchDynamicEntries bd td.stripRpath)) := by
+  unfold applyDynamic
+  rw [hIdx, hByte]
+  -- both sides: e₀.updateSectionContent iDyn (.dynamic (patch bd stripRpath))
+  --   vs (e₀.update iDyn (.dynamic (patch bd td))).update iDyn (.dynamic (patch bd stripRpath))
+  rw [ElfFile.updateSectionContent_set_set]
 
 -- Commutation of applyVersym with a dynamic update at iDyn.
 theorem applyVersym_dynamic_comm (e : ElfFile) (iDyn : Nat) (d : Array DynEntry)
@@ -243,12 +257,6 @@ theorem applyVersym_dynamic_comm (e : ElfFile) (iDyn : Nat) (d : Array DynEntry)
     (fun f => f.findUniqueTypeIdx ShType.SHT_GNU_VERSYM) vs? _
     (ElfFile.updateSectionContent_dynamic_findUniqueTypeIdx e iDyn d hIdx _)
     (fun i hi => ElfFile.findUniqueTypeIdx_ne_dynamicIdx e _ (by decide) iDyn hIdx i hi)
-
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
 
 theorem applySysvHash_dynamic_comm (e : ElfFile) (iDyn : Nat) (d : Array DynEntry)
     (hIdx : e.dynamicIdx = some iDyn) (x? : Option SysVHashSection) :
@@ -280,13 +288,6 @@ theorem applyVerneed_dynamic_comm (e : ElfFile) (iDyn : Nat) (d : Array DynEntry
     (ElfFile.updateSectionContent_dynamic_findUniqueTypeIdx e iDyn d hIdx _)
     (fun i hi => ElfFile.findUniqueTypeIdx_ne_dynamicIdx e _ (by decide) iDyn hIdx i hi)
 
-end Patchelf.Elf.Adapter
-
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
-
 -- interpIdx is preserved under a `.dynamic` update at iDyn, and ≠ iDyn,
 -- given a content-dynamic witness + dynstr witness at iDyn (so iDyn ≠ shstrndx).
 theorem applyInterp_dynamic_comm (e : ElfFile) (iDyn : Nat) (d : Array DynEntry)
@@ -307,88 +308,6 @@ theorem applyInterp_dynamic_comm (e : ElfFile) (iDyn : Nat) (d : Array DynEntry)
     (fun f => f.findIdxByName ".interp".toUTF8) interp? _ hIdxPres
     (fun i hi => hInterpNe i hi)
 
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf
-open Patchelf.Elf.Layout (ShType)
-
--- Record header/phdrs override commutes with a sections update.
-theorem ElfFile.updateSectionContent_sections_eq_of_sections (a b : ElfFile) (i : Nat)
-    (c : SectionContent) (hs : a.sections = b.sections) :
-    (a.updateSectionContent i c).sections = (b.updateSectionContent i c).sections := by
-  by_cases hi : i < a.sections.size
-  · rw [ElfFile.updateSectionContent_sections a i c hi,
-        ElfFile.updateSectionContent_sections b i c (hs ▸ hi)]
-    simp only [hs]
-  · have hi' : ¬ i < b.sections.size := by rw [← hs]; exact hi
-    simp only [updateSectionContent, dif_neg hi, dif_neg hi']
-    exact hs
-
-theorem ElfFile.with_header_phdrs_updateSectionContent (e : ElfFile)
-    (hdr : ElfHeader) (phs : Array ProgramHeader) (i : Nat) (c : SectionContent) :
-    ({ e with header := hdr, phdrs := phs } : ElfFile).updateSectionContent i c
-      = { e.updateSectionContent i c with header := hdr, phdrs := phs } := by
-  unfold updateSectionContent
-  by_cases hi : i < e.sections.size <;> simp [hi]
-
-end Patchelf.Elf
-
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
-
-/-- Outer-chain commutation: the whole `applyInterp ∘ applyVerneed ∘ applyGnuHash
-    ∘ applySysvHash ∘ applyVersym` suffix commutes with a dynamic update at iDyn,
-    given the dynamic index is preserved across the chain and interp ≠ iDyn. -/
-theorem outerChain_dynamic_comm (e₀ : ElfFile) (iDyn : Nat) (newD : Array DynEntry)
-    (vs? : Option (Array UInt16)) (sh? : Option SysVHashSection)
-    (gh? : Option GnuHashSection) (vn? : Option VerneedSection)
-    (ip? : Option InterpSection)
-    (hIdxV : e₀.dynamicIdx = some iDyn)
-    (hIdxS : (applyVersym e₀ vs?).dynamicIdx = some iDyn)
-    (hIdxG : (applySysvHash (applyVersym e₀ vs?) sh?).dynamicIdx = some iDyn)
-    (hIdxN : (applyGnuHash (applySysvHash (applyVersym e₀ vs?) sh?) gh?).dynamicIdx = some iDyn)
-    (hbN : iDyn < (applyVerneed (applyGnuHash (applySysvHash (applyVersym e₀ vs?) sh?) gh?) vn?).sections.size)
-    (dynN : Array DynEntry)
-    (hContentN : ((applyVerneed (applyGnuHash (applySysvHash (applyVersym e₀ vs?) sh?) gh?) vn?).sections[iDyn]'hbN).content = .dynamic dynN)
-    {dsN : StringTable}
-    (hDsN : (applyVerneed (applyGnuHash (applySysvHash (applyVersym e₀ vs?) sh?) gh?) vn?).dynstr = some dsN)
-    (hInterpNe : ∀ i, (applyVerneed (applyGnuHash (applySysvHash (applyVersym e₀ vs?) sh?) gh?) vn?).interpIdx = some i → i ≠ iDyn) :
-    applyInterp (applyVerneed (applyGnuHash (applySysvHash (applyVersym
-      (e₀.updateSectionContent iDyn (.dynamic newD)) vs?) sh?) gh?) vn?) ip?
-      = (applyInterp (applyVerneed (applyGnuHash (applySysvHash (applyVersym
-          e₀ vs?) sh?) gh?) vn?) ip?).updateSectionContent iDyn (.dynamic newD) := by
-  rw [applyVersym_dynamic_comm e₀ iDyn newD hIdxV vs?,
-      applySysvHash_dynamic_comm _ iDyn newD hIdxS sh?,
-      applyGnuHash_dynamic_comm _ iDyn newD hIdxG gh?,
-      applyVerneed_dynamic_comm _ iDyn newD hIdxN vn?,
-      applyInterp_dynamic_comm _ iDyn newD hbN dynN hContentN hDsN hInterpNe ip?]
-
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
-
--- updateSectionContent preserves findUniqueTypeIdx ty when BOTH the new content
--- and the original content at i have type ≠ ty.
-theorem ElfFile.updateSectionContent_findUniqueTypeIdx_both_ne (e : ElfFile)
-    (i : Nat) (c : SectionContent) (ty : ShType)
-    (hcNe : c.type ≠ ty)
-    (hOrigNe : ∀ hi : i < e.sections.size, (e.sections[i]'hi).type ≠ ty) :
-    (e.updateSectionContent i c).findUniqueTypeIdx ty = e.findUniqueTypeIdx ty := by
-  unfold ElfFile.findUniqueTypeIdx
-  by_cases hi : i < e.sections.size
-  · rw [show (e.updateSectionContent i c).sections =
-            e.sections.set i { e.sections[i]'hi with content := c } hi from
-          ElfFile.updateSectionContent_sections e i c hi]
-    apply ElfFile.firstIdxWhereIn_update_both_false _ _ i hi
-    · show decide (({ e.sections[i]'hi with content := c } : Section).type = ty) = false
-      simp [Section.type, hcNe]
-    · exact decide_eq_false_iff_not.mpr (hOrigNe hi)
-  · simp [ElfFile.updateSectionContent, dif_neg hi]
-
 -- applyOpt with a non-dynamic content type preserves dynamicIdx, given the
 -- original section at the target (if in range) isn't DYNAMIC either.
 theorem applyOpt_dynamicIdx {α : Type} (e : ElfFile) (idx? : Option Nat) (val? : Option α)
@@ -408,12 +327,6 @@ theorem applyOpt_dynamicIdx {α : Type} (e : ElfFile) (idx? : Option Nat) (val? 
       exact ElfFile.updateSectionContent_findUniqueTypeIdx_both_ne e i (mk v) _
         (hmk v) (hOrig i hidx)
 
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
-
 -- applyDynamic (some _) preserves dynamicIdx (updates the dynamic section in place,
 -- keeping type SHT_DYNAMIC).
 theorem applyDynamic_dynamicIdx (e : ElfFile) {ds : StringSection}
@@ -431,12 +344,6 @@ theorem applyDynamic_dynamicIdx (e : ElfFile) {ds : StringSection}
     cases hb : e.dynamic with
     | none => simp only; exact (hudyn _).trans hIdx
     | some bd => simp only; exact (hudyn _).trans hIdx
-
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
 
 -- Each outer apply targets a section of its OWN type (≠ DYNAMIC), so it
 -- preserves dynamicIdx.  Proof: applyOpt_dynamicIdx with hmk (mk's type ≠ DYNAMIC)
@@ -473,12 +380,61 @@ theorem applyVerneed_dynamicIdx (e : ElfFile) (x? : Option VerneedSection) :
   obtain ⟨_, hTy⟩ := ElfFile.findUniqueTypeIdx_section_type e _ i hi
   rw [hTy]; decide
 
-end Patchelf.Elf.Adapter
+/-- Outer-chain commutation: the whole `applyInterp ∘ applyVerneed ∘ applyGnuHash
+    ∘ applySysvHash ∘ applyVersym` suffix commutes with a dynamic update at iDyn,
+    given the dynamic index is preserved across the chain and interp ≠ iDyn.
+    The three intermediate `dynamicIdx = some iDyn` facts are derived internally
+    from `hIdxV` via the `applyX_dynamicIdx` preservation lemmas. -/
+theorem outerChain_dynamic_comm (e₀ : ElfFile) (iDyn : Nat) (newD : Array DynEntry)
+    (vs? : Option (Array UInt16)) (sh? : Option SysVHashSection)
+    (gh? : Option GnuHashSection) (vn? : Option VerneedSection)
+    (ip? : Option InterpSection)
+    (hIdxV : e₀.dynamicIdx = some iDyn)
+    (hbN : iDyn < (applyVerneed (applyGnuHash (applySysvHash (applyVersym e₀ vs?) sh?) gh?) vn?).sections.size)
+    (dynN : Array DynEntry)
+    (hContentN : ((applyVerneed (applyGnuHash (applySysvHash (applyVersym e₀ vs?) sh?) gh?) vn?).sections[iDyn]'hbN).content = .dynamic dynN)
+    {dsN : StringTable}
+    (hDsN : (applyVerneed (applyGnuHash (applySysvHash (applyVersym e₀ vs?) sh?) gh?) vn?).dynstr = some dsN)
+    (hInterpNe : ∀ i, (applyVerneed (applyGnuHash (applySysvHash (applyVersym e₀ vs?) sh?) gh?) vn?).interpIdx = some i → i ≠ iDyn) :
+    applyInterp (applyVerneed (applyGnuHash (applySysvHash (applyVersym
+      (e₀.updateSectionContent iDyn (.dynamic newD)) vs?) sh?) gh?) vn?) ip?
+      = (applyInterp (applyVerneed (applyGnuHash (applySysvHash (applyVersym
+          e₀ vs?) sh?) gh?) vn?) ip?).updateSectionContent iDyn (.dynamic newD) := by
+  rw [applyVersym_dynamic_comm e₀ iDyn newD hIdxV vs?,
+      applySysvHash_dynamic_comm _ iDyn newD (by rw [applyVersym_dynamicIdx]; exact hIdxV) sh?,
+      applyGnuHash_dynamic_comm _ iDyn newD (by rw [applySysvHash_dynamicIdx, applyVersym_dynamicIdx]; exact hIdxV) gh?,
+      applyVerneed_dynamic_comm _ iDyn newD (by rw [applyGnuHash_dynamicIdx, applySysvHash_dynamicIdx, applyVersym_dynamicIdx]; exact hIdxV) vn?,
+      applyInterp_dynamic_comm _ iDyn newD hbN dynN hContentN hDsN hInterpNe ip?]
 
+@[simp] theorem applyOpt_sections_size {α : Type} (e : ElfFile) (idx? : Option Nat)
+    (val? : Option α) (mk : α → SectionContent) :
+    (applyOpt e idx? val? mk).sections.size = e.sections.size := by
+  unfold applyOpt
+  cases idx? <;> cases val? <;> simp [ElfFile.updateSectionContent_sections_size]
 
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
+@[simp] theorem applyVersym_sections_size (e : ElfFile) (vs? : Option (Array UInt16)) :
+    (applyVersym e vs?).sections.size = e.sections.size := by unfold applyVersym; simp
+@[simp] theorem applySysvHash_sections_size (e : ElfFile) (x? : Option SysVHashSection) :
+    (applySysvHash e x?).sections.size = e.sections.size := by unfold applySysvHash; simp
+@[simp] theorem applyGnuHash_sections_size (e : ElfFile) (x? : Option GnuHashSection) :
+    (applyGnuHash e x?).sections.size = e.sections.size := by unfold applyGnuHash; simp
+@[simp] theorem applyVerneed_sections_size (e : ElfFile) (x? : Option VerneedSection) :
+    (applyVerneed e x?).sections.size = e.sections.size := by unfold applyVerneed; simp
+@[simp] theorem applyInterp_sections_size (e : ElfFile) (ip? : Option InterpSection) :
+    (applyInterp e ip?).sections.size = e.sections.size := by unfold applyInterp; simp
+@[simp] theorem applyDynamic_sections_size (e : ElfFile) {ds : StringSection}
+    (dynamic? : Option (DynamicSection ds)) :
+    (applyDynamic e (ds := ds) dynamic?).sections.size = e.sections.size := by
+  unfold applyDynamic
+  cases dynamic? with
+  | none => simp
+  | some td =>
+    cases e.dynamicIdx with
+    | none => simp
+    | some i =>
+      cases e.dynamic with
+      | none => simp [ElfFile.updateSectionContent_sections_size]
+      | some bd => simp [ElfFile.updateSectionContent_sections_size]
 
 -- toElfFile expanded with the prefix file e₀ named, and the outer chain explicit.
 theorem toElfFile_expand (template : ElfFile) (typed : ValidElfFile) :
@@ -500,12 +456,6 @@ theorem removeRpath_fields (typed : ValidElfFile) (h : typed.dynamic.isSome) :
   ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 theorem removeRpath_dynamic (typed : ValidElfFile) (h : typed.dynamic.isSome) :
     (removeRpath typed h).dynamic = typed.dynamic.map (fun d => d.stripRpath) := rfl
-
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
 
 -- Inner-chain factoring (no header/phdrs override): the applyInterp∘…∘applyDynamic
 -- chain on stripRpath td equals the no-op chain, updated at iDyn.
@@ -542,11 +492,7 @@ theorem innerChain_removeRpath_factor (template : ElfFile) (typed : ValidElfFile
   rw [outerChain_dynamic_comm _ iDyn (patchDynamicEntries bd td.stripRpath)
         typed.versym typed.sysvHash typed.gnuHash typed.verneed typed.interp
         hIdxBase
-        (by rw [applyVersym_dynamicIdx]; exact hIdxBase)
-        (by rw [applySysvHash_dynamicIdx, applyVersym_dynamicIdx]; exact hIdxBase)
-        (by rw [applyGnuHash_dynamicIdx, applySysvHash_dynamicIdx, applyVersym_dynamicIdx]; exact hIdxBase)
         hbN dynN hContentN hDsN hInterpNe]
-
 
 -- Master factoring: eo = base.updateSectionContent iDyn (.dynamic newDyn).
 theorem toElfFile_removeRpath_factor (template : ElfFile) (typed : ValidElfFile)
@@ -585,12 +531,6 @@ theorem toElfFile_removeRpath_factor (template : ElfFile) (typed : ValidElfFile)
       hDsym, hVsym, hSh, hGh, hVn, hIp]
     rw [innerChain_removeRpath_factor template typed td iDyn hIdx0 bd hByte0 hbN dynN hContentN hDsN hInterpNe]
     exact ElfFile.updateSectionContent_sections_eq_of_sections _ _ iDyn _ rfl
-end Patchelf.Elf.Adapter
-
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
 
 -- applyDynamic (some td) sets content at iDyn to .dynamic (patch bd td).
 theorem applyDynamic_content_at_idx (e₀ : ElfFile) {ds : StringSection}
@@ -604,12 +544,6 @@ theorem applyDynamic_content_at_idx (e₀ : ElfFile) {ds : StringSection}
     simp only [applyDynamic, hIdx, hByte]
   rw [ElfFile.getElem_content_congr _ _ iDyn hEq hLt]
   exact ElfFile.updateSectionContent_content_self e₀ iDyn _ _
-
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
 
 -- applyOpt preserves content at iDyn when its target ≠ iDyn.
 theorem applyOpt_content_at_ne {α : Type} (e : ElfFile) (idx? : Option Nat) (val? : Option α)
@@ -627,12 +561,6 @@ theorem applyOpt_content_at_ne {α : Type} (e : ElfFile) (idx? : Option Nat) (va
       rw [ElfFile.getElem_content_congr _ _ iDyn happly hb']
       exact congrArg Section.content
         (ElfFile.updateSectionContent_getElem_ne e i (mk v) iDyn hb (Ne.symm (hNe i rfl)) _)
-
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
 
 -- Per-apply content preservation at the dynamic index (target ≠ iDyn).
 theorem applyVersym_content_at (e : ElfFile) (vs? : Option (Array UInt16)) (iDyn : Nat)
@@ -669,49 +597,6 @@ theorem applyInterp_content_at (e : ElfFile) (ip? : Option InterpSection) (iDyn 
     ((applyInterp e ip?).sections[iDyn]'hb').content = (e.sections[iDyn]'hb).content :=
   applyOpt_content_at_ne e e.interpIdx ip? _ iDyn hInterpNe hb hb'
 
-end Patchelf.Elf.Adapter
-
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
-
-@[simp] theorem applyOpt_sections_size {α : Type} (e : ElfFile) (idx? : Option Nat)
-    (val? : Option α) (mk : α → SectionContent) :
-    (applyOpt e idx? val? mk).sections.size = e.sections.size := by
-  unfold applyOpt
-  cases idx? <;> cases val? <;> simp [ElfFile.updateSectionContent_sections_size]
-
-@[simp] theorem applyVersym_sections_size (e : ElfFile) (vs? : Option (Array UInt16)) :
-    (applyVersym e vs?).sections.size = e.sections.size := by unfold applyVersym; simp
-@[simp] theorem applySysvHash_sections_size (e : ElfFile) (x? : Option SysVHashSection) :
-    (applySysvHash e x?).sections.size = e.sections.size := by unfold applySysvHash; simp
-@[simp] theorem applyGnuHash_sections_size (e : ElfFile) (x? : Option GnuHashSection) :
-    (applyGnuHash e x?).sections.size = e.sections.size := by unfold applyGnuHash; simp
-@[simp] theorem applyVerneed_sections_size (e : ElfFile) (x? : Option VerneedSection) :
-    (applyVerneed e x?).sections.size = e.sections.size := by unfold applyVerneed; simp
-@[simp] theorem applyInterp_sections_size (e : ElfFile) (ip? : Option InterpSection) :
-    (applyInterp e ip?).sections.size = e.sections.size := by unfold applyInterp; simp
-@[simp] theorem applyDynamic_sections_size (e : ElfFile) {ds : StringSection}
-    (dynamic? : Option (DynamicSection ds)) :
-    (applyDynamic e (ds := ds) dynamic?).sections.size = e.sections.size := by
-  unfold applyDynamic
-  cases dynamic? with
-  | none => simp
-  | some td =>
-    cases e.dynamicIdx with
-    | none => simp
-    | some i =>
-      cases e.dynamic with
-      | none => simp [ElfFile.updateSectionContent_sections_size]
-      | some bd => simp [ElfFile.updateSectionContent_sections_size]
-
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
-
 theorem toElfFile_content_at_dynamicIdx (template : ElfFile) (typed : ValidElfFile)
     (td : DynamicSection typed.dynstr) (iDyn : Nat)
     (hIdx0 : (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym).dynamicIdx = some iDyn)
@@ -744,12 +629,6 @@ theorem toElfFile_content_at_dynamicIdx (template : ElfFile) (typed : ValidElfFi
     _ = .dynamic (patchDynamicEntries bd td) :=
         applyDynamic_content_at_idx _ td iDyn hIdx0 bd hByte0 bD
 
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
-
 -- Bundle the per-op facts needed for removeRpath's structural transport.
 structure RemoveRpathFactorData (template : ElfFile) (typed : ValidElfFile)
     (h : typed.dynamic.isSome) where
@@ -762,7 +641,6 @@ structure RemoveRpathFactorData (template : ElfFile) (typed : ValidElfFile)
   hInterpNe : ∀ i, (applyVerneed (applyGnuHash (applySysvHash (applyVersym
               (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
                 (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed).interpIdx = some i → i ≠ iDyn
-  hb0 : iDyn < (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym).sections.size
   hbN : iDyn < (applyVerneed (applyGnuHash (applySysvHash (applyVersym
               (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
                 (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed).sections.size
@@ -774,12 +652,6 @@ structure RemoveRpathFactorData (template : ElfFile) (typed : ValidElfFile)
   hDsN : (applyVerneed (applyGnuHash (applySysvHash (applyVersym
               (applyDynamic (applyDynsym (applyDynstr template typed.dynstr) (ds := typed.dynstr) typed.dynsym)
                 (ds := typed.dynstr) (some td)) typed.versym) typed.sysvHash) typed.gnuHash) typed.verneed).dynstr = some dsN
-
-end Patchelf.Elf.Adapter
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent)
-open Patchelf.Elf.Layout (ShType)
 
 -- THE TRANSPORT: eo's 6 structural disjointness invariants + section0Null,
 -- derived from the no-op base's, via the factoring + content + shrink lemmas.
@@ -829,8 +701,6 @@ theorem removeRpath_structural_transport (template : ElfFile) (typed : ValidElfF
   · rw [hFactor]; exact ElfFile.updateSectionContent_shdrSectionDisjoint_shrink _ D.iDyn hLtBase _ _ hOld hShrink hShSec
   · rw [hFactor]; exact ElfFile.updateSectionContent_section0Null _ D.iDyn hLtBase _ _ hOld hS0
 
-end Patchelf.Elf.Adapter
-
 /-! ## §E — Capstone: `removeRpath` Tier-D round-trip with DERIVED structural invariants
 
     Composing `removeRpath_structural_transport` (the 6 structural disjointness
@@ -846,12 +716,6 @@ end Patchelf.Elf.Adapter
     derived-field facts, and the four `< 2^64` position bounds on the normalized
     form (the "file < 2^64" precondition; the runtime validator guards the
     pathological case). -/
-
-namespace Patchelf.Elf.Adapter
-open Patchelf.Elf (ElfFile StringTable DynEntry DynTag SectionContent EncodePreconditions
-                     parse encode prepLayoutForEncode syncDtStrszInFile IdentBytesValid
-                     prepLayout_syncDtStrsz_preserves_valid)
-open Patchelf.Elf.Layout (ShType)
 
 /-- Tier-D byte round-trip for `removeRpath` with the 6 structural disjointness
     invariants + section-0-NULL DERIVED (not hypothesized): they are transported
