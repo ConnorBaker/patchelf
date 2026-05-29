@@ -620,6 +620,68 @@ theorem syncDtStrszInFile_preserves_loadable (e : ElfFile) (hLoad : e.IsLoadable
     simp only [hPhdrs] at hPh hPhT ⊢
     exact hLoad.segment_congruent iPh hPh hPhT
 
+/-! ## `syncDtStrszInFile` preserves the structural disjointness inputs
+
+    These lift the `prepLayoutForEncode_preserves_loadable` preconditions
+    through the first pre-encode pass, so the two passes compose into the
+    end-to-end `prepLayout_syncDtStrsz_preserves_loadable` below. -/
+
+@[simp] theorem syncDtStrszInFile_header (e : ElfFile) :
+    (syncDtStrszInFile e).header = e.header := by
+  rcases syncDtStrszInFile_cases e with hEq | ⟨iDyn, hLt, dyn, nz, hContent, hEq⟩
+  · rw [hEq]
+  · rw [hEq]; simp
+
+/-- `dynstr` preserved (needs the dynstr witness for the disjoint-index facts). -/
+theorem syncDtStrszInFile_dynstr (e : ElfFile)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (syncDtStrszInFile e).dynstr = e.dynstr := by
+  rcases syncDtStrszInFile_cases e with hEq | ⟨iDyn, hLt, dyn, nz, hContent, hEq⟩
+  · rw [hEq]
+  · rw [hEq]
+    have hShstrNe : iDyn ≠ e.header.shstrndx.toNat :=
+      ElfFile.shstrndx_ne_of_content_dynamic_of_dynstr e hLt hContent hDs
+    apply ElfFile.updateSectionContent_dynstr_eq _ _ _ hShstrNe
+    intro iStr hStr
+    exact (ElfFile.dynstrIdx_target_ne_of_content_dynamic e hLt hContent hDs hStr).symm
+
+theorem syncDtStrszInFile_headerPhdrDisjoint (e : ElfFile)
+    (h : e.headerPhdrDisjoint) : (syncDtStrszInFile e).headerPhdrDisjoint := by
+  unfold ElfFile.headerPhdrDisjoint at h ⊢
+  simp only [syncDtStrszInFile_header, syncDtStrszInFile_phdrs]
+  exact h
+
+theorem syncDtStrszInFile_headerSectionDisjoint (e : ElfFile)
+    (h : e.headerSectionDisjoint) : (syncDtStrszInFile e).headerSectionDisjoint := by
+  unfold ElfFile.headerSectionDisjoint at h ⊢
+  intro i hi
+  have hiE : i < e.sections.size := by rw [syncDtStrszInFile_sections_size] at hi; exact hi
+  have hT := syncDtStrszInFile_sections_type e i hi hiE
+  have hO := syncDtStrszInFile_sections_offset e i hi hiE
+  have hS := syncDtStrszInFile_sections_encodedSize e i hi hiE
+  simp only [hT, hO, hS]
+  exact h i hiE
+
+theorem syncDtStrszInFile_phdrSectionDisjoint (e : ElfFile)
+    (h : e.phdrSectionDisjoint) : (syncDtStrszInFile e).phdrSectionDisjoint := by
+  unfold ElfFile.phdrSectionDisjoint at h ⊢
+  intro i hi
+  have hiE : i < e.sections.size := by rw [syncDtStrszInFile_sections_size] at hi; exact hi
+  have hT := syncDtStrszInFile_sections_type e i hi hiE
+  have hO := syncDtStrszInFile_sections_offset e i hi hiE
+  have hS := syncDtStrszInFile_sections_encodedSize e i hi hiE
+  simp only [syncDtStrszInFile_header, syncDtStrszInFile_phdrs, hT, hO, hS]
+  exact h i hiE
+
+theorem syncDtStrszInFile_section0Null (e : ElfFile)
+    (h : ∀ (h : 0 < e.sections.size), (e.sections[0]'h).type = ShType.SHT_NULL) :
+    ∀ (h0 : 0 < (syncDtStrszInFile e).sections.size),
+      ((syncDtStrszInFile e).sections[0]'h0).type = ShType.SHT_NULL := by
+  intro h0
+  have h0E : 0 < e.sections.size := by rw [syncDtStrszInFile_sections_size] at h0; exact h0
+  rw [syncDtStrszInFile_sections_type e 0 h0 h0E]
+  exact h h0E
+
 /-- The per-section step the encoder folds.  Extracted to a named def
     so foldl-induction proofs can match the function shape. -/
 def sectionFoldStep (buf : ByteArray) (s : Section) : ByteArray :=
@@ -820,6 +882,39 @@ theorem prepLayoutForEncode_preserves_loadable (e : ElfFile)
     (prepLayoutForEncode e).IsLoadable :=
   prepLayoutForEncodeWith_preserves_loadable none e hLoad hPhdrFit
     hSection0Null hHeaderPhdr hHeaderSec hPhdrSec hDs
+
+/-- End-to-end: the IR the encoder actually feeds to `encodeBody`
+    (`prepLayoutForEncode (syncDtStrszInFile e)`) is `IsLoadable`,
+    given a loadable input + the parser-derivable structural invariants.
+
+    This is the full composition of both pre-encode passes — the
+    DT_STRSZ resync (`syncDtStrszInFile`) then the layout pre-pass
+    (`prepLayoutForEncode`).  `syncDtStrszInFile` preserves every
+    precondition the second pass needs (loadability, the phnum bound, the
+    section-0-NULL and disjointness invariants, and `dynstr`), so the two
+    `_preserves_loadable` theorems chain.  Note `encode_eq` shows
+    `encode e = encodeBody (prepLayoutForEncode (syncDtStrszInFile e))`,
+    so this is loadability of exactly the structure `encodeBody` serializes. -/
+theorem prepLayout_syncDtStrsz_preserves_loadable (e : ElfFile)
+    (hLoad : e.IsLoadable)
+    (hPhdrFit : (e.phdrs.size + 1) < UInt16.size)
+    (hSection0Null : ∀ (h : 0 < e.sections.size),
+      (e.sections[0]'h).type = ShType.SHT_NULL)
+    (hHeaderPhdr : e.headerPhdrDisjoint)
+    (hHeaderSec  : e.headerSectionDisjoint)
+    (hPhdrSec    : e.phdrSectionDisjoint)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (prepLayoutForEncode (syncDtStrszInFile e)).IsLoadable := by
+  have hLoad' := syncDtStrszInFile_preserves_loadable e hLoad hDs
+  have hDs' : (syncDtStrszInFile e).dynstr = some ds := by
+    rw [syncDtStrszInFile_dynstr e hDs]; exact hDs
+  exact prepLayoutForEncode_preserves_loadable (syncDtStrszInFile e) hLoad'
+    (by rw [syncDtStrszInFile_phdrs]; exact hPhdrFit)
+    (syncDtStrszInFile_section0Null e hSection0Null)
+    (syncDtStrszInFile_headerPhdrDisjoint e hHeaderPhdr)
+    (syncDtStrszInFile_headerSectionDisjoint e hHeaderSec)
+    (syncDtStrszInFile_phdrSectionDisjoint e hPhdrSec)
+    hDs'
 
 /-! ## Sizes match: writeContent.size = encodedSize.
 
