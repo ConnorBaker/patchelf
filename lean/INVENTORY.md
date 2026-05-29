@@ -930,9 +930,39 @@ Supporting §5.1 lemmas live in their home modules:
 
 ---
 
+## Patchelf/Elf/OpToElfFactor.lean (§5.1 op-through-toElfFile factoring)
+
+`removeRpath`'s op-output structural-invariant DERIVATION (criterion 2).
+Factors `toElfFile template (removeRpath typed h)` as a single `.dynamic`-shrink
+`updateSectionContent` on the no-op output and transports the structural
+invariants.  (Names only; see the file for full signatures.)
+
+| Kind | Name | What it gives |
+|---|---|---|
+| theorem | `ElfFile.updateSectionContent_{comm,set_set}` | distinct-index commutation / same-index last-wins (getElem-characterization, no `Array.set` motive wall) |
+| theorem | `ElfFile.getElem_content_congr{,_sections}` / `updateSectionContent_content_self` | content-projection congruences past the dependent bound |
+| theorem | `ElfFile.{type_at_dynamicIdx,findUniqueTypeIdx_ne_dynamicIdx,updateSectionContent_dynamic_findUniqueTypeIdx,updateSectionContent_findUniqueTypeIdx_both_ne}` | dynamic-index facts for the commutation obligations |
+| theorem | `applyOpt_{updateSectionContent_dynamic_comm,dynamicIdx,content_at_ne,sections_size}` | the `applyOpt` commutation/preservation primitives |
+| theorem | `apply{Versym,SysvHash,GnuHash,Verneed,Interp}_{dynamic_comm,dynamicIdx,content_at,sections_size}` | per-outer-apply commutation / idx / content / size (interp parameterized on interp-vs-dynamic distinctness) |
+| theorem | `applyDynamic_{stripRpath_factor,dynamicIdx,content_at_idx,sections_size}` | the `applyDynamic` layer: stripRpath factoring + idx/content/size |
+| theorem | `outerChain_dynamic_comm` | the whole `applyVersym…applyInterp` suffix commutes with the dynamic update |
+| theorem | `ElfFile.with_header_phdrs_updateSectionContent` / `updateSectionContent_sections_eq_of_sections` | the header/phdrs override commutes; sections depend only on input sections |
+| theorem | `toElfFile_{expand,removeRpath_factor}` / `innerChain_removeRpath_factor` | the factoring `eo = (toElfFile template typed).updateSectionContent iDyn (.dynamic newDyn)` |
+| theorem | `removeRpath_{dynstr,fields,dynamic}` | `removeRpath` changes only `.dynamic` |
+| theorem | `toElfFile_content_at_dynamicIdx` | no-op output content at iDyn = `.dynamic (patchDynamicEntries (template bytes) typed.dynamic)` (calc/`.trans`, not `rw` — giant-term whnf timeout) |
+| structure | `RemoveRpathFactorData` | per-op witnesses (prefix dynamic idx/content + interp distinctness) |
+| theorem | `removeRpath_structural_transport` | the 6 disjointness invariants + section-0-NULL on `eo`, DERIVED from the no-op output's via the shrink core |
+| theorem | `toElfFile_removeRpath_tierD_roundtrip_derived` | **capstone**: full byte round-trip, op-output structural invariants derived |
+
+Relative size bound `patchDynamicEntries_stripRpath_size_le` + the compositional
+`patchDynamicEntries` refactor (`PatchState`/`patchStep`/`patchInit`/
+`appendSurplusNeeded`/`appendUnless` + `Array.foldl_rel`) live in `Adapter.lean`.
+
+---
+
 ## Summary statistics
 
-- **Files scanned:** 44 Lean files
+- **Files scanned:** 45 Lean files
 - **`sorry` placeholders:** 0
 - **`axiom` declarations:** 0
 - **Master theorem:** `parse_encode_roundtrip` at `Elf/ByteRoundtrip.lean:2327`
