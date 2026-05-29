@@ -572,6 +572,33 @@ transport are subsumed: (b) is now the `toElfFile_<op>_eq` commutation
 lemma shape used in Tier 1; (c) is unnecessary given the direct
 clause-by-clause transport.
 
+**Tier 2/3 scaffold landed (commit `5c27487`).**  The reusable spine
+for the round-trip is in `OpAdapterPreservation.lean`:
+
+* `encode_roundtrip_via_normalized eo` — routes the round-trip through
+  the encoder-normalized form `en := prepLayoutForEncode
+  (syncDtStrszInFile eo)` (the structure `encodeBody` actually
+  serializes, per `encode_eq`).  Reduces each op's Tier D to:
+  `en.IsValid` (§1.2), `EncodePreconditions en`, and
+  `encode eo = encode en` (pre-pass idempotence).
+* `spliceRegionsDisjoint_of_structural eo` — discharges the hardest
+  `EncodePreconditions` clause from the 5 structural input invariants
+  on `syncDtStrszInFile eo` (§1.3a).
+
+**Genuinely-remaining open core** (per op, or once-for-all as lemmas
+about the pre-passes): the residual `EncodePreconditions en` fields
+(`syncOk`, `identValid`, `sizeFit`, `nullEmpty`, the `headerFit`/
+`phdrFit`/`shdrFit` bounds) and the idempotence fact
+`encode eo = encode en`.  These are NOT parser-derivable — `en` is an
+encoder output, not a parse result — so they need new lemmas:
+(1) `syncDtStrszInFile` establishes `dynStrszCoherent` and the layout
+pre-pass preserves it (→ `syncOk`); (2) `prepLayoutForEncode ∘
+syncDtStrszInFile` is idempotent (→ `hIdem`); (3) the fit/identValid/
+nullEmpty bounds survive the pre-passes (mostly structural, since
+`growEOFWith` only appends `roundUp`-bounded regions).  This is the
+substantive sub-project that remains; the scaffold makes each piece a
+named, independently-attackable obligation rather than a tangle.
+
 §1.1 (Parser establishes `IsLoadable`) and §1.2
 (`growEOFWith_preserves_loadable`, lifted to the end-to-end
 `prepLayout_syncDtStrsz_preserves_loadable`) are both closed — they
