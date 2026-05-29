@@ -878,6 +878,39 @@ This file is mostly Nat wrappers and constants.
 
 ---
 
+## Patchelf/Elf/OpAdapterPreservation.lean (§5.1 op-level Tier D)
+
+Op→byte adapter preservation.  Tier-1 ops + the Tier-2/3 round-trip
+scaffold + the three closed open-core obligations + the composed driver +
+the two shrinking-op round-trips.  (Names only; see the file for full
+signatures.)
+
+| Kind | Name | What it gives |
+|---|---|---|
+| theorem | `isValid_of_phdrs_map` / `isLoadable_of_phdrs_map` | flags-only phdr map preserves IsValid/IsLoadable |
+| theorem | `toElfFile_setOsAbi_{eq,sections,phdrs,preserves_valid,preserves_loadable}` | Tier-1 `setOsAbi` |
+| theorem | `toElfFile_modifyExecstack_{eq,preserves_loadable}` | Tier-1 `modifyExecstack` |
+| theorem | `encode_roundtrip_via_normalized` | scaffold spine: round-trip via normalized `en` |
+| theorem | `spliceRegionsDisjoint_of_structural` | `en.spliceRegionsDisjoint` from 6 structural invariants (§1.3a) |
+| theorem | `encodePreconditions_of_layoutNormalized` | Obligation C: full `EncodePreconditions en` (A + scaffold + 8 residual hyps) |
+| theorem | `tierD_roundtrip` | composed A+B+C driver: `parse (encode eo) = .ok ⟨en, _⟩` |
+| theorem | `tierD_roundtrip_of_valid` | driver stated on `eo` (folds in the validity capstone) |
+| theorem | `toElfFile_removeRpath_tierD_roundtrip` | full Tier-D round-trip for `removeRpath` |
+| theorem | `toElfFile_removeNeeded_tierD_roundtrip` | full Tier-D round-trip for `removeNeeded` |
+
+Supporting §5.1 lemmas live in their home modules: Obligation A
+establishment/preservation in `Encoder.lean`
+(`syncDtStrszInFile_establishes_dynStrszCoherent`,
+`prepLayout_syncDtStrsz_dynStrszCoherent`) + `GrowEOF.lean`
+(`growEOFWith_dynamic`, `syncDtAddrTagsInFile_preserves_dynStrszCoherent`,
+`syncDtAddrEntry_eq_self_of_not_addressTag`); Obligation A/B capstones
+(`syncOk_of_normalized`, `renormalize_eq_self`, `encode_eq_encode_normalized`)
+in `ByteRoundtrip.lean`; the validity capstone
+(`prepLayout_syncDtStrsz_preserves_valid`) + Obligation B helpers in
+`Encoder.lean`.
+
+---
+
 ## Summary statistics
 
 - **Files scanned:** 44 Lean files

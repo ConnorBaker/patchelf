@@ -49,18 +49,37 @@
 > loadable output (`IsValid + sectionsNonOverlapping +
 > ptInterpAgreement + ptDynamicAgreement + segmentCongruence`).
 >
-> **§5.1 op-level Tier D started.** The historical `Adapter.toElfFile`
-> dependent-type obstacle is resolved (the `applyX` helpers were
-> un-bundled to take typed *fields*, with the dependent index `ds`
-> free).  `Patchelf/Elf/OpAdapterPreservation.lean` ships full
-> `_preserves_loadable` for the two Tier-1 ops (`setOsAbi`,
-> `modifyExecstack` — section positions unchanged), the reusable
-> `isValid_of_phdrs_map` / `isLoadable_of_phdrs_map` helpers, and the
-> Tier-2/3 round-trip scaffold (`encode_roundtrip_via_normalized` +
-> `spliceRegionsDisjoint_of_structural`).  The 12 dynstr/`.dynamic`-
-> resizing ops route through the scaffold; their remaining obligations
-> (normalized-form `EncodePreconditions` + pre-pass idempotence) are
-> the documented open core.  Fresh-agent handoff at
+> **§5.1 op-level Tier D — open core closed; shrinking ops round-trip.**
+> The historical `Adapter.toElfFile` dependent-type obstacle is resolved
+> (the `applyX` helpers were un-bundled to take typed *fields*, with the
+> dependent index `ds` free).  Tier-1 ops (`setOsAbi`, `modifyExecstack`)
+> have full `_preserves_loadable`.  The three "open core" obligations on
+> the encoder-normalized form `en := prepLayoutForEncode (syncDtStrszInFile
+> eo)` are now closed:
+> * **A — `syncOk`** (`syncOk_of_normalized`): `syncDtStrszInFile`
+>   establishes `dynStrszCoherent` by construction (DT_STRSZ ← `dynstr`
+>   byte length, needs `< 2^64`), and the layout pre-pass preserves it
+>   (`growEOFWith_dynamic`/`_dynstr` + `syncDtAddrTagsInFile` is identity
+>   on DT_STRSZ — not an address tag).
+> * **B — `hIdem`** (`encode_eq_encode_normalized`): re-normalizing `en`
+>   is a no-op (`syncOk` + layout idempotence from `en.spliceRegionsDisjoint`),
+>   so `encode eo = encode en` via `encode_eq` twice.
+> * **C — residual `EncodePreconditions`** (`encodePreconditions_of_layoutNormalized`):
+>   `syncOk` (A) + `spliceDisjoint` (§1.3a scaffold) derived; the 8
+>   fit/validity fields supplied as explicit hypotheses on `en` — the
+>   position/size `< 2^64` bounds are genuinely non-derivable for an
+>   encoder output (unbounded `roundUp` offsets), the sanctioned "file <
+>   2^64" intervention.
+>
+> Composed driver `tierD_roundtrip` / `tierD_roundtrip_of_valid` glues
+> A+B+C + the §1.2 validity capstone (`prepLayout_syncDtStrsz_preserves_valid`,
+> new) into `parse (encode eo) = .ok ⟨en, _⟩`.  The two shrinking ops
+> `removeRpath` / `removeNeeded` ship full Tier-D round-trips
+> (`toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip`) via the driver,
+> taking their per-op `eo` facts (validity + structural invariants + fits)
+> as hypotheses (parser-derivable / transportable across a shrinking
+> `.dynamic` rewrite; mechanical discharge from the typed op is the
+> remaining per-op layout work).  Fresh-agent handoff at
 > [`../research/PICKUP-PROMPT-OP-TIER-D.md`](../research/PICKUP-PROMPT-OP-TIER-D.md).
 >
 > **Tests: 54/54 shell tests passing; 109/109 Lean build jobs;
@@ -167,7 +186,7 @@ Total Lean source: ~21,200 LOC. Distribution by category:
 | Layout pipeline + validator (`Encoder` + `GrowEOF` + `Validate`) | ~3,740 | growEOF + syncDtAddrTagsInFile + pre-write validator + `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` chain + the end-to-end `_preserves_loadable` ladder |
 | `SectionOps` | ~420 | `updateSectionContent` + projection / index-preservation / typed-accessor preservation helpers |
 | 14 ops (`Elf/Ops/*.lean`) | ~1,080 | mutating operations |
-| Op-level Tier D (`OpAdapterPreservation`) | ~240 | Tier-1 op `_preserves_loadable` + phdrs-map helpers + the Tier-2/3 round-trip scaffold (§5.1) |
+| Op-level Tier D (`OpAdapterPreservation`) | ~440 | Tier-1 op `_preserves_loadable` + phdrs-map helpers + the Tier-2/3 round-trip scaffold, Obligation-C package, `tierD_roundtrip` drivers, and the two shrinking-op round-trips (§5.1) |
 | CLI + Main + Log | ~990 | lean4-cli subcommand tree + stderr trace logger |
 | Tactic (`SpliceSimproc*`) | ~200 | `simp_splice` macro + `[splice_simp]` simp set |
 | Misc (root, ElfFile, DynamicLemmas) | ~980 | structural |
@@ -497,24 +516,43 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   `Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
   is the composed API the op-level Tier D proofs consume.  See
   §"Tier D" above for the supporting chain.
-- **Op-level Tier D — IN PROGRESS (Tier 1 landed).**  The
-  `Adapter.toElfFile` dependent-type obstacle is resolved: the
-  `applyX` helpers were un-bundled to take the typed *fields*
-  (dependent index `ds` free) instead of `typed : ValidElfFile`, so
-  a header-only op no longer rewrites the index and the dependent
-  matches reduce.  `Patchelf/Elf/OpAdapterPreservation.lean` ships
-  `toElfFile_{setOsAbi,modifyExecstack}_preserves_loadable` (Tier 1:
-  ops that don't shift byte-level section positions) plus the
-  reusable `isValid_of_phdrs_map` / `isLoadable_of_phdrs_map`.
+- **Op-level Tier D — open core CLOSED; shrinking ops round-trip.**
+  The `Adapter.toElfFile` dependent-type obstacle is resolved (the
+  `applyX` helpers take typed *fields*, dependent index `ds` free).
+  `Patchelf/Elf/OpAdapterPreservation.lean` ships
+  `toElfFile_{setOsAbi,modifyExecstack}_preserves_loadable` (Tier 1)
+  plus `isValid_of_phdrs_map` / `isLoadable_of_phdrs_map`.
 
-  The other 12 ops change byte-level `.dynamic` size (even
-  `noDefaultLib`/`addDebugTag` can append a DT_FLAGS_1/DT_DEBUG
-  entry via `patchDynamicEntries`), so their raw adapter output
-  isn't laid out — `encode`'s `growEOFWith` is what restores it.
-  Their target is the full Tier D round-trip
-  `parse (encode (toElfFile … (op typed)))`, composing a per-op
-  `_produces_spliceRegionsDisjoint` with the landed §1.2 pipeline.
-  See ROADMAP §5.1 for the tier map.
+  The other 12 ops change byte-level `.dynamic` size, so their raw
+  adapter output isn't laid out — `encode`'s `growEOFWith` restores
+  it.  Their target is the full Tier D round-trip on the
+  encoder-normalized form `en := prepLayoutForEncode (syncDtStrszInFile
+  eo)` (what `encodeBody` serializes, per `encode_eq`).  All three
+  "open core" obligations on `en` are now closed:
+  * **A → `syncOk`** — `syncOk_of_normalized` (`ByteRoundtrip.lean`):
+    establishment `syncDtStrszInFile_establishes_dynStrszCoherent`
+    (`Encoder.lean`) + preservation `prepLayoutForEncode_preserves_dynStrszCoherent`
+    (`growEOFWith_dynamic` + `syncDtAddrTagsInFile_preserves_dynStrszCoherent`,
+    GrowEOF.lean).
+  * **B → `hIdem`** — `encode_eq_encode_normalized` (`ByteRoundtrip.lean`)
+    via `renormalize_eq_self` + `prepLayoutForEncode_{dynstr,eq_self_of_spliceRegionsDisjoint}`
+    (`Encoder.lean`).
+  * **C → residual `EncodePreconditions`** —
+    `encodePreconditions_of_layoutNormalized`
+    (`OpAdapterPreservation.lean`): `syncOk` (A) + `spliceDisjoint`
+    (§1.3a) derived; the 8 fit/validity fields are hypotheses on `en`
+    (position/size `< 2^64` bounds genuinely non-derivable for the
+    `roundUp`-laid-out encoder output — the sanctioned "file < 2^64"
+    intervention; runtime `Validate.IsLoadableBytes` guards the
+    pathological case).
+
+  Composed driver `tierD_roundtrip` / `tierD_roundtrip_of_valid` glues
+  A+B+C + the new validity capstone `prepLayout_syncDtStrsz_preserves_valid`
+  into `parse (encode eo) = .ok ⟨en, _⟩`.  Shipped worked examples:
+  `toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip` (the two
+  shrinking ops).  Remaining per-op work: mechanically discharge each
+  op's `eo` facts (validity + 6 structural invariants + residual fits)
+  from the typed op — currently stated as hypotheses.  See ROADMAP §5.1.
 
 ### Priority 2 gaps (test / spec coverage)
 

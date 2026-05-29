@@ -28,10 +28,14 @@ forward-looking view.
 > and `_preserves_loadable` ladders close, including the top-level
 > `growEOFWith_preserves_loadable` dispatch and the end-to-end
 > `prepLayout_syncDtStrsz_preserves_loadable`.  §5.1 (op-level Tier D)
-> is **in progress**: the `toElfFile` dependent-type obstacle is
-> resolved, Tier-1 ops + the Tier-2/3 scaffold landed, the Tier-2/3
-> open core is documented (canonical next pickup —
-> [`PICKUP-PROMPT-OP-TIER-D.md`](PICKUP-PROMPT-OP-TIER-D.md)).  §3.5a
+> is **in progress, open core CLOSED**: the `toElfFile` dependent-type
+> obstacle is resolved, Tier-1 ops + the Tier-2/3 scaffold landed, and
+> the three open-core obligations (A `syncOk`, B `hIdem`, C residual
+> `EncodePreconditions`) are now proven and composed into the
+> `tierD_roundtrip` driver, applied to the two shrinking ops
+> (`removeRpath`/`removeNeeded`).  Remaining: per-op discharge of each
+> op's `eo` facts (currently hypotheses) — canonical next pickup,
+> [`PICKUP-PROMPT-OP-TIER-D.md`](PICKUP-PROMPT-OP-TIER-D.md).  §3.5a
 > fully landed (both in-place and relocatePht sub-cases — see below).
 > §1.1 parser side landed.
 >
@@ -70,19 +74,21 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 - **§5.1 op-level Tier D — IN PROGRESS, CANONICAL NEXT PICKUP.**
   The `Adapter.toElfFile` dependent-type obstacle is RESOLVED (the
   un-bundling refactor, commit `8ffe2cb`).  Tier 1 ops (`setOsAbi`,
-  `modifyExecstack` — section positions unchanged) have full
-  `_preserves_loadable` (`OpAdapterPreservation.lean`, commit
-  `8ecaba0`), and the Tier-2/3 round-trip scaffold is in place
-  (`encode_roundtrip_via_normalized` + `spliceRegionsDisjoint_of_structural`,
-  commit `5c27487`).  Open: the Tier 2/3 ops, whose byte-level
-  `.dynamic` changes size (so their raw `toElfFile` output isn't laid
-  out — loadability is restored by `encode`'s `growEOFWith`).  Their
-  target is the full round-trip `parse (encode (toElfFile … (op typed)))
-  = .ok ⟨normalized, _⟩` via the scaffold; the remaining obligations
-  (normalized-form `EncodePreconditions` + pre-pass idempotence) are
-  the open core.  Fresh-agent handoff:
-  [`PICKUP-PROMPT-OP-TIER-D.md`](PICKUP-PROMPT-OP-TIER-D.md).  See §5.1
-  for the tier map + obligation breakdown.
+  `modifyExecstack`) have full `_preserves_loadable`; the Tier-2/3
+  round-trip scaffold + the three **open-core obligations** (A `syncOk`,
+  B `hIdem`, C residual `EncodePreconditions`) are now CLOSED, composed
+  into the `tierD_roundtrip` driver, and applied to the two shrinking
+  ops (`toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip`).  Open:
+  the **per-op fact discharge** — each op currently takes its `eo`
+  facts (validity + 6 structural input invariants + residual `< 2^64`
+  fit bounds) as hypotheses; the next step is deriving them
+  mechanically from the typed op + template (parser-derivable /
+  transportable for shrinking ops; per-op `growEOFWith` layout
+  reasoning for growing ops).  Two partial sub-obstacles are documented
+  inline as `-- TODO §5.1` in `OpAdapterPreservation.lean` (the
+  `growEOFWith_sections_content` getElem-dispatch).  Fresh-agent
+  handoff: [`PICKUP-PROMPT-OP-TIER-D.md`](PICKUP-PROMPT-OP-TIER-D.md).
+  See §5.1 for the tier map + obligation breakdown.
 - **§4.2 trailing-array DSL field kind + `Verneed.write_decode`** —
   independent typed-side completeness item; `.verneed` is stored
   as `.raw` at the byte layer, so the byte-roundtrip doesn't
@@ -515,7 +521,7 @@ pattern.  Estimated ~150-200 LOC each.
 
 ### Priority 5 — Code quality
 
-#### 5.1 Op-level byte roundtrip lemmas — IN PROGRESS (Tier 1 landed; Tier 2/3 open)
+#### 5.1 Op-level byte roundtrip lemmas — IN PROGRESS (Tier 1 + open core + shrinking ops landed; per-op fact discharge open)
 
 A stronger replacement for the existing `_preserves_valid` lemmas:
 prove `parse (encode (op e)) = .ok ⟨prepLayoutForEncode
@@ -594,19 +600,60 @@ for the round-trip is in `OpAdapterPreservation.lean`:
   `EncodePreconditions` clause from the 5 structural input invariants
   on `syncDtStrszInFile eo` (§1.3a).
 
-**Genuinely-remaining open core** (per op, or once-for-all as lemmas
-about the pre-passes): the residual `EncodePreconditions en` fields
-(`syncOk`, `identValid`, `sizeFit`, `nullEmpty`, the `headerFit`/
-`phdrFit`/`shdrFit` bounds) and the idempotence fact
-`encode eo = encode en`.  These are NOT parser-derivable — `en` is an
-encoder output, not a parse result — so they need new lemmas:
-(1) `syncDtStrszInFile` establishes `dynStrszCoherent` and the layout
-pre-pass preserves it (→ `syncOk`); (2) `prepLayoutForEncode ∘
-syncDtStrszInFile` is idempotent (→ `hIdem`); (3) the fit/identValid/
-nullEmpty bounds survive the pre-passes (mostly structural, since
-`growEOFWith` only appends `roundUp`-bounded regions).  This is the
-substantive sub-project that remains; the scaffold makes each piece a
-named, independently-attackable obligation rather than a tangle.
+**Open core CLOSED (Obligations A/B/C).**  The three obligations on the
+encoder-normalized form `en := prepLayoutForEncode (syncDtStrszInFile eo)`
+are now proven:
+
+* **A — `syncOk`** (`syncOk_of_normalized`, `ByteRoundtrip.lean`):
+  `syncDtStrszInFile_establishes_dynStrszCoherent` (`Encoder.lean`) shows
+  the first pre-pass writes every DT_STRSZ ← `dynstr.bytes.size` (so the
+  output is coherent, given `dynstr.bytes.size < 2^64`), and
+  `prepLayoutForEncode_preserves_dynStrszCoherent` shows the layout pass
+  leaves it intact — `growEOFWith_dynamic`/`_dynstr` preserve the `.dynamic`
+  content + `.dynstr`, and `syncDtAddrTagsInFile` is the identity on
+  DT_STRSZ (`syncDtAddrEntry_eq_self_of_not_addressTag` — DT_STRSZ is not
+  an address tag).  `syncDtStrszInFile_eq_id` then gives `syncOk`.
+* **B — `hIdem`** (`encode_eq_encode_normalized`, `ByteRoundtrip.lean`):
+  via `encode_eq` twice, reduces to `renormalize_eq_self` — `syncOk` (A)
+  lets `syncDtStrszInFile en = en`, then `prepLayoutForEncode en = en`
+  from `layoutAlreadyValid_of_spliceRegionsDisjoint ← en.spliceRegionsDisjoint`
+  (`prepLayoutForEncode_{dynstr,eq_self_of_spliceRegionsDisjoint}`,
+  `Encoder.lean`).
+* **C — residual `EncodePreconditions`**
+  (`encodePreconditions_of_layoutNormalized`, `OpAdapterPreservation.lean`):
+  derives `syncOk` (A) + `spliceDisjoint` (§1.3a
+  `spliceRegionsDisjoint_of_structural`); the remaining 8 fields
+  (`identValid`, `sizeFit`, `nullEmpty`, `headerFit_{entry,phoff,shoff}`,
+  `phdrFit`, `shdrFit`) are taken as explicit hypotheses on `en`.  The
+  position/size `< 2^64` bounds are genuinely NOT structurally derivable:
+  `en`'s offsets come from `growEOFWith`'s unbounded `roundUp` arithmetic.
+  This is the sanctioned "file < 2^64" precondition — every real ELF
+  satisfies it and the runtime `Validate.IsLoadableBytes` guards the
+  pathological case at write time.
+
+**Composed driver + worked examples.**
+`tierD_roundtrip` / `tierD_roundtrip_of_valid` (`OpAdapterPreservation.lean`)
+glue A+B+C + the new `IsValid` capstone `prepLayout_syncDtStrsz_preserves_valid`
+(`Encoder.lean`, the `IsValid` analog of `prepLayout_syncDtStrsz_preserves_loadable`)
+into `parse (encode eo) = .ok ⟨en, _⟩`.  The two shrinking ops ship full
+round-trips: `toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip`.
+
+**Remaining per-op work** (now well-scoped, no longer an open core): each
+op must discharge its own `eo` facts — `eo.IsValid`, the 6 structural input
+invariants on `syncDtStrszInFile eo`, the dynstr witness, and the residual
+fit bounds — from the typed op + template, instead of taking them as
+hypotheses.  For shrinking ops these are parser-derivable / transportable
+across the `.dynamic` rewrite (the file does not widen); for growing ops
+(`addNeeded`, dynstr-growing) they need the per-op `growEOFWith` layout
+reasoning.  Two partial sub-obstacles surfaced and are documented inline as
+`-- TODO §5.1` in `OpAdapterPreservation.lean`: deriving
+`identValid`/`sizeFit`/`nullEmpty` through the pipeline is blocked on a
+robust `growEOFWith_sections_content` getElem-dispatch (the
+dependent-`hj`-bound `cases`/`split` fails with "motive not type correct",
+and the let-bound layout discriminants in the inlined `growEOFWith` body
+don't match the expanded `hExt` form that the projection dispatches rely
+on — that match only works after a `cases hLast` substitution, which the
+dependent bound forbids).
 
 §1.1 (Parser establishes `IsLoadable`) and §1.2
 (`growEOFWith_preserves_loadable`, lifted to the end-to-end
