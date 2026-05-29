@@ -126,12 +126,18 @@ disjointness clause + section-0-NULL.  So for a SHRINKING op the two
 concrete remaining lemmas are:
   (1) **bound `patchDynamicEntries`'s output size**:
       `(patchDynamicEntries byteDyn (stripRpath/filterNeededBy … typed)).size
-      ≤ byteDyn.size` — an `Id.run`-loop + trailing-append-block analysis
-      (the loop pushes ≤ 1 per input entry for dropped tags, and the
-      `unless …Applied` / NEEDED-append blocks add nothing for a pure drop).
-      No bound lemma exists yet; `Ops/RemoveNeeded.lean`'s
-      `removeNeeded_needed_size_le` (via `Array.size_filter_le`) is a model
-      for the typed side.
+      ≤ byteDyn.size`.  The loop portion is DE-RISKED: `Adapter.idForIn_proj_size_le`
+      (landed) bridges the `Id.run do … forIn` loop to a `≤ (π init).size +
+      byteDyn.size` bound given a per-step ≤1-growth fact on the `result`
+      projection `π` (a finite `match d.tag` case-split — every arm pushes
+      ≤ 1).  What remains: bound the trailing `while`-loop + 5 `unless` append
+      blocks in the desugared do-block (brittle `__do_jp` join-point
+      navigation — consider refactoring `patchDynamicEntries` to expose them
+      compositionally), and for the TIGHT `≤ byteDyn.size` the NEEDED-balance
+      (`typed.needed.size = #DT_NEEDED in byteDyn`, from the `ofElfFile`/parse
+      relationship — so the `while` adds 0).  `Ops/RemoveNeeded.lean`'s
+      `removeNeeded_needed_size_le` (via `Array.size_filter_le`) is the typed
+      side.
   (2) **factor `eo = toElfFile template (op typed)` as
       `base.updateSectionContent iDyn (.dynamic newDyn)`** with `newDyn =
       patchDynamicEntries (template.dynamic) (op typed).dynamic` and `base`'s

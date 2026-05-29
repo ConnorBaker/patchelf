@@ -574,12 +574,17 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   `SectionOps.updateSectionContent_*Disjoint_shrink` +
   `_section0Null` — a `.dynamic`-shrink (`newDyn.size ≤ oldDyn.size`)
   preserves all 6 disjointness clauses + section-0-NULL (monotone in the
-  section's `encodedSize`).  Remaining per-op work (ROADMAP §5.1, the only
-  open piece): (1) bound `patchDynamicEntries`'s output size for a shrinking
-  op (`≤` the pre-op `.dynamic` size — `Id.run` loop analysis), and (2)
-  factor `eo = toElfFile template (op typed)` as a single
-  `updateSectionContent iDyn (.dynamic newDyn)` so the shrink lemmas apply,
-  transporting `eo`'s structural invariants from the parser-derived template.
+  section's `encodedSize`).  Plus the `Adapter.{foldl_proj_size_le_add,
+  idForIn_proj_size_le}` bridges — connecting an `Id.run do … forIn` loop's
+  projected output size to a `≤ init + as.size` bound (de-risking the
+  `patchDynamicEntries` loop portion).  Remaining per-op work (ROADMAP §5.1,
+  the only open piece): (1) finish the `patchDynamicEntries` output-size
+  bound (apply `idForIn_proj_size_le` with a per-tag ≤1 case-split, then
+  bound the trailing `while`/`unless` append blocks + the NEEDED-balance for
+  the tight `≤ byteDyn.size`), and (2) factor `eo = toElfFile template (op
+  typed)` as a single `updateSectionContent iDyn (.dynamic newDyn)` so the
+  shrink lemmas apply, transporting `eo`'s structural invariants from the
+  parser-derived template.
 
 ### Priority 2 gaps (test / spec coverage)
 

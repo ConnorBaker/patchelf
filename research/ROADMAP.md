@@ -675,8 +675,13 @@ invariants + the eo-level derived-field facts) from the typed op + template.
 For a shrinking op (`removeRpath`/`removeNeeded`) the two concrete remaining
 lemmas are: (1) **bound `patchDynamicEntries`'s output size** — for an op
 that only drops `.dynamic` entries (`stripRpath` / `filterNeededBy`),
-`(patchDynamicEntries byteDyn (op typed)).size ≤ byteDyn.size` (an `Id.run`
-loop + trailing-append-block analysis); and (2) **factor `eo = toElfFile
+`(patchDynamicEntries byteDyn (op typed)).size ≤ byteDyn.size`.  The loop
+portion is de-risked by the landed `Adapter.idForIn_proj_size_le` /
+`foldl_proj_size_le_add` bridges (an `Id.run do … forIn` loop's projected
+size ≤ `init + as.size` given per-step ≤1 growth); what remains is the
+per-tag ≤1 case-split, the trailing `while`/`unless` append-block bound, and
+(for the tight `≤ byteDyn.size`) the NEEDED-balance from the parse
+relationship.  And (2) **factor `eo = toElfFile
 template (op typed)` as a single `updateSectionContent iDyn (.dynamic
 newDyn)`** on a base whose other sections come verbatim from the template,
 so the shrink-monotonicity lemmas transport `eo`'s structural invariants
