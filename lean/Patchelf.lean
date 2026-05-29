@@ -72,5 +72,6 @@ public import Patchelf.Elf.Ops.RenameDynamicSymbols
 public import Patchelf.Elf.Ops.Interpreter
 
 public import Patchelf.Elf.OpAdapterPreservation
+public import Patchelf.Elf.OpToElfFactor
 
 @[expose] public section
