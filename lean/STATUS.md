@@ -559,14 +559,27 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
     intervention; runtime `Validate.IsLoadableBytes` guards the
     pathological case).
 
-  Composed driver `tierD_roundtrip` / `tierD_roundtrip_of_valid` glues
-  A+B+C + the new validity capstone `prepLayout_syncDtStrsz_preserves_valid`
-  into `parse (encode eo) = .ok ⟨en, _⟩`.  Shipped worked examples:
-  `toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip` (the two
-  shrinking ops).  Remaining per-op work: mechanically discharge each
-  op's `eo` facts (validity + 6 structural invariants + the 4 position
-  bounds) from the typed op — currently stated as hypotheses.  See
-  ROADMAP §5.1.
+  Composed drivers `tierD_roundtrip` / `tierD_roundtrip_of_valid` /
+  `tierD_roundtrip_of_eo_facts` glue A+B+C + the validity capstone
+  `prepLayout_syncDtStrsz_preserves_valid` into
+  `parse (encode eo) = .ok ⟨en, _⟩`.  The `_of_eo_facts` driver states its
+  ENTIRE surface on `eo`: validity, the 6 structural disjointness invariants
+  + section-0-NULL (transported through `syncDtStrszInFile` via
+  `spliceRegionsDisjoint_of_structural_eo`), the four eo-level derived-field
+  facts, and only the 4 residual `< 2^64` position bounds on the normalized
+  form.  Shipped worked examples:
+  `toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip`.
+
+  Reusable layout core for the per-op structural discharge:
+  `SectionOps.updateSectionContent_*Disjoint_shrink` +
+  `_section0Null` — a `.dynamic`-shrink (`newDyn.size ≤ oldDyn.size`)
+  preserves all 6 disjointness clauses + section-0-NULL (monotone in the
+  section's `encodedSize`).  Remaining per-op work (ROADMAP §5.1, the only
+  open piece): (1) bound `patchDynamicEntries`'s output size for a shrinking
+  op (`≤` the pre-op `.dynamic` size — `Id.run` loop analysis), and (2)
+  factor `eo = toElfFile template (op typed)` as a single
+  `updateSectionContent iDyn (.dynamic newDyn)` so the shrink lemmas apply,
+  transporting `eo`'s structural invariants from the parser-derived template.
 
 ### Priority 2 gaps (test / spec coverage)
 

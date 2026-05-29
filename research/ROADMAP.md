@@ -642,12 +642,18 @@ are now proven:
   real ELF satisfies it and the runtime `Validate.IsLoadableBytes` guards
   the pathological case at write time.
 
-**Composed driver + worked examples.**
-`tierD_roundtrip` / `tierD_roundtrip_of_valid` (`OpAdapterPreservation.lean`)
-glue A+B+C + the new `IsValid` capstone `prepLayout_syncDtStrsz_preserves_valid`
-(`Encoder.lean`, the `IsValid` analog of `prepLayout_syncDtStrsz_preserves_loadable`)
-into `parse (encode eo) = .ok ⟨en, _⟩`.  The two shrinking ops ship full
-round-trips: `toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip`.
+**Composed drivers + worked examples.**
+`tierD_roundtrip` / `tierD_roundtrip_of_valid` / `tierD_roundtrip_of_eo_facts`
+(`OpAdapterPreservation.lean`) glue A+B+C + the `IsValid` capstone
+`prepLayout_syncDtStrsz_preserves_valid` (`Encoder.lean`) into
+`parse (encode eo) = .ok ⟨en, _⟩`.  `_of_eo_facts` states its ENTIRE surface
+on `eo` (validity + 6 structural disjointness invariants + section-0-NULL +
+the four eo-level derived-field facts + only the 4 residual `< 2^64` position
+bounds) — `spliceRegionsDisjoint_of_structural_eo` transports the structural
+invariants through `syncDtStrszInFile` (the 3 previously-missing
+`syncDtStrszInFile_{headerShdr,phdrShdr,shdrSection}Disjoint` lemmas now
+exist).  The two shrinking ops ship full round-trips:
+`toElfFile_{removeRpath,removeNeeded}_tierD_roundtrip`.
 
 The content-preservation getElem-dispatch that previously blocked deriving
 `identValid`/`sizeFit`/`nullEmpty` is now CRACKED (bound-free
@@ -655,18 +661,28 @@ The content-preservation getElem-dispatch that previously blocked deriving
 in-principle-derivable residual fields are derived; only the 4 position
 bounds stay hypotheses.
 
-**Remaining per-op work** (now well-scoped, no longer an open core): each
-op must discharge its own `eo` facts — `eo.IsValid`, the 6 structural input
-invariants on `syncDtStrszInFile eo`, the dynstr witness, and the 4 residual
-position bounds — from the typed op + template, instead of taking them as
-hypotheses.  For shrinking ops these are parser-derivable / transportable
-across the `.dynamic` rewrite (the file does not widen); for growing ops
-(`addNeeded`, dynstr-growing) they need the per-op `growEOFWith` layout
-reasoning.  The reusable per-section content/header/shdrSize preservation
-lemmas (`growEOFWith_sections_{content,shdrSize,type}`,
-`prepLayout_syncDtStrsz_sections_*`) cover the byte-level structural facts;
-what each op still owes is relating its `toElfFile` output's structural
-invariants to the parser-derived ones on the template.
+**Reusable shrink-monotonicity core** (`SectionOps.lean`):
+`updateSectionContent_{headerPhdr,headerShdr,phdrShdr,headerSection,
+phdrSection,shdrSection}Disjoint_shrink` + `_section0Null` — a
+`.dynamic`-rewrite with `newDyn.size ≤ oldDyn.size` preserves all 6
+disjointness clauses + section-0-NULL (disjointness is monotone in the
+section's `encodedSize = size · dynEntrySize`).  This is the layout core
+every shrinking op's structural-invariant discharge needs.
+
+**Remaining per-op work** (now narrowly scoped, the only open §5.1 piece):
+each op must discharge its `eo` facts (`eo.IsValid` + the 6 structural input
+invariants + the eo-level derived-field facts) from the typed op + template.
+For a shrinking op (`removeRpath`/`removeNeeded`) the two concrete remaining
+lemmas are: (1) **bound `patchDynamicEntries`'s output size** — for an op
+that only drops `.dynamic` entries (`stripRpath` / `filterNeededBy`),
+`(patchDynamicEntries byteDyn (op typed)).size ≤ byteDyn.size` (an `Id.run`
+loop + trailing-append-block analysis); and (2) **factor `eo = toElfFile
+template (op typed)` as a single `updateSectionContent iDyn (.dynamic
+newDyn)`** on a base whose other sections come verbatim from the template,
+so the shrink-monotonicity lemmas transport `eo`'s structural invariants
+from the parser-derived template invariants.  For growing ops (`addNeeded`,
+dynstr-growing) the file widens and the per-op `growEOFWith` layout reasoning
+is needed instead.
 
 §1.1 (Parser establishes `IsLoadable`) and §1.2
 (`growEOFWith_preserves_loadable`, lifted to the end-to-end

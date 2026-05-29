@@ -891,10 +891,9 @@ signatures.)
 | theorem | `toElfFile_setOsAbi_{eq,sections,phdrs,preserves_valid,preserves_loadable}` | Tier-1 `setOsAbi` |
 | theorem | `toElfFile_modifyExecstack_{eq,preserves_loadable}` | Tier-1 `modifyExecstack` |
 | theorem | `encode_roundtrip_via_normalized` | scaffold spine: round-trip via normalized `en` |
-| theorem | `spliceRegionsDisjoint_of_structural` | `en.spliceRegionsDisjoint` from 6 structural invariants (§1.3a) |
-| theorem | `encodePreconditions_of_layoutNormalized` | Obligation C: full `EncodePreconditions en` (A + scaffold + 8 residual hyps) |
-| theorem | `tierD_roundtrip` | composed A+B+C driver: `parse (encode eo) = .ok ⟨en, _⟩` |
-| theorem | `tierD_roundtrip_of_valid` | driver stated on `eo` (folds in the validity capstone) |
+| theorem | `spliceRegionsDisjoint_of_structural` / `_eo` | `en.spliceRegionsDisjoint` from 6 structural invariants on `syncDtStrszInFile eo` / on `eo` (§1.3a) |
+| theorem | `encodePreconditions_of_layoutNormalized` | Obligation C: full `EncodePreconditions en` (A + scaffold + 4 eo-derived fields + 4 position-bound hyps) |
+| theorem | `tierD_roundtrip` / `_of_valid` / `_of_eo_facts` | composed A+B+C drivers; `_of_eo_facts` states its entire surface on `eo` |
 | theorem | `toElfFile_removeRpath_tierD_roundtrip` | full Tier-D round-trip for `removeRpath` |
 | theorem | `toElfFile_removeNeeded_tierD_roundtrip` | full Tier-D round-trip for `removeNeeded` |
 
@@ -902,6 +901,15 @@ signatures.)
 fields (`identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry`) from the
 matching facts on `eo`; only the 4 position-bound families
 (`headerFit_phoff`/`shoff`, `phdrFit`, `shdrFit`) remain hypotheses.
+
+Reusable shrink-monotonicity core (`SectionOps.lean`, op-independent):
+`updateSectionContent_{headerPhdr,headerShdr,phdrShdr,headerSection,
+phdrSection,shdrSection}Disjoint_shrink` + `_section0Null` +
+`IntervalDisjoint_shrink_right` — a `.dynamic`-rewrite with
+`newDyn.size ≤ oldDyn.size` preserves all 6 disjointness clauses +
+section-0-NULL.  Plus the 3 added `syncDtStrszInFile_{headerShdr,phdrShdr,
+shdrSection}Disjoint` lemmas (`Encoder.lean`) completing the
+first-pre-pass transport.
 
 Supporting §5.1 lemmas live in their home modules:
 - Obligation A establishment/preservation in `Encoder.lean`

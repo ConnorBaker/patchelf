@@ -111,21 +111,36 @@ trace `toElfFile`'s `applyDynstr` — `eo.dynstr = some typed.dynstr` (or
 the grown dynstr); `hFit` is the "file < 2^64" precondition on the op
 input (add it explicitly if not derivable).
 
-### Step 2 — the 6 structural input invariants (the substance)
+### Step 2 — the 6 structural input invariants on `eo` (the substance)
 
-`headerPhdrDisjoint` / `headerShdrDisjoint` / `phdrShdrDisjoint` /
-`headerSectionDisjoint` / `phdrSectionDisjoint` + `hSection0Null` on
-`syncDtStrszInFile eo`.  `syncDtStrszInFile` preserves all of these
-(accessor lemmas exist: `syncDtStrszInFile_{header,phdrs,sections_*,
-section0Null,headerPhdrDisjoint,headerSectionDisjoint,phdrSectionDisjoint}`
-in Encoder.lean — note `headerShdrDisjoint`/`phdrShdrDisjoint` may need
-new ones), so reduce to the invariants on `eo`.  For a SHRINKING op
-(`removeRpath`/`removeNeeded`): `eo`'s `.dynamic` is smaller, every other
-section keeps its offset/size, and the file does not widen past
-`currentFileEnd` — so these transport from the template's invariants
-(parser-derivable: a freshly-parsed ELF that `parseLoadable` accepted
-satisfies them).  This is the per-op `_produces_spliceRegionsDisjoint`
-the ROADMAP describes.  Start here with `removeRpath`.
+USE `tierD_roundtrip_of_eo_facts`: its surface is already entirely on `eo`
+(the transport through `syncDtStrszInFile` is handled by
+`spliceRegionsDisjoint_of_structural_eo`).  So you only need the 6
+disjointness invariants + section-0-NULL on `eo` itself.
+
+The reusable SHRINK-MONOTONICITY core is in place
+(`SectionOps.updateSectionContent_{headerPhdr,headerShdr,phdrShdr,
+headerSection,phdrSection,shdrSection}Disjoint_shrink` + `_section0Null`):
+a `.dynamic`-rewrite with `newDyn.size ≤ oldDyn.size` preserves every
+disjointness clause + section-0-NULL.  So for a SHRINKING op the two
+concrete remaining lemmas are:
+  (1) **bound `patchDynamicEntries`'s output size**:
+      `(patchDynamicEntries byteDyn (stripRpath/filterNeededBy … typed)).size
+      ≤ byteDyn.size` — an `Id.run`-loop + trailing-append-block analysis
+      (the loop pushes ≤ 1 per input entry for dropped tags, and the
+      `unless …Applied` / NEEDED-append blocks add nothing for a pure drop).
+      No bound lemma exists yet; `Ops/RemoveNeeded.lean`'s
+      `removeNeeded_needed_size_le` (via `Array.size_filter_le`) is a model
+      for the typed side.
+  (2) **factor `eo = toElfFile template (op typed)` as
+      `base.updateSectionContent iDyn (.dynamic newDyn)`** with `newDyn =
+      patchDynamicEntries (template.dynamic) (op typed).dynamic` and `base`'s
+      other sections verbatim from `template`, so the shrink lemmas apply and
+      `eo`'s structural invariants transport from `template`'s parser-derived
+      ones.  `toElfFile` is a chain of `applyX` `updateSectionContent`s; for a
+      shrinking op only `applyDynamic` changes a size-relevant section
+      (`applyDynstr` rewrites `.dynstr` but `removeRpath` doesn't grow it).
+  Start with `removeRpath`.  See ROADMAP §5.1 "Remaining per-op work".
 
 ### Step 3 — residual fields (ALREADY DONE; the 4 position bounds stay)
 
@@ -210,16 +225,20 @@ readU/writeU axioms — no `sorryAx`.
 
 ## Notes for the human (not the agent)
 
-Two sessions closed the substantive open core (Obligations A/B/C),
+Prior sessions closed the substantive open core (Obligations A/B/C),
 cracked the `growEOFWith` content-preservation getElem-dispatch (the
 dependent-motive wall — solved with a bound-free `map (·.content)`
-equation + `cases pageSize?`), and DERIVED four of the eight residual
+equation + `cases pageSize?`), DERIVED four of the eight residual
 `EncodePreconditions` fields (`identValid`/`sizeFit`/`nullEmpty`/
-`headerFit_entry`) on the normalized form.  The composed `tierD_roundtrip`
-driver + full round-trips for the two shrinking ops are in place, with
-only the 4 position-bound families (`headerFit_phoff`/`shoff`, `phdrFit`,
-`shdrFit`) taken as the sanctioned "file < 2^64" precondition.  What's
-left is honest plumbing: each op still *assumes* its `eo` validity +
-structural invariants rather than *deriving* them from the typed op.  For
-shrinking ops this is parser-derivable transport; for growing ops it needs
-the per-op `growEOFWith` layout reasoning.  Deferred rather than rushed.
+`headerFit_entry`), built the reusable shrink-monotonicity layout core
+(`SectionOps.updateSectionContent_*Disjoint_shrink`), and assembled the
+full `eo`-level driver `tierD_roundtrip_of_eo_facts` (every per-op fact is
+on `eo`, with only the 4 position-bound families as the sanctioned "file <
+2^64" precondition).  The composed drivers + full round-trips for the two
+shrinking ops are in place.  What's left is genuinely op-specific and
+narrowly scoped: a shrinking op still *assumes* its `eo` validity +
+structural invariants rather than *deriving* them from the typed op — the
+two concrete remaining lemmas are (1) a `patchDynamicEntries` output-size
+bound and (2) factoring `toElfFile (op typed)` as a single shrinking
+`updateSectionContent` (see Step 2).  For growing ops it needs the per-op
+`growEOFWith` layout reasoning.  Deferred rather than rushed.
