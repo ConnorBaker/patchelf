@@ -1031,6 +1031,39 @@ theorem prepLayout_syncDtStrsz_dynStrszCoherent (e : ElfFile)
     rw [syncDtStrszInFile_dynstr_eq]; exact hDs
   exact prepLayoutForEncode_preserves_dynStrszCoherent (syncDtStrszInFile e) hDs' hCoh
 
+/-- `prepLayoutForEncode` preserves byte-layer `IsValid`.  Fast path is the
+    identity; the layout path composes `growEOFWith_preserves_valid` (needs
+    the phnum-bump bound) with `syncDtAddrTagsInFile_preserves_valid` (needs
+    the dynstr witness).  Companion to
+    `prepLayoutForEncodeWith_preserves_loadable`; supplies `hValEn` for
+    §5.1's `tierD_roundtrip`. -/
+theorem prepLayoutForEncode_preserves_valid (e : ElfFile)
+    (hVal : e.IsValid) (hPhdrFit : (e.phdrs.size + 1) < UInt16.size)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (prepLayoutForEncode e).IsValid := by
+  unfold prepLayoutForEncode prepLayoutForEncodeWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]; exact hVal
+  · simp only [hLay, Bool.false_eq_true, ↓reduceIte]
+    have hGrow : (growEOFWith none e).IsValid := growEOFWith_preserves_valid none e hVal hPhdrFit
+    have hGrowDs : (growEOFWith none e).dynstr = some ds := by rw [growEOFWith_dynstr]; exact hDs
+    exact syncDtAddrTagsInFile_preserves_valid _ hGrow hGrowDs
+
+/-- End-to-end: the IR `encodeBody` serializes
+    (`prepLayoutForEncode (syncDtStrszInFile e)`) is `IsValid`, given a valid
+    input + the phnum-bump bound + the dynstr witness.  The `IsValid`
+    counterpart of `prepLayout_syncDtStrsz_preserves_loadable`; this is the
+    `hValEn` argument of §5.1's `tierD_roundtrip`. -/
+theorem prepLayout_syncDtStrsz_preserves_valid (e : ElfFile)
+    (hVal : e.IsValid) (hPhdrFit : (e.phdrs.size + 1) < UInt16.size)
+    {ds : StringTable} (hDs : e.dynstr = some ds) :
+    (prepLayoutForEncode (syncDtStrszInFile e)).IsValid := by
+  have hVal' := syncDtStrszInFile_preserves_valid e hVal
+  have hDs' : (syncDtStrszInFile e).dynstr = some ds := by
+    rw [syncDtStrszInFile_dynstr_eq]; exact hDs
+  exact prepLayoutForEncode_preserves_valid (syncDtStrszInFile e) hVal'
+    (by rw [syncDtStrszInFile_phdrs]; exact hPhdrFit) hDs'
+
 /-- `prepLayoutForEncode` preserves `.dynstr`.  Fast path is identity; the
     layout path composes `growEOFWith_dynstr` + `syncDtAddrTagsInFile_dynstr`.
     (Used by §5.1 Obligation B to thread the dynstr witness onto the

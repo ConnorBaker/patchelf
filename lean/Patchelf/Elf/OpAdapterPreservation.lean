@@ -26,6 +26,8 @@ module
 public import Patchelf.Elf.AdapterRoundtrip
 public import Patchelf.Elf.Ops.OsAbi
 public import Patchelf.Elf.Ops.Execstack
+public import Patchelf.Elf.Ops.RemoveRPath
+public import Patchelf.Elf.Ops.RemoveNeeded
 public import Patchelf.Elf.ByteRoundtrip
 
 @[expose] public section
@@ -35,7 +37,8 @@ namespace Patchelf.Elf.Adapter
 open Patchelf.Elf (ElfFile OsAbi ProgramHeader EncodePreconditions ParsedElf
                      parse encode prepLayoutForEncode syncDtStrszInFile
                      parse_encode_roundtrip prepLayoutForEncode_produces_spliceRegionsDisjoint
-                     IdentBytesValid syncOk_of_normalized encode_eq_encode_normalized)
+                     IdentBytesValid syncOk_of_normalized encode_eq_encode_normalized
+                     prepLayout_syncDtStrsz_preserves_valid)
 open Patchelf.Elf.Layout (PhType ShType)
 
 /-! ## Generic phdrs-map preservation
@@ -347,5 +350,89 @@ theorem tierD_roundtrip (eo : ElfFile)
     parse (encode eo) = .ok ⟨prepLayoutForEncode (syncDtStrszInFile eo), hValEn⟩ :=
   encode_roundtrip_via_normalized eo hValEn hPreEn
     (encode_eq_encode_normalized eo hDs hFit hPreEn.spliceDisjoint)
+
+/-- Higher-level Tier-D driver stated on the *op output* `eo` directly,
+    folding in the validity capstone (`prepLayout_syncDtStrsz_preserves_valid`,
+    which needs `eo.IsValid` + the phnum-bump bound + dynstr) and Obligation C
+    (`encodePreconditions_of_layoutNormalized`).  An op now supplies only
+    natural facts about its byte output `eo`:
+
+      * `hVal` — `eo.IsValid` (transported from the typed op / template);
+      * `hPhdrFit` — `(eo.phdrs.size + 1) < UInt16.size` (the layout pass's
+        worst-case fresh-PT_LOAD phnum bump; trivially true — real phnum is
+        a `UInt16` already);
+      * the 6 structural input invariants on `syncDtStrszInFile eo`
+        (parser-derivable for ops that don't widen the file);
+      * `hDs` / `hFit` — the dynstr witness + `dynstr.bytes.size < 2^64`;
+      * the residual fit/validity bounds on the normalized form (the
+        documented < 2^64 surface — see `encodePreconditions_of_layoutNormalized`).
+
+    Returns the full byte round-trip
+    `parse (encode eo) = .ok ⟨prepLayoutForEncode (syncDtStrszInFile eo), _⟩`.
+    This is the single entry point each of the 12 Tier-2/3 ops calls. -/
+theorem tierD_roundtrip_of_valid (eo : ElfFile)
+    (hVal : eo.IsValid)
+    (hPhdrFit : (eo.phdrs.size + 1) < UInt16.size)
+    {ds : Patchelf.Elf.StringTable} (hDs : eo.dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size)
+    (hPreEn : EncodePreconditions (prepLayoutForEncode (syncDtStrszInFile eo))) :
+    parse (encode eo)
+      = .ok ⟨prepLayoutForEncode (syncDtStrszInFile eo),
+             prepLayout_syncDtStrsz_preserves_valid eo hVal hPhdrFit hDs⟩ :=
+  tierD_roundtrip eo (prepLayout_syncDtStrsz_preserves_valid eo hVal hPhdrFit hDs)
+    hPreEn hDs hFit
+
+/-! ## Worked examples: shrinking ops (`removeRpath`, `removeNeeded`)
+
+    These are the two simplest Tier-2/3 ops: they only *drop* `.dynamic`
+    entries (no dynstr growth, no NEEDED append), so their byte output `eo`
+    has the smallest structural-invariant story.  Each theorem routes the
+    op's byte output through `tierD_roundtrip_of_valid`, taking the per-op
+    facts about `eo := toElfFile template (op typed)` as hypotheses:
+
+      * `hVal` — `eo.IsValid`,
+      * `hPhdrFit` — `(eo.phdrs.size + 1) < UInt16.size`,
+      * `hDs` / `hFit` — dynstr witness + byte-length fit,
+      * `hPreEn` — the normalized-form `EncodePreconditions` (assembled by
+        `encodePreconditions_of_layoutNormalized` from the 6 structural input
+        invariants + residual bounds).
+
+    These facts ARE parser-derivable for the template + transportable across
+    a shrinking `.dynamic` rewrite (the op only removes entries, so every
+    other section's offset/size is unchanged and the file does not widen);
+    discharging them mechanically from the typed op is the remaining
+    per-op layout work (ROADMAP §5.1).  Stating them as hypotheses here makes
+    the end-to-end Tier-D composition concrete and machine-checked: given a
+    well-formed shrunk output, its bytes round-trip through the encoder. -/
+
+/-- Tier-D byte round-trip for `removeRpath`'s adapter output. -/
+theorem toElfFile_removeRpath_tierD_roundtrip (template : ElfFile) (typed : ValidElfFile)
+    (hDyn : typed.dynamic.isSome)
+    (hVal : (toElfFile template (removeRpath typed hDyn)).IsValid)
+    (hPhdrFit : ((toElfFile template (removeRpath typed hDyn)).phdrs.size + 1) < UInt16.size)
+    {ds : Patchelf.Elf.StringTable}
+    (hDs : (toElfFile template (removeRpath typed hDyn)).dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size)
+    (hPreEn : EncodePreconditions
+      (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeRpath typed hDyn))))) :
+    parse (encode (toElfFile template (removeRpath typed hDyn)))
+      = .ok ⟨prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeRpath typed hDyn))),
+             prepLayout_syncDtStrsz_preserves_valid _ hVal hPhdrFit hDs⟩ :=
+  tierD_roundtrip_of_valid _ hVal hPhdrFit hDs hFit hPreEn
+
+/-- Tier-D byte round-trip for `removeNeeded`'s adapter output. -/
+theorem toElfFile_removeNeeded_tierD_roundtrip (template : ElfFile) (typed : ValidElfFile)
+    (lib : String) (hDyn : typed.dynamic.isSome)
+    (hVal : (toElfFile template (removeNeeded typed lib hDyn)).IsValid)
+    (hPhdrFit : ((toElfFile template (removeNeeded typed lib hDyn)).phdrs.size + 1) < UInt16.size)
+    {ds : Patchelf.Elf.StringTable}
+    (hDs : (toElfFile template (removeNeeded typed lib hDyn)).dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size)
+    (hPreEn : EncodePreconditions
+      (prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib hDyn))))) :
+    parse (encode (toElfFile template (removeNeeded typed lib hDyn)))
+      = .ok ⟨prepLayoutForEncode (syncDtStrszInFile (toElfFile template (removeNeeded typed lib hDyn))),
+             prepLayout_syncDtStrsz_preserves_valid _ hVal hPhdrFit hDs⟩ :=
+  tierD_roundtrip_of_valid _ hVal hPhdrFit hDs hFit hPreEn
 
 end Patchelf.Elf.Adapter
