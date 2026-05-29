@@ -12,6 +12,17 @@ codec, the layout engine (`growEOF` + fresh-PT_LOAD), the §1.1 parser
 `IsLoadable`, the §1.2 `_preserves_valid` / `_preserves_loadable` ladders,
 and the §5.1 open core (A/B/C) are all CLOSED.
 
+**§5.1 update (latest):** `removeRpath` now has its op-output structural
+invariants DERIVED (criterion 2 met) — see `Patchelf/Elf/OpToElfFactor.lean`,
+capstone `toElfFile_removeRpath_tierD_roundtrip_derived`.  The
+`patchDynamicEntries` size-bound blocker is dissolved (compositional refactor
++ the *relative* bound `patchDynamicEntries_stripRpath_size_le`), and the
+`toElfFile`-as-single-`updateSectionContent` factoring is shipped
+(`toElfFile_removeRpath_factor` + the per-apply commutation suite).  The
+remaining §5.1 work is **`removeNeeded`** (same chain, `filterNeededBy`
+variant — most of `OpToElfFactor.lean` is reusable) and the **growing ops**
+(need `growEOFWith` layout reasoning, not the shrink core).
+
 ---
 
 ```
@@ -38,7 +49,7 @@ the open tasks below (they are independent); §5.1 is the canonical/largest,
 ## Working directory and environment
 
     cd /home/cbaker2/ext-sources/patchelf/lean
-    nix develop ..#lean -c lake build              # baseline; expect 109 jobs clean
+    nix develop ..#lean -c lake build              # baseline; expect 110 jobs clean
     nix develop ..#lean -c bash tests/run.sh       # 54/54 shell tests
     grep -rnE "(:= *sorry|by *sorry| sorry$)" Patchelf/   # zero; keep it
 
@@ -102,10 +113,25 @@ gitignored, but don't leave it around).
 GOAL: make a mutating op's full byte round-trip self-contained —
 `parse (encode (toElfFile template (op typed))) = .ok ⟨normalized, _⟩` —
 by DERIVING the op output's facts from the typed op + template, instead of
-taking them as hypotheses.  Start with `removeRpath` (simplest shrinking op).
+taking them as hypotheses.  **`removeRpath` is DONE** (the worked template);
+the next target is `removeNeeded` (same shrink chain, `filterNeededBy`
+variant), then the growing ops.  Read `Patchelf/Elf/OpToElfFactor.lean`
+end-to-end first — it IS the `removeRpath` solution and most of its lemmas
+(the `updateSectionContent` algebra, the per-apply commutation suite, the
+factoring + content-extraction skeleton) carry over to `removeNeeded` with
+the size bound swapped.
 
 ### Tier-D readers (after orientation)
 
+- `Patchelf/Elf/OpToElfFactor.lean` — **the `removeRpath` solution; read FIRST
+  for §5.1.**  §A `updateSectionContent` algebra (`_comm`, `_set_set`, content
+  congruences, `applyOpt`-commutation — all dodging the dependent-`Array.set`
+  motive wall); §B per-apply commutation / `dynamicIdx` / `sections.size` /
+  content-at-`iDyn` lemmas (4 type-based applies + interp); §C
+  `toElfFile_removeRpath_factor` + `toElfFile_content_at_dynamicIdx`; §D
+  `removeRpath_structural_transport`; §E capstone
+  `toElfFile_removeRpath_tierD_roundtrip_derived`.  For `removeNeeded`, mirror
+  this file with the `filterNeededBy` size bound.
 - `Patchelf/Elf/OpAdapterPreservation.lean` — the WHOLE file.  Home base.
   In order: Tier-1 worked examples (`toElfFile_setOsAbi_*`,
   `_modifyExecstack_*`); the scaffold (`encode_roundtrip_via_normalized`,
@@ -151,31 +177,33 @@ pathological case at write time, so leaving them as a hypothesis is fine).
    on `eo`.  For a SHRINKING op (`removeRpath`/`removeNeeded`, which only
    DROP `.dynamic` entries) the reusable shrink-monotonicity lemmas
    (`SectionOps.updateSectionContent_*Disjoint_shrink`) transport these from
-   the template's parser-derived invariants — IF you supply two op-specific
-   lemmas:
+   the no-op output's invariants — via two op-specific lemmas, **both DONE for
+   `removeRpath` in `OpToElfFactor.lean`** (mirror them for `removeNeeded`):
 
-   (a) **`patchDynamicEntries` output-size bound**:
-       `(patchDynamicEntries byteDyn (stripRpath/filterNeededBy … typed)).size
-       ≤ byteDyn.size`.  The LOOP portion is de-risked: `idForIn_proj_size_le`
-       bridges the `Id.run do … forIn` loop to a `≤ (π result).size +
-       byteDyn.size` bound given a per-step ≤1-growth on the `result`
-       projection (a finite `match d.tag` case-split — every arm pushes ≤1).
-       WHAT REMAINS: bound the trailing `while` + 5 `unless` append blocks in
-       the desugared do-block (brittle `__do_jp` navigation — consider
-       refactoring `patchDynamicEntries` to expose loop + appends
-       compositionally, or `mvcgen`), and for the TIGHT `≤ byteDyn.size` use
-       the NEEDED-balance (`typed.needed.size = #DT_NEEDED in byteDyn`, from
-       the `ofElfFile`/parse relationship — so the `while` adds 0).
-       `Ops/RemoveNeeded.lean`'s `removeNeeded_needed_size_le` (via
-       `Array.size_filter_le`) is the typed side.
+   (a) **`patchDynamicEntries` output-size bound** — the RIGHT target is the
+       *relative* form `(patchDynamicEntries byteDyn (op-shrink d)).size ≤
+       (patchDynamicEntries byteDyn d).size` (op output vs. NO-OP output on the
+       SAME `byteDyn`), NOT the absolute `≤ byteDyn.size`.  The relative form
+       is what the shrink lemmas consume and needs NO parse-balance
+       preconditions (the NEEDED-balance / single-DT_NULL worry is moot).
+       SHIPPED for `removeRpath`: `patchDynamicEntries_stripRpath_size_le`
+       (`Adapter.lean`), proved on a **compositional `patchDynamicEntries`
+       refactor** (pure loop fold `patchStep` + tail helpers `appendSurplusNeeded`
+       /`appendUnless`, byte-identical to the old do-block — no `__do_jp` walk,
+       no `mvcgen`) via a lockstep `Array.foldl_rel` + tail bound.  For
+       `removeNeeded`: prove the analogous `filterNeededBy` relative bound
+       (the loop's NEEDED arm pushes fewer entries when typed.needed is
+       filtered; soname/flags1/debug/rpath/runpath unchanged).
 
-   (b) **factor `eo = toElfFile template (op typed)` as
-       `base.updateSectionContent iDyn (.dynamic newDyn)`** with `newDyn =
-       patchDynamicEntries (template.dynamic) (op typed).dynamic` and `base`'s
-       other sections verbatim from `template`, so the shrink lemmas apply.
-       `toElfFile` is a chain of `applyX` `updateSectionContent`s; for a
-       shrinking op only `applyDynamic` changes a size-relevant section
-       (`applyDynstr` rewrites `.dynstr` but `removeRpath` doesn't grow it).
+   (b) **factor `eo = (toElfFile template typed).updateSectionContent iDyn
+       (.dynamic newDyn)`** on the NO-OP output — DONE:
+       `toElfFile_removeRpath_factor`.  `toElfFile` is a chain of `applyX`
+       updates; a shrinking op changes only `applyDynamic`'s arg, so the lone
+       `.dynamic` update is pushed out through the outer `applyX` chain
+       (`OpToElfFactor.lean` §B per-apply commutation lemmas, all reusable for
+       `removeNeeded`).  The no-op's dynamic content is identified by
+       `toElfFile_content_at_dynamicIdx`, and `removeRpath_structural_transport`
+       + the capstone glue it together.
 
    GROWING ops (`addNeeded`, `addRpathEntry`, `modifyRPath.set`,
    `modifySoname.set`, `setInterpreter`, `replaceNeeded` grow path,
@@ -192,6 +220,8 @@ pathological case at write time, so leaving them as a hypothesis is fine).
    structural invariants DERIVED rather than hypothesized — i.e. a
    `parse (encode (toElfFile …)) = .ok …` with no structural-invariant
    hypotheses (a "file < 2^64" precondition on the 4 position bounds is OK).
+   **DONE for `removeRpath`** (`toElfFile_removeRpath_tierD_roundtrip_derived`,
+   `OpToElfFactor.lean`).  Next: replicate for `removeNeeded`.
 3. STATUS.md + ROADMAP.md updated; refresh this prompt.
 
 =====================================================================
@@ -251,12 +281,25 @@ State of §5.1 (the deep one): Obligations A/B/C are closed; the
 content-preservation getElem-dispatch wall is cracked; four of eight
 residual `EncodePreconditions` fields are derived; the reusable
 shrink-monotonicity layout core and the `Id`-forIn loop-size bridges are
-landed; the full `eo`-level driver `tierD_roundtrip_of_eo_facts` is in
-place; the two shrinking ops round-trip (taking their `eo` facts as
-hypotheses).  The only genuinely open §5.1 piece is the per-op DISCHARGE of
-those `eo` facts — concretely two lemmas for a shrinking op: a
-`patchDynamicEntries` output-size bound (loop de-risked; trailing
-`while`/`unless` join-point navigation + the NEEDED-balance remain) and the
-`toElfFile`-as-single-`updateSectionContent` factoring.  Deferred rather
-than rushed, because the desugared-`do` join-point navigation is brittle and
-warrants either a `patchDynamicEntries` refactor or `mvcgen`.
+landed; the full `eo`-level driver `tierD_roundtrip_of_eo_facts` is in place.
+
+**`removeRpath` is now fully discharged** (`Patchelf/Elf/OpToElfFactor.lean`):
+its op-output structural invariants are DERIVED, not hypothesized — criterion
+2 met.  Both formerly-open lemmas landed: (1) the `patchDynamicEntries`
+output-size bound, shipped as the *relative* form
+`patchDynamicEntries_stripRpath_size_le` on a **compositional
+`patchDynamicEntries` refactor** (pure loop fold + explicit tail appends,
+byte-identical, 54/54 tests) — the refactor dissolved the brittle
+desugared-`__do_jp` navigation outright, so neither the originally-feared
+join-point walk nor `mvcgen` was needed; and (2) the
+`toElfFile`-as-single-`updateSectionContent` factoring
+(`toElfFile_removeRpath_factor`), via a per-apply commutation suite that
+pushes the lone `.dynamic` update out through the outer `applyX` chain.  A
+design note worth recording: the *relative* size bound (op output vs. no-op
+output on the same `byteDyn`) is the right target — it's what the shrink
+lemmas consume and needs no parse-balance preconditions, unlike the absolute
+`≤ byteDyn.size` (so the NEEDED-balance worry was moot).
+
+Open §5.1: `removeNeeded` (mirror `OpToElfFactor.lean` with a `filterNeededBy`
+relative size bound) and the growing ops (`growEOFWith` layout reasoning, not
+the shrink core).
