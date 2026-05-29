@@ -543,6 +543,20 @@ theorem syncDtStrszInFile_sections_encodedSize (e : ElfFile) (j : Nat)
     exact updateSectionContent_dynamic_map_encodedSize_eq e iDyn hLt dyn hContent
       (syncDtStrszEntry nz) j hjE hj
 
+/-- Content preserved at any index whose section content is not `.dynamic`
+    (the only place `syncDtStrszInFile` edits).  Used to derive `nullEmpty`:
+    a SHT_NULL section's content is `.raw _ _ empty`, hence not `.dynamic`. -/
+theorem syncDtStrszInFile_sections_content_of_not_dynamic (e : ElfFile) (j : Nat)
+    (hj : j < (syncDtStrszInFile e).sections.size) (hjE : j < e.sections.size)
+    (hnd : ∀ dyn, (e.sections[j]'hjE).content ≠ .dynamic dyn) :
+    ((syncDtStrszInFile e).sections[j]'hj).content = (e.sections[j]'hjE).content := by
+  rcases syncDtStrszInFile_cases e with hEq | ⟨iDyn, hLt, dyn, nz, hContent, hEq⟩
+  · simp only [hEq]
+  · simp only [hEq] at hj ⊢
+    by_cases hji : j = iDyn
+    · subst hji; exact absurd hContent (hnd dyn)
+    · rw [ElfFile.updateSectionContent_getElem_ne e iDyn _ j hjE hji hj]
+
 /-- Per-section `shdrSize` preserved (same-size `Array.map`, content stays
     `.dynamic` so non-NOBITS). -/
 theorem syncDtStrszInFile_sections_shdrSize (e : ElfFile) (j : Nat)

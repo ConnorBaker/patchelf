@@ -40,7 +40,7 @@ open Patchelf.Elf (ElfFile OsAbi ProgramHeader EncodePreconditions ParsedElf
                      IdentBytesValid syncOk_of_normalized encode_eq_encode_normalized
                      prepLayout_syncDtStrsz_preserves_valid
                      identValid_normalized_of_eo sizeFit_normalized_of_eo
-                     headerFit_entry_normalized_of_eo)
+                     headerFit_entry_normalized_of_eo nullEmpty_normalized_of_eo)
 open Patchelf.Elf.Layout (PhType ShType)
 
 /-! ## Generic phdrs-map preservation
@@ -258,26 +258,25 @@ theorem spliceRegionsDisjoint_of_structural (eo : ElfFile)
       `dynstr.bytes.size < 2^64` fit.
     * **`spliceDisjoint`** — `spliceRegionsDisjoint_of_structural` (§1.3a):
       from the 6 structural input invariants on `syncDtStrszInFile eo`.
-    * **`identValid` / `sizeFit` / `headerFit_entry`** — DERIVED from the
-      matching facts on `eo` via the pipeline's `header.ident` / `shdrSize`
-      / `header.entry` preservation (`{identValid,sizeFit,headerFit_entry}_
-      normalized_of_eo`, `ByteRoundtrip.lean`).  `shdrSize` is preserved
-      because `growEOFWith` only relocates sections (content-determined size)
-      and the `syncDt*` dyn-maps keep the dynamic section non-NOBITS.
-    * **the 5 remaining fields** (`nullEmpty`, `headerFit_phoff`,
+    * **`identValid` / `sizeFit` / `nullEmpty` / `headerFit_entry`** —
+      DERIVED from the matching facts on `eo` via the pipeline's
+      `header.ident` / `shdrSize` / per-section `content`-at-NULL /
+      `header.entry` preservation (`{identValid,sizeFit,nullEmpty,
+      headerFit_entry}_normalized_of_eo`, `ByteRoundtrip.lean`).  `shdrSize`
+      is preserved because `growEOFWith` only relocates sections
+      (content-determined size) and the `syncDt*` dyn-maps keep the dynamic
+      section non-NOBITS; `nullEmpty` because a NULL section's content
+      (`.raw _ _ empty`) is not `.dynamic`, the only content the passes edit.
+    * **the 4 remaining position-bound fields** (`headerFit_phoff`,
       `headerFit_shoff`, `phdrFit`, `shdrFit`) — supplied as explicit
       hypotheses *about the normalized form `en`*.
 
-    Why those five stay hypotheses: `en` is an encoder output whose offsets
+    Why those four stay hypotheses: `en` is an encoder output whose offsets
     come from `growEOFWith`'s unbounded `roundUp` arithmetic, so the
-    position/size `< 2^64` bounds (`headerFit_phoff`, `headerFit_shoff`,
-    `phdrFit`, `shdrFit`'s `addr`/`offset`) are NOT structurally derivable —
-    every real ELF satisfies them and the runtime `Validate.IsLoadableBytes`
-    guard catches the pathological case at write time, but the proof needs
-    them stated.  `nullEmpty` is in-principle derivable (content at a NULL
-    section index is preserved, since the dyn-maps only touch the
-    SHT_DYNAMIC index ≠ NULL) but needs the per-index content-vs-dyn
-    argument; left as a hypothesis for now. -/
+    position/size `< 2^64` bounds are NOT structurally derivable — every real
+    ELF satisfies them and the runtime `Validate.IsLoadableBytes` guard
+    catches the pathological case at write time, but the proof needs them
+    stated.  (This is the sanctioned "file < 2^64" precondition.) -/
 theorem encodePreconditions_of_layoutNormalized (eo : ElfFile)
     {ds : Patchelf.Elf.StringTable} (hDs : eo.dynstr = some ds)
     (hFit : ds.bytes.size < UInt64.size)
@@ -289,16 +288,15 @@ theorem encodePreconditions_of_layoutNormalized (eo : ElfFile)
     (hPS : (syncDtStrszInFile eo).phdrShdrDisjoint)
     (hHSec : (syncDtStrszInFile eo).headerSectionDisjoint)
     (hPSec : (syncDtStrszInFile eo).phdrSectionDisjoint)
-    -- DERIVED-from-eo fields: identValid / sizeFit / headerFit_entry:
+    -- DERIVED-from-eo fields: identValid / sizeFit / nullEmpty / headerFit_entry:
     (hIdentEo : IdentBytesValid eo)
     (hSizeFitEo : ∀ (i : Nat) (h : i < eo.sections.size),
       (eo.sections[i]'h).shdrSize < UInt64.size)
+    (hNullEmptyEo : ∀ (i : Nat) (h : i < eo.sections.size),
+      (eo.sections[i]'h).type = ShType.SHT_NULL →
+      ∃ ty hOk bs, (eo.sections[i]'h).content = .raw ty hOk bs ∧ bs.size = 0)
     (hHdrEntryEo : eo.header.entry.val < UInt64.size)
-    -- residual position bounds + nullEmpty on the normalized form (see docstring):
-    (hNullEmpty : ∀ (i : Nat) (h : i < (prepLayoutForEncode (syncDtStrszInFile eo)).sections.size),
-      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).type = ShType.SHT_NULL →
-      ∃ ty hOk bs, ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).content
-        = .raw ty hOk bs ∧ bs.size = 0)
+    -- residual position bounds on the normalized form (see docstring):
     (hHdrPhoff : (prepLayoutForEncode (syncDtStrszInFile eo)).header.phoff.val < UInt64.size)
     (hHdrShoff : (prepLayoutForEncode (syncDtStrszInFile eo)).header.shoff.val < UInt64.size)
     (hPhdrFit : ∀ (i : Nat) (h : i < (prepLayoutForEncode (syncDtStrszInFile eo)).phdrs.size),
@@ -318,7 +316,7 @@ theorem encodePreconditions_of_layoutNormalized (eo : ElfFile)
   spliceDisjoint := spliceRegionsDisjoint_of_structural eo hS0 hHP hHS hPS hHSec hPSec
   identValid := identValid_normalized_of_eo eo hIdentEo
   sizeFit := sizeFit_normalized_of_eo eo hSizeFitEo
-  nullEmpty := hNullEmpty
+  nullEmpty := nullEmpty_normalized_of_eo eo hNullEmptyEo
   headerFit_entry := headerFit_entry_normalized_of_eo eo hHdrEntryEo
   headerFit_phoff := hHdrPhoff
   headerFit_shoff := hHdrShoff

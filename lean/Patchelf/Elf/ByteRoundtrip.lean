@@ -2458,6 +2458,60 @@ theorem headerFit_entry_normalized_of_eo (eo : ElfFile)
     (prepLayoutForEncode (syncDtStrszInFile eo)).header.entry.val < UInt64.size := by
   rw [prepLayout_syncDtStrsz_header_entry]; exact h
 
+/-- `nullEmpty` on `en` from `nullEmpty` on `eo`.  A NULL section in `en` is
+    NULL in `eo` (`type` preserved); `eo`'s `nullEmpty` makes its content
+    `.raw _ _ empty` (not `.dynamic`), so content is preserved at that index
+    through all three pre-encode passes (each only edits the SHT_DYNAMIC
+    section). -/
+theorem nullEmpty_normalized_of_eo (eo : ElfFile)
+    (h : ∀ (i : Nat) (hi : i < eo.sections.size),
+      (eo.sections[i]'hi).type = ShType.SHT_NULL →
+      ∃ ty hOk bs, (eo.sections[i]'hi).content = .raw ty hOk bs ∧ bs.size = 0) :
+    ∀ (i : Nat) (hi : i < (prepLayoutForEncode (syncDtStrszInFile eo)).sections.size),
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'hi).type = ShType.SHT_NULL →
+      ∃ ty hOk bs, ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'hi).content
+        = .raw ty hOk bs ∧ bs.size = 0 := by
+  intro i hi hNull
+  have hiE : i < eo.sections.size := by rwa [prepLayout_syncDtStrsz_sections_size] at hi
+  have hTypeEo : (eo.sections[i]'hiE).type = ShType.SHT_NULL := by
+    rw [← prepLayout_syncDtStrsz_sections_type eo i hi hiE]; exact hNull
+  obtain ⟨ty, hOk, bs, hContentEo, hbs⟩ := h i hiE hTypeEo
+  have hndEo : ∀ dyn, (eo.sections[i]'hiE).content ≠ .dynamic dyn := by
+    intro dyn hd; rw [hContentEo] at hd; exact SectionContent.noConfusion hd
+  have hiS : i < (syncDtStrszInFile eo).sections.size := by rwa [syncDtStrszInFile_sections_size]
+  have hC1 : ((syncDtStrszInFile eo).sections[i]'hiS).content = (eo.sections[i]'hiE).content :=
+    syncDtStrszInFile_sections_content_of_not_dynamic eo i hiS hiE hndEo
+  have hnd1 : ∀ dyn, ((syncDtStrszInFile eo).sections[i]'hiS).content ≠ .dynamic dyn := by
+    rw [hC1]; exact hndEo
+  have hContentEq : ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'hi).content
+      = (eo.sections[i]'hiE).content := by
+    by_cases hLay : layoutAlreadyValid (syncDtStrszInFile eo) = true
+    · have he : prepLayoutForEncode (syncDtStrszInFile eo) = syncDtStrszInFile eo :=
+        prepLayoutForEncode_of_layoutAlreadyValid hLay
+      rw [show ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'hi).content
+            = ((syncDtStrszInFile eo).sections[i]'hiS).content from by simp only [he], hC1]
+    · have he : prepLayoutForEncode (syncDtStrszInFile eo)
+          = syncDtAddrTagsInFile (growEOFWith none (syncDtStrszInFile eo)) := by
+        unfold prepLayoutForEncode prepLayoutForEncodeWith
+        simp only [hLay, Bool.false_eq_true, ↓reduceIte]
+      have hiG : i < (growEOFWith none (syncDtStrszInFile eo)).sections.size := by
+        rwa [growEOFWith_sections_size]
+      have hC2 : ((growEOFWith none (syncDtStrszInFile eo)).sections[i]'hiG).content
+          = ((syncDtStrszInFile eo).sections[i]'hiS).content :=
+        growEOFWith_sections_content none (syncDtStrszInFile eo) i hiG hiS
+      have hnd2 : ∀ dyn, ((growEOFWith none (syncDtStrszInFile eo)).sections[i]'hiG).content
+          ≠ .dynamic dyn := by rw [hC2]; exact hnd1
+      have hiA : i < (syncDtAddrTagsInFile (growEOFWith none (syncDtStrszInFile eo))).sections.size := by
+        rwa [syncDtAddrTagsInFile_sections_size]
+      have hC3 : ((syncDtAddrTagsInFile (growEOFWith none (syncDtStrszInFile eo))).sections[i]'hiA).content
+          = ((growEOFWith none (syncDtStrszInFile eo)).sections[i]'hiG).content :=
+        syncDtAddrTagsInFile_sections_content_of_not_dynamic _ i hiA hiG hnd2
+      rw [show ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'hi).content
+            = ((syncDtAddrTagsInFile (growEOFWith none (syncDtStrszInFile eo))).sections[i]'hiA).content
+            from by simp only [he]]
+      rw [hC3, hC2, hC1]
+  exact ⟨ty, hOk, bs, by rw [hContentEq]; exact hContentEo, hbs⟩
+
 /-- Composes `parseHeader_byte_facts` with `identBytesValid_of_decodeHeader`
     to give the canonical bridge: a successful `parseHeader bs = .ok h`
     yields `IdentBytesValid` for any ElfFile whose header is `h`. -/
