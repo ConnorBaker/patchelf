@@ -1376,6 +1376,28 @@ theorem layoutForEncoding_sections_content (e : ElfFile) (j : Nat)
   unfold layoutForEncoding at hj ⊢
   exact layoutSectionsFold_field_eq _ _ (·.content) (fun _ _ => rfl) j hj hjE
 
+theorem layoutForEncoding_sections_addralign (e : ElfFile) (j : Nat)
+    (hj : j < (layoutForEncoding e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((layoutForEncoding e).sections[j]'hj).addralign = (e.sections[j]'hjE).addralign := by
+  unfold layoutForEncoding at hj ⊢
+  exact layoutSectionsFold_field_eq _ _ (·.addralign) (fun _ _ => rfl) j hj hjE
+
+theorem layoutForEncoding_sections_entsize (e : ElfFile) (j : Nat)
+    (hj : j < (layoutForEncoding e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((layoutForEncoding e).sections[j]'hj).entsize = (e.sections[j]'hjE).entsize := by
+  unfold layoutForEncoding at hj ⊢
+  exact layoutSectionsFold_field_eq _ _ (·.entsize) (fun _ _ => rfl) j hj hjE
+
+theorem layoutForEncoding_header_ident (e : ElfFile) :
+    (layoutForEncoding e).header.ident = e.header.ident := by
+  unfold layoutForEncoding; rfl
+
+theorem layoutForEncoding_header_entry (e : ElfFile) :
+    (layoutForEncoding e).header.entry = e.header.entry := by
+  unfold layoutForEncoding; rfl
+
 theorem layoutForEncoding_findUniqueTypeIdx (e : ElfFile) (ty : ShType) :
     (layoutForEncoding e).findUniqueTypeIdx ty = e.findUniqueTypeIdx ty := by
   apply ElfFile.firstIdxWhereIn_congr

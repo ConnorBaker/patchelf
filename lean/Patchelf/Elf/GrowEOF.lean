@@ -4345,4 +4345,178 @@ theorem syncDtAddrTagsInFile_preserves_dynStrszCoherent (e : ElfFile)
     rw [syncDtAddrEntry_eq_self_of_not_addressTag e _ hNotAddr]
     exact hCoh dyn0 ds' hDyn0 hS i hi hT
 
+/-! ## Per-branch `addralign` / `entsize` / `header.ident` / `header.entry`
+    preservation (for §5.1 Obligation C residual `EncodePreconditions`
+    fields).  `appendStaleSections` / `Section.withOffset` preserve every
+    non-`offset`/`addr` field; each branch's header is a `{ e.header with
+    shoff/phoff/phnum := … }` update, so `ident`/`entry` are `rfl`. -/
+
+theorem growEOFWithMainBody_sections_addralign
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) (j : Nat)
+    (hj : j < (growEOFWithMainBody pageSize? e lastIdx).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithMainBody pageSize? e lastIdx).sections[j]'hj).addralign
+      = (e.sections[j]'hjE).addralign := by
+  unfold growEOFWithMainBody at hj ⊢
+  exact appendStaleSections_addralign _ _ _ _ j hj hjE
+
+theorem growEOFWithMainBody_sections_entsize
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) (j : Nat)
+    (hj : j < (growEOFWithMainBody pageSize? e lastIdx).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithMainBody pageSize? e lastIdx).sections[j]'hj).entsize
+      = (e.sections[j]'hjE).entsize := by
+  unfold growEOFWithMainBody at hj ⊢
+  exact appendStaleSections_entsize _ _ _ _ j hj hjE
+
+theorem growEOFWithMainBody_header_ident
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).header.ident = e.header.ident := by
+  unfold growEOFWithMainBody; rfl
+
+theorem growEOFWithMainBody_header_entry
+    (pageSize? : Option Nat) (e : ElfFile) (lastIdx : Nat) :
+    (growEOFWithMainBody pageSize? e lastIdx).header.entry = e.header.entry := by
+  unfold growEOFWithMainBody; rfl
+
+theorem growEOFWithFreshPtLoad_sections_addralign
+    (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWithFreshPtLoad pageSize? e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithFreshPtLoad pageSize? e).sections[j]'hj).addralign
+      = (e.sections[j]'hjE).addralign := by
+  unfold growEOFWithFreshPtLoad at hj ⊢
+  exact appendStaleSections_addralign _ _ _ _ j hj hjE
+
+theorem growEOFWithFreshPtLoad_sections_entsize
+    (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWithFreshPtLoad pageSize? e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithFreshPtLoad pageSize? e).sections[j]'hj).entsize
+      = (e.sections[j]'hjE).entsize := by
+  unfold growEOFWithFreshPtLoad at hj ⊢
+  exact appendStaleSections_entsize _ _ _ _ j hj hjE
+
+theorem growEOFWithFreshPtLoad_header_ident
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).header.ident = e.header.ident := by
+  unfold growEOFWithFreshPtLoad; rfl
+
+theorem growEOFWithFreshPtLoad_header_entry
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoad pageSize? e).header.entry = e.header.entry := by
+  unfold growEOFWithFreshPtLoad; rfl
+
+theorem growEOFWithFreshPtLoadReloc_sections_addralign
+    (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWithFreshPtLoadReloc pageSize? e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithFreshPtLoadReloc pageSize? e).sections[j]'hj).addralign
+      = (e.sections[j]'hjE).addralign := by
+  unfold growEOFWithFreshPtLoadReloc at hj ⊢
+  exact appendStaleSections_addralign _ _ _ _ j hj hjE
+
+theorem growEOFWithFreshPtLoadReloc_sections_entsize
+    (pageSize? : Option Nat) (e : ElfFile) (j : Nat)
+    (hj : j < (growEOFWithFreshPtLoadReloc pageSize? e).sections.size)
+    (hjE : j < e.sections.size) :
+    ((growEOFWithFreshPtLoadReloc pageSize? e).sections[j]'hj).entsize
+      = (e.sections[j]'hjE).entsize := by
+  unfold growEOFWithFreshPtLoadReloc at hj ⊢
+  exact appendStaleSections_entsize _ _ _ _ j hj hjE
+
+theorem growEOFWithFreshPtLoadReloc_header_ident
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).header.ident = e.header.ident := by
+  unfold growEOFWithFreshPtLoadReloc; rfl
+
+theorem growEOFWithFreshPtLoadReloc_header_entry
+    (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWithFreshPtLoadReloc pageSize? e).header.entry = e.header.entry := by
+  unfold growEOFWithFreshPtLoadReloc; rfl
+
+/-! ## Top-level `growEOFWith` accessor dispatch (content / size / addralign /
+    entsize / header.ident / header.entry).  Each mirrors `growEOFWith_dynstr`'s
+    5-way dispatch.  These feed §5.1 Obligation C: the layout move preserves
+    per-section content (hence `encodedSize`/`shdrSize`/`type`), `addralign`,
+    `entsize`, and the header `ident`/`entry` fields. -/
+
+@[simp] theorem growEOFWith_sections_size (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWith pageSize? e).sections.size = e.sections.size := by
+  unfold growEOFWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]
+  · simp only [hLay]
+    cases hLast : lastPtLoadIdx e.phdrs with
+    | none => simp
+    | some lastIdx =>
+      simp only []
+      by_cases hExt : (canExtendLastPtLoad e
+        (roundUp (currentFileEnd e)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (roundUp (maxPtLoadVaddrEnd e.phdrs)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs)
+        lastIdx) = true
+      · simp only [hExt, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+        exact growEOFWithMainBody_sections_size pageSize? e lastIdx
+      · simp only [hExt, Bool.not_false, ↓reduceIte]
+        by_cases hAdd : canAddFreshPtLoad e = true
+        · simp only [hAdd, ↓reduceIte]
+          exact growEOFWithFreshPtLoad_sections_size pageSize? e
+        · simp only [hAdd, Bool.false_eq_true, ↓reduceIte]
+          exact growEOFWithFreshPtLoadReloc_sections_size pageSize? e
+
+@[simp] theorem growEOFWith_header_ident (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWith pageSize? e).header.ident = e.header.ident := by
+  unfold growEOFWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]
+  · simp only [hLay]
+    cases hLast : lastPtLoadIdx e.phdrs with
+    | none => exact layoutForEncoding_header_ident e
+    | some lastIdx =>
+      simp only []
+      by_cases hExt : (canExtendLastPtLoad e
+        (roundUp (currentFileEnd e)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (roundUp (maxPtLoadVaddrEnd e.phdrs)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs)
+        lastIdx) = true
+      · simp only [hExt, Bool.not_true, Bool.false_eq_true, ↓reduceIte] <;>
+          first | rfl | exact growEOFWithMainBody_header_ident pageSize? e lastIdx
+      · simp only [hExt, Bool.not_false, ↓reduceIte]
+        by_cases hAdd : canAddFreshPtLoad e = true
+        · simp only [hAdd, ↓reduceIte] <;>
+            first | rfl | exact growEOFWithFreshPtLoad_header_ident pageSize? e
+        · simp only [hAdd, Bool.false_eq_true, ↓reduceIte] <;>
+            first | rfl | exact growEOFWithFreshPtLoadReloc_header_ident pageSize? e
+
+@[simp] theorem growEOFWith_header_entry (pageSize? : Option Nat) (e : ElfFile) :
+    (growEOFWith pageSize? e).header.entry = e.header.entry := by
+  unfold growEOFWith
+  by_cases hLay : layoutAlreadyValid e = true
+  · simp only [hLay, ↓reduceIte]
+  · simp only [hLay]
+    cases hLast : lastPtLoadIdx e.phdrs with
+    | none => exact layoutForEncoding_header_entry e
+    | some lastIdx =>
+      simp only []
+      by_cases hExt : (canExtendLastPtLoad e
+        (roundUp (currentFileEnd e)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (roundUp (maxPtLoadVaddrEnd e.phdrs)
+          (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs))
+        (match pageSize? with | some n => max n (maxPtLoadAlign e.phdrs) | none => maxPtLoadAlign e.phdrs)
+        lastIdx) = true
+      · simp only [hExt, Bool.not_true, Bool.false_eq_true, ↓reduceIte] <;>
+          first | rfl | exact growEOFWithMainBody_header_entry pageSize? e lastIdx
+      · simp only [hExt, Bool.not_false, ↓reduceIte]
+        by_cases hAdd : canAddFreshPtLoad e = true
+        · simp only [hAdd, ↓reduceIte] <;>
+            first | rfl | exact growEOFWithFreshPtLoad_header_entry pageSize? e
+        · simp only [hAdd, Bool.false_eq_true, ↓reduceIte] <;>
+            first | rfl | exact growEOFWithFreshPtLoadReloc_header_entry pageSize? e
+
 end Patchelf.Elf
