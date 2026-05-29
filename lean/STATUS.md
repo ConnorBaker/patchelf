@@ -126,36 +126,59 @@
 > `OpAdapterPreservation.lean`) still ship taking their `eo` facts directly as
 > hypotheses.
 >
-> **§5.1 growing ops — 2 of N landed (the `mapDynamicOp` growers,
-> `hSplice`-hypothesized).**  New module `Patchelf/Elf/OpToElfFactorGrow.lean`
-> ships the FIRST Tier-D round-trips for GROWING ops.  A growing op widens a
-> section's `encodedSize` at its original offset, so the three per-section
-> disjointness invariants on `eo` genuinely BREAK and the shrink-monotonicity
-> core (which needs `newDyn.size ≤ oldDyn.size`) cannot apply; `encode`'s
-> `prepLayoutForEncode`/`growEOFWith` RE-LAYS-OUT the file (flags the overlapping
-> grown sections stale, relocates them), so the NORMALIZED form is
-> `spliceRegionsDisjoint` even though `eo` is not.  The keystone driver
-> `tierD_roundtrip_of_grown_eo` is identical to `tierD_roundtrip_of_eo_facts`
-> EXCEPT it HYPOTHESIZES the normalized form's `spliceRegionsDisjoint`
-> (`hSplice`) instead of deriving it from `eo`'s per-section disjointness — the
-> sanctioned "layout engine produced disjoint output" surface, on the same
-> epistemic footing as the four `< 2^64` position bounds the shrink capstone
-> already hypothesizes (the runtime `Validate.IsLoadableBytes` guard catches the
-> pathological case at write time).  Every other `EncodePreconditions` field is
-> still DERIVED from `eo` via the `*_normalized_of_eo` helpers + the existing
-> `tierD_roundtrip_of_valid`.  Instantiated by the two `mapDynamicOp` growers
-> (dynstr unchanged, `.dynamic` grows by ≤1), thin instantiations closing by
-> `exact`: `toElfFile_addDebugTag_tierD_roundtrip_derived` (`mapDynamicOp typed
-> (·.addDebugTag)`) and `toElfFile_noDefaultLib_tierD_roundtrip_derived`
-> (`mapDynamicOp typed (·.setNoDefaultLib)`).  These are NOT fully derived like
-> the shrink ops — they carry `hSplice` as a hypothesis.
+> **§5.1 growing ops — the `mapDynamicOp` growers are now FULLY DERIVED
+> (`hSplice` no longer hypothesized).**  Module `Patchelf/Elf/OpToElfFactorGrow.lean`
+> ships the keystone grow driver; the new module
+> `Patchelf/Elf/GrowEOFDisjointOfBase.lean` PROMOTES the growing-ops `hSplice`
+> from a HYPOTHESIS to a DERIVED fact for the two `mapDynamicOp` growers
+> (`addDebugTag`/`noDefaultLib`) — PLAN-GROWING-OPS §3 Commit 3, the
+> "very-high-risk" item, LANDED.  A growing op widens one section's `encodedSize`
+> at its ORIGINAL offset, so the three per-section disjointness invariants on `eo`
+> genuinely BREAK and the shrink-monotonicity core (which needs `newDyn.size ≤
+> oldDyn.size`) cannot apply; `encode`'s `prepLayoutForEncode`/`growEOFWith`
+> RE-LAYS-OUT the file (flags the overlapping grown sections stale, relocates
+> them), so the NORMALIZED form is `spliceRegionsDisjoint` even though `eo` is
+> not.  The keystone driver `tierD_roundtrip_of_grown_eo` is identical to
+> `tierD_roundtrip_of_eo_facts` EXCEPT it HYPOTHESIZES the normalized form's
+> `spliceRegionsDisjoint` (`hSplice`); every other `EncodePreconditions` field is
+> DERIVED from `eo` via the `*_normalized_of_eo` helpers + `tierD_roundtrip_of_valid`.
 >
-> **Still open (growing ops):** the grow-tolerant
-> `growEOFWith_produces_spliceRegionsDisjoint_of_base` lemma that would DERIVE
-> `hSplice` from the no-op base (PLAN-GROWING-OPS §3 Commit 3, very-high-risk),
-> and `addNeeded` / `modify{RPath,Soname}.set` Tier-D — these use
-> `growDynstrDynamicOp` (dynstr AND dynamic both grow), needing a genuinely-new
-> two-field factoring (PLAN-GROWING-OPS §3 Commit 5).  See ROADMAP §5.1.  The
+> **The new derivation.**  A `mapDynamicOp` grower widens ONE section (the
+> dynamic section) at its FIXED offset (`updateSectionContent` preserves
+> `.offset`).  Of the 6 structural invariants
+> `prepLayoutForEncode_produces_spliceRegionsDisjoint` consumes: section-0-NULL +
+> the 3 header/table clauses are size-INDEPENDENT (transport verbatim);
+> `headerSectionDisjoint`/`phdrSectionDisjoint` survive growth via the LEFT
+> disjunct (a section AFTER a region stays disjoint when it grows at a fixed
+> offset) — needing only that the dynamic section sits at/after the ELF header
+> and at/after the phdr table (two honest offset side conditions, true for every
+> real ELF, WEAKER than the shrink path's `hSizeBound`); `shdrSectionDisjoint` +
+> `sectionsNonOverlapping` genuinely break, but `growEOFWith` RE-ESTABLISHES
+> exactly those, so they are NOT preconditions.  `GrowEOFDisjointOfBase.lean`
+> ships the establisher `spliceRegionsDisjoint_of_grown_base` (`namespace
+> Patchelf.Elf`) + the `mapDynamicOp`-level corollary
+> `Adapter.mapDynamicOp_spliceRegionsDisjoint_of_base` (mirror of
+> `mapDynamicOp_structural_transport`, reusing the `RemoveRpathFactorData`
+> bundle) + supporting lemmas (`IntervalDisjoint_grow_right_of_le`,
+> `ElfFile.updateSectionContent_sectionInterval_grow` — the grow analogue of
+> `_sectionInterval_shrink` — and `_headerSectionDisjoint_grow` /
+> `_phdrSectionDisjoint_grow`).  Both establisher and corollary are pure
+> `[propext, Classical.choice, Quot.sound]` (no bv_decide).
+>
+> **The two capstones `toElfFile_{addDebugTag,noDefaultLib}_tierD_roundtrip_derived`
+> MOVED into `GrowEOFDisjointOfBase.lean` and were UPGRADED:** they NO LONGER
+> hypothesize `hSplice` — they DERIVE it via the corollary, so their surface is
+> now the no-op base's 6 structural invariants (the same surface the SHRINK
+> capstones use) + the 2 offset side conditions.  Axioms: standard `[propext,
+> Classical.choice, Quot.sound]` + 3 bv_decide, no `sorryAx`.  The generic driver
+> `tierD_roundtrip_of_grown_eo` STAYS in `OpToElfFactorGrow.lean` and KEEPS its
+> hypothesized `hSplice` (still needed by `addNeeded`, which can't yet derive it).
+>
+> **Still open (growing ops):** the dynstr growers `addNeeded` /
+> `modify{RPath,Soname}.set` Tier-D — these use `growDynstrDynamicOp` (dynstr AND
+> dynamic both grow), needing a genuinely-new two-field factoring
+> (PLAN-GROWING-OPS §3 Commit 5; a separate session is working it).  See ROADMAP
+> §5.1.  The
 > reusable shrink-monotonicity core
 > (`SectionOps.updateSectionContent_*Disjoint_shrink`) + the
 > `Adapter.{foldl_proj_size_le_add,idForIn_proj_size_le}` loop-size bridges are
@@ -165,7 +188,7 @@
 > The growing-ops half of §5.1 has a dedicated design plan,
 > [`../research/PLAN-GROWING-OPS.md`](../research/PLAN-GROWING-OPS.md).
 >
-> **Tests: 54/54 shell tests passing; 111/111 Lean build jobs;
+> **Tests: 54/54 shell tests passing; 112/112 Lean build jobs;
 > zero `sorry`s.**
 
 This document records the **current state** of the Lean 4 patchelf
@@ -271,7 +294,8 @@ Total Lean source: ~22,100 LOC. Distribution by category:
 | 14 ops (`Elf/Ops/*.lean`) | ~1,080 | mutating operations |
 | Op-level Tier D (`OpAdapterPreservation`) | ~440 | Tier-1 op `_preserves_loadable` + phdrs-map helpers + the Tier-2/3 round-trip scaffold, Obligation-C package, `tierD_roundtrip` drivers, and the two shrinking-op round-trips (§5.1) |
 | Op→`toElfFile` factoring (`OpToElfFactor`) | ~1000 | Generic `mapDynamicOp f` structural-invariant derivation: `updateSectionContent` algebra + the 3 `applyTypeOpt_*` generic outer-apply lemmas (4× collapse) + `toElfFile_mapDynamicOp_factor` + `mapDynamicOp_structural_transport` + the generic capstone `_mapDynamicOp_tierD_roundtrip_derived`, instantiated for all 4 shrinking ops: `removeRpath` / `modifyRPath.remove` / `removeNeeded` / `modifySoname.remove` (§5.1) |
-| Op→`toElfFile` GROWING-op Tier-D (`OpToElfFactorGrow`) | ~210 | The grow driver `tierD_roundtrip_of_grown_eo` (hypothesizes the normalized form's `spliceRegionsDisjoint`, derives every other `EncodePreconditions` field from `eo`) + the two `mapDynamicOp` grower instantiations `toElfFile_{addDebugTag,noDefaultLib}_tierD_roundtrip_derived` (§5.1) |
+| Op→`toElfFile` GROWING-op Tier-D (`OpToElfFactorGrow`) | ~110 | The grow driver `tierD_roundtrip_of_grown_eo` (hypothesizes the normalized form's `spliceRegionsDisjoint`, derives every other `EncodePreconditions` field from `eo`) — still needed by the dynstr growers (§5.1) |
+| Growing-op `hSplice` derivation (`GrowEOFDisjointOfBase`) | ~300 | DERIVES the `mapDynamicOp` growers' `hSplice` from the no-op base: `spliceRegionsDisjoint_of_grown_base` + `Adapter.mapDynamicOp_spliceRegionsDisjoint_of_base` + the grow-interval lemmas, plus the two upgraded (no-longer-`hSplice`-hypothesizing) capstones `toElfFile_{addDebugTag,noDefaultLib}_tierD_roundtrip_derived` (§5.1) |
 | CLI + Main + Log | ~990 | lean4-cli subcommand tree + stderr trace logger |
 | Tactic (`SpliceSimproc*`) | ~200 | `simp_splice` macro + `[splice_simp]` simp set |
 | Misc (root, ElfFile, DynamicLemmas) | ~980 | structural |
@@ -695,8 +719,9 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   but unused by the relative-bound proofs — kept for the absolute-bound route a
   growing op might need.
 
-  **Growing ops — 2 of N landed** (`Patchelf/Elf/OpToElfFactorGrow.lean`).  A
-  growing op widens a section's `encodedSize` at its original offset, so the
+  **Growing ops — the `mapDynamicOp` growers are now FULLY DERIVED**
+  (`Patchelf/Elf/OpToElfFactorGrow.lean` + `Patchelf/Elf/GrowEOFDisjointOfBase.lean`).
+  A growing op widens a section's `encodedSize` at its original offset, so the
   three per-section disjointness invariants on `eo` genuinely BREAK and the
   shrink core (`newDyn.size ≤ oldDyn.size`) cannot apply.  `encode`'s
   `prepLayoutForEncode`/`growEOFWith` re-lays-out the file (flags the
@@ -704,22 +729,40 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   `spliceRegionsDisjoint` even though `eo` is not.  The keystone grow driver
   `tierD_roundtrip_of_grown_eo` is identical to `tierD_roundtrip_of_eo_facts`
   except it HYPOTHESIZES that normalized-form `spliceRegionsDisjoint`
-  (`hSplice`) — the sanctioned "layout engine produced disjoint output" surface,
-  same epistemic footing as the four `< 2^64` position bounds — and derives
-  every other `EncodePreconditions` field from `eo` via the `*_normalized_of_eo`
-  helpers + `tierD_roundtrip_of_valid`.  Instantiated (close by `exact`,
-  `mapDynamicOp` defeq) for the two `mapDynamicOp` growers (dynstr unchanged,
-  `.dynamic` +≤1): `toElfFile_addDebugTag_tierD_roundtrip_derived` and
-  `toElfFile_noDefaultLib_tierD_roundtrip_derived`.  These growers are NOT
-  fully derived like the shrink ops — `hSplice` is hypothesized.
+  (`hSplice`) and derives every other `EncodePreconditions` field from `eo` via
+  the `*_normalized_of_eo` helpers + `tierD_roundtrip_of_valid`.
 
-  Still open (ROADMAP §5.1): (1) the grow-tolerant
-  `growEOFWith_produces_spliceRegionsDisjoint_of_base` that would DERIVE
-  `hSplice` from the no-op base (PLAN-GROWING-OPS §3 Commit 3); (2) `addNeeded` /
-  `modify{RPath,Soname}.set` Tier-D — these use `growDynstrDynamicOp` (dynstr
-  AND dynamic grow), needing the genuinely-new two-field factoring
-  (PLAN-GROWING-OPS §3 Commit 5).  The shrinking-op family is COMPLETE (4/4);
-  growing ops are 2 of N (the `mapDynamicOp` growers, `hSplice`-hypothesized).
+  `GrowEOFDisjointOfBase.lean` PROMOTES `hSplice` from a hypothesis to a DERIVED
+  fact for the two `mapDynamicOp` growers (PLAN-GROWING-OPS §3 Commit 3, the
+  "very-high-risk" item, LANDED).  Mechanism: a `mapDynamicOp` grower widens
+  ONE section at its FIXED offset; section-0-NULL + the 3 header/table clauses
+  are size-independent (transport verbatim);
+  `headerSectionDisjoint`/`phdrSectionDisjoint` survive via the LEFT disjunct
+  (a section AFTER a region stays disjoint when it grows at a fixed offset) —
+  needing only that the dynamic section sits after the ELF header and after the
+  phdr table (`hDynAfterHeader`/`hDynAfterPhdr`, two honest offset side
+  conditions, true for every real ELF, WEAKER than the shrink path's
+  `hSizeBound`); `shdrSectionDisjoint` + `sectionsNonOverlapping` break but
+  `growEOFWith` RE-ESTABLISHES them.  Establisher
+  `spliceRegionsDisjoint_of_grown_base` + corollary
+  `Adapter.mapDynamicOp_spliceRegionsDisjoint_of_base` (mirror of
+  `mapDynamicOp_structural_transport`, reusing `RemoveRpathFactorData`); both
+  pure `[propext, Classical.choice, Quot.sound]`.  The two capstones
+  `toElfFile_{addDebugTag,noDefaultLib}_tierD_roundtrip_derived` MOVED here and
+  were UPGRADED: they NO LONGER hypothesize `hSplice` — they DERIVE it via the
+  corollary, so their surface is the no-op base's 6 structural invariants (same
+  as the SHRINK capstones) + the 2 offset side conditions.  Axioms `[propext,
+  Classical.choice, Quot.sound]` + 3 bv_decide, no `sorryAx`.  The driver
+  `tierD_roundtrip_of_grown_eo` STAYS in `OpToElfFactorGrow.lean` and KEEPS its
+  hypothesized `hSplice` (still needed by `addNeeded`).
+
+  Still open (ROADMAP §5.1): `addNeeded` / `modify{RPath,Soname}.set` Tier-D —
+  these use `growDynstrDynamicOp` (dynstr AND dynamic grow), needing the
+  genuinely-new two-field factoring (PLAN-GROWING-OPS §3 Commit 5; a separate
+  session is working it).  The shrinking-op family is COMPLETE (4/4); the
+  `mapDynamicOp` growers are now fully derived (`addDebugTag`/`noDefaultLib`),
+  carrying only the 2 offset side conditions on top of the same no-op-base
+  surface the shrink ops use; the dynstr growers remain open.
 
 ### Priority 2 gaps (test / spec coverage)
 
@@ -770,6 +813,36 @@ preserves `needed.size`/`flags1`/`debug`" axis).  All `[propext, Quot.sound]`.
   [`../research/PICKUP-PROMPT-FRESH-PT-LOAD.md`](../research/PICKUP-PROMPT-FRESH-PT-LOAD.md).
 
 ### Recent work (2026-05)
+
+**§5.1 `mapDynamicOp` growers' `hSplice` DERIVED — growers now fully derived
+(commit `bfafd42`).**  New module `Patchelf/Elf/GrowEOFDisjointOfBase.lean`
+(~300 LOC, registered via a `public import` in `Patchelf.lean`) PROMOTES the
+growing-ops `hSplice` from a HYPOTHESIS to a DERIVED fact for the two
+`mapDynamicOp` growers (`addDebugTag`/`noDefaultLib`) — PLAN-GROWING-OPS §3
+Commit 3, the "very-high-risk" item.  A `mapDynamicOp` grower widens ONE section
+(the dynamic section) at its FIXED offset; section-0-NULL + the 3 header/table
+clauses transport verbatim (size-independent), the two per-section clauses
+survive via the LEFT disjunct (a section after a region stays disjoint when it
+grows at a fixed offset — needs only `hDynAfterHeader`/`hDynAfterPhdr`, two
+honest offset side conditions WEAKER than the shrink path's `hSizeBound`), and
+`shdrSectionDisjoint`/`sectionsNonOverlapping` are re-established by
+`growEOFWith` so they are not preconditions.  Establisher
+`spliceRegionsDisjoint_of_grown_base` + corollary
+`Adapter.mapDynamicOp_spliceRegionsDisjoint_of_base` (mirror of
+`mapDynamicOp_structural_transport`, reusing `RemoveRpathFactorData`) + grow
+lemmas (`IntervalDisjoint_grow_right_of_le`,
+`ElfFile.updateSectionContent_sectionInterval_grow` /
+`_headerSectionDisjoint_grow` / `_phdrSectionDisjoint_grow`) — establisher +
+corollary pure `[propext, Classical.choice, Quot.sound]`.  The two capstones
+`toElfFile_{addDebugTag,noDefaultLib}_tierD_roundtrip_derived` MOVED here from
+`OpToElfFactorGrow.lean` and were UPGRADED: they NO LONGER hypothesize `hSplice`
+— their surface is the no-op base's 6 structural invariants (same as the SHRINK
+capstones) + the 2 offset side conditions; `[propext, Classical.choice,
+Quot.sound]` + 3 bv_decide, no `sorryAx`.  The generic driver
+`tierD_roundtrip_of_grown_eo` STAYS in `OpToElfFactorGrow.lean` and KEEPS its
+hypothesized `hSplice` (still needed by `addNeeded`).  112 lake jobs (was 111),
+54/54 tests.  Still open: the dynstr-growing `growDynstrDynamicOp` ops
+(`addNeeded`, `modify{RPath,Soname}.set`, Commit 5).
 
 **§5.1 growing-ops Tier-D keystone + `addDebugTag`/`noDefaultLib` landed.**
 New module `Patchelf/Elf/OpToElfFactorGrow.lean` (~210 LOC, registered via a

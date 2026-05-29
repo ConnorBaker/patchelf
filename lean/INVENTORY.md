@@ -987,27 +987,61 @@ signatures.)
 
 | Kind | Name | What it gives |
 |---|---|---|
-| theorem | `tierD_roundtrip_of_grown_eo` | keystone grow driver — identical to `tierD_roundtrip_of_eo_facts` EXCEPT it HYPOTHESIZES the normalized form's `spliceRegionsDisjoint` (`hSplice`) instead of deriving it from `eo`'s per-section disjointness (unprovable for a grown `eo`); every other `EncodePreconditions` field derived from `eo` via `*_normalized_of_eo` + `tierD_roundtrip_of_valid` |
-| theorem | `toElfFile_addDebugTag_tierD_roundtrip_derived` | `addDebugTag` Tier-D (cheapest grower: `mapDynamicOp typed (·.addDebugTag)`, dynstr unchanged, `.dynamic` +≤1) — thin instantiation of the keystone, closes by `exact` |
-| theorem | `toElfFile_noDefaultLib_tierD_roundtrip_derived` | `noDefaultLib` Tier-D (second `mapDynamicOp` grower: `mapDynamicOp typed (·.setNoDefaultLib)`, same shape) |
+| theorem | `tierD_roundtrip_of_grown_eo` | keystone grow driver — identical to `tierD_roundtrip_of_eo_facts` EXCEPT it HYPOTHESIZES the normalized form's `spliceRegionsDisjoint` (`hSplice`) instead of deriving it from `eo`'s per-section disjointness (unprovable for a grown `eo`); every other `EncodePreconditions` field derived from `eo` via `*_normalized_of_eo` + `tierD_roundtrip_of_valid`.  STAYS hypothesizing `hSplice` — the path `addNeeded` (which cannot yet derive it) reuses |
 
 Mechanism: `hSplice` is the sanctioned "the layout engine produced disjoint
 output" surface — same epistemic footing as the four `< 2^64` position bounds the
 shrink capstone already hypothesizes (runtime `Validate.IsLoadableBytes` guards
 the pathological case at write time).  The generic factoring
 `toElfFile_mapDynamicOp_factor` (from `OpToElfFactor.lean`) carries over VERBATIM
-(`f`-agnostic, size-agnostic) — only the transport differs.  These growers are
-NOT fully derived (they carry `hSplice` as a hypothesis); deriving it from the
-no-op base (`growEOFWith_produces_spliceRegionsDisjoint_of_base`) and the
-dynstr-growing `growDynstrDynamicOp` ops (`addNeeded`,
-`modify{RPath,Soname}.set`, which need a two-field factoring) are deferred — see
+(`f`-agnostic, size-agnostic) — only the transport differs.  The two
+`mapDynamicOp` grower capstones (`addDebugTag`/`noDefaultLib`) MOVED to
+`GrowEOFDisjointOfBase.lean` (below), where `hSplice` is now DERIVED from the
+no-op base; only the dynstr-growing `growDynstrDynamicOp` ops (`addNeeded`,
+`modify{RPath,Soname}.set`, which need a two-field factoring) remain open — see
 `research/PLAN-GROWING-OPS.md`.
+
+---
+
+## Patchelf/Elf/GrowEOFDisjointOfBase.lean (§5.1 GROWING-op `hSplice` derivation)
+
+DERIVES the `mapDynamicOp` growers' normalized-form `spliceRegionsDisjoint`
+(`hSplice`) from the NO-OP base, PROMOTING it from a hypothesis to a theorem
+(PLAN-GROWING-OPS §3 Commit 3, the "very-high-risk" item, LANDED).  A
+`mapDynamicOp` grower widens ONE section (the dynamic section) at its FIXED
+offset (`updateSectionContent` preserves `.offset`): section-0-NULL + the 3
+header/table clauses are size-INDEPENDENT (transport verbatim);
+`headerSectionDisjoint`/`phdrSectionDisjoint` survive growth via the LEFT
+disjunct (a section AFTER a region stays disjoint when it grows at a fixed
+offset), needing only two honest offset side conditions (the dynamic section
+sits at/after the ELF header / phdr table — WEAKER than the shrink path's
+`hSizeBound`); `shdrSectionDisjoint`+`sectionsNonOverlapping` break but
+`growEOFWith` re-establishes them.  (Names only; see the file for full
+signatures.)
+
+| Kind | Name | Namespace | What it gives |
+|---|---|---|---|
+| theorem | `IntervalDisjoint_grow_right_of_le` | `Patchelf.Elf` | `IntervalDisjoint` is grow-stable in the second interval's upper bound via the LEFT disjunct (`a₂ ≤ b₁`) |
+| theorem | `ElfFile.updateSectionContent_sectionInterval_grow` | `Patchelf.Elf` | grow analogue of `_sectionInterval_shrink`: per-section interval disjointness GROW-preservation (the side hypothesis supplies the LEFT-disjunct fact for the grown section) |
+| theorem | `ElfFile.updateSectionContent_headerSectionDisjoint_grow` | `Patchelf.Elf` | `headerSectionDisjoint` survives a `.dynamic` GROW given `ehdrSize ≤ off_iDyn` |
+| theorem | `ElfFile.updateSectionContent_phdrSectionDisjoint_grow` | `Patchelf.Elf` | `phdrSectionDisjoint` survives a `.dynamic` GROW given `phoff + phnum·phdrSize ≤ off_iDyn` |
+| theorem | `spliceRegionsDisjoint_of_grown_base` | `Patchelf.Elf` | **headline establisher**: normalized-form `spliceRegionsDisjoint` for a grown dynamic op, from the no-op base's 6 structural invariants + the factoring + the 2 offset side conditions; feeds them into `Adapter.spliceRegionsDisjoint_of_structural_eo` |
+| theorem | `Adapter.mapDynamicOp_spliceRegionsDisjoint_of_base` | `Patchelf.Elf.Adapter` | the `mapDynamicOp`-level corollary (mirror of `mapDynamicOp_structural_transport`, reusing the `RemoveRpathFactorData` bundle) — the drop-in `hSplice` for the grow capstones |
+| theorem | `Adapter.toElfFile_addDebugTag_tierD_roundtrip_derived` | `Patchelf.Elf.Adapter` | `addDebugTag` Tier-D (`mapDynamicOp typed (·.addDebugTag)`) — MOVED here from `OpToElfFactorGrow.lean` and UPGRADED: `hSplice` DERIVED via the corollary, surface is the no-op base's 6 structural invariants + the 2 offset side conditions (same surface the shrink capstones use) |
+| theorem | `Adapter.toElfFile_noDefaultLib_tierD_roundtrip_derived` | `Patchelf.Elf.Adapter` | `noDefaultLib` Tier-D (`mapDynamicOp typed (·.setNoDefaultLib)`) — same shape, `hSplice` DERIVED |
+
+Establisher + corollary are pure `[propext, Classical.choice, Quot.sound]` (no
+bv_decide); the two capstones add 3 bv_decide, no `sorryAx`.  These growers are
+now FULLY DERIVED (no longer carry `hSplice` as a hypothesis) — the same caliber
+as the four shrinking ops, modulo the 2 honest offset side conditions.  The
+generic driver `tierD_roundtrip_of_grown_eo` STAYS in `OpToElfFactorGrow.lean`
+hypothesizing `hSplice` (still needed by `addNeeded`).
 
 ---
 
 ## Summary statistics
 
-- **Files scanned:** 46 Lean files
+- **Files scanned:** 47 Lean files
 - **`sorry` placeholders:** 0
 - **`axiom` declarations:** 0
 - **Master theorem:** `parse_encode_roundtrip` at `Elf/ByteRoundtrip.lean:2327`
