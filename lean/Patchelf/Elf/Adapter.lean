@@ -182,6 +182,25 @@ def symbolOfTyped {ds : StringSection} (s : TypedSymbol ds) : Symbol :=
   , st_value := s.st_value
   , st_size  := s.st_size }
 
+/-- Generic foldl array-size bound: if each step grows the accumulator array
+    by at most one element, the result is bounded by `init.size + as.size`.
+    Reusable building block for bounding `patchDynamicEntries`'s output size
+    (§5.1 shrinking-op structural-invariant discharge — see ROADMAP §5.1
+    "Remaining per-op work").  The `patchDynamicEntries` loop pushes ≤ 1
+    entry per input via this; the tight `≤ byteDyn.size` bound a shrinking
+    op needs additionally uses that drop-ops push 0 net (`typed.rpath = none`
+    skips both the in-loop and trailing-`unless` pushes). -/
+theorem Array.foldl_size_le_add {α β : Type} (as : Array α)
+    (f : Array β → α → Array β) (init : Array β)
+    (hf : ∀ (acc : Array β) (a : α), (f acc a).size ≤ acc.size + 1) :
+    (as.foldl f init).size ≤ init.size + as.size :=
+  Array.foldl_induction
+    (as := as) (motive := fun n acc => acc.size ≤ init.size + n) (init := init) (f := f)
+    (Nat.le_add_right _ _)
+    (fun i b hb => calc
+      (f b as[i]).size ≤ b.size + 1 := hf b _
+      _ ≤ init.size + (↑i + 1) := by omega)
+
 /-- Surgical patch of a byte-layer dynamic entry array to reflect the typed's changes.
 
     Key design property: POSITIONAL — every byte-layer DT_NEEDED entry is
