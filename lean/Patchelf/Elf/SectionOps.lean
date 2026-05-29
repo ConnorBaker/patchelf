@@ -425,3 +425,148 @@ theorem ElfFile.shstrndx_ne_of_content_dynamic_of_dynstr
   unfold dynstrIdx findIdxByName at hDs
   rw [hShstrNone] at hDs
   cases hDs
+
+/-! ## Shrink-monotonicity of structural disjointness under `updateSectionContent`
+
+    A `.dynamic`-rewrite that does not grow the section's `encodedSize`
+    preserves each of the 6 `spliceRegionsDisjoint` clauses plus
+    section-0-is-NULL.  These are op-independent and reusable by every
+    shrinking op (`removeRpath`/`removeNeeded`/…) for §5.1's per-op
+    structural-invariant discharge: such ops only drop `.dynamic` entries, so
+    their `toElfFile` output is `updateSectionContent iDyn (.dynamic newDyn)`
+    with `newDyn.size ≤ oldDyn.size`, and the disjointness predicates are
+    monotone under shrinking. -/
+
+/-- The 3 header/table disjointness predicates depend only on
+    `header.{phoff,shoff}` + `phdrs.size` + `sections.size`, all preserved. -/
+theorem ElfFile.updateSectionContent_headerPhdrDisjoint (e : ElfFile) (i : Nat)
+    (c : SectionContent) (h : e.headerPhdrDisjoint) :
+    (e.updateSectionContent i c).headerPhdrDisjoint := by
+  unfold ElfFile.headerPhdrDisjoint at h ⊢
+  simp only [ElfFile.updateSectionContent_header, ElfFile.updateSectionContent_phdrs]
+  exact h
+
+theorem ElfFile.updateSectionContent_headerShdrDisjoint (e : ElfFile) (i : Nat)
+    (c : SectionContent) (h : e.headerShdrDisjoint) :
+    (e.updateSectionContent i c).headerShdrDisjoint := by
+  unfold ElfFile.headerShdrDisjoint at h ⊢
+  simp only [ElfFile.updateSectionContent_header, ElfFile.updateSectionContent_sections_size]
+  exact h
+
+theorem ElfFile.updateSectionContent_phdrShdrDisjoint (e : ElfFile) (i : Nat)
+    (c : SectionContent) (h : e.phdrShdrDisjoint) :
+    (e.updateSectionContent i c).phdrShdrDisjoint := by
+  unfold ElfFile.phdrShdrDisjoint at h ⊢
+  simp only [ElfFile.updateSectionContent_header, ElfFile.updateSectionContent_phdrs,
+    ElfFile.updateSectionContent_sections_size]
+  exact h
+
+/-- `IntervalDisjoint` is monotone in shrinking the second interval's upper
+    bound (the section-region case: `[off, off+size)` with `size' ≤ size`). -/
+theorem IntervalDisjoint_shrink_right (a₁ a₂ b₁ s s' : Nat) (hle : s' ≤ s)
+    (h : IntervalDisjoint a₁ a₂ b₁ (b₁ + s)) :
+    IntervalDisjoint a₁ a₂ b₁ (b₁ + s') := by
+  unfold IntervalDisjoint at h ⊢; omega
+
+/-- Generic per-section-interval disjointness shrink-preservation, abstracted
+    over the first interval `(a₁,a₂)`.  Specialized below to the three
+    concrete predicates. -/
+theorem ElfFile.updateSectionContent_sectionInterval_shrink
+    (e : ElfFile) (iDyn : Nat) (hLt : iDyn < e.sections.size)
+    (newDyn oldDyn : Array DynEntry)
+    (hContent : (e.sections[iDyn]'hLt).content = .dynamic oldDyn)
+    (hShrink : newDyn.size ≤ oldDyn.size)
+    (a₁ a₂ : Nat)
+    (h : ∀ (i : Nat) (hi : i < e.sections.size),
+      (e.sections[i]'hi).type = Layout.ShType.SHT_NOBITS ∨
+      (e.sections[i]'hi).type = Layout.ShType.SHT_NULL ∨
+      IntervalDisjoint a₁ a₂ (e.sections[i]'hi).offset.val
+        ((e.sections[i]'hi).offset.val + (e.sections[i]'hi).encodedSize)) :
+    ∀ (i : Nat) (hi : i < (e.updateSectionContent iDyn (.dynamic newDyn)).sections.size),
+      ((e.updateSectionContent iDyn (.dynamic newDyn)).sections[i]'hi).type = Layout.ShType.SHT_NOBITS ∨
+      ((e.updateSectionContent iDyn (.dynamic newDyn)).sections[i]'hi).type = Layout.ShType.SHT_NULL ∨
+      IntervalDisjoint a₁ a₂
+        ((e.updateSectionContent iDyn (.dynamic newDyn)).sections[i]'hi).offset.val
+        (((e.updateSectionContent iDyn (.dynamic newDyn)).sections[i]'hi).offset.val
+          + ((e.updateSectionContent iDyn (.dynamic newDyn)).sections[i]'hi).encodedSize) := by
+  intro i hi
+  have hiE : i < e.sections.size := by rwa [ElfFile.updateSectionContent_sections_size] at hi
+  by_cases hje : i = iDyn
+  · subst hje
+    rw [ElfFile.updateSectionContent_getElem_self e i _ hLt hi]
+    have hbase := h i hiE
+    have hTypeDyn : (e.sections[i]'hLt).type = Layout.ShType.SHT_DYNAMIC := by
+      unfold Section.type; rw [hContent]; rfl
+    rcases hbase with hN | hN | hInt
+    · rw [hTypeDyn] at hN; exact absurd hN (by decide)
+    · rw [hTypeDyn] at hN; exact absurd hN (by decide)
+    · refine Or.inr (Or.inr ?_)
+      have hOff : ({ e.sections[i]'hLt with content := .dynamic newDyn } : Section).offset
+          = (e.sections[i]'hLt).offset := rfl
+      have hEnc : ({ e.sections[i]'hLt with content := .dynamic newDyn } : Section).encodedSize
+          = newDyn.size * Layout.dynEntrySize := by unfold Section.encodedSize; rfl
+      have hEncOld : (e.sections[i]'hLt).encodedSize = oldDyn.size * Layout.dynEntrySize := by
+        unfold Section.encodedSize; rw [hContent]
+      rw [hOff, hEnc]; rw [hEncOld] at hInt
+      exact IntervalDisjoint_shrink_right _ _ _ _ _ (Nat.mul_le_mul_right _ hShrink) hInt
+  · rw [ElfFile.updateSectionContent_getElem_ne e iDyn _ i hiE hje hi]
+    exact h i hiE
+
+theorem ElfFile.updateSectionContent_headerSectionDisjoint_shrink
+    (e : ElfFile) (iDyn : Nat) (hLt : iDyn < e.sections.size)
+    (newDyn oldDyn : Array DynEntry)
+    (hContent : (e.sections[iDyn]'hLt).content = .dynamic oldDyn)
+    (hShrink : newDyn.size ≤ oldDyn.size)
+    (h : e.headerSectionDisjoint) :
+    (e.updateSectionContent iDyn (.dynamic newDyn)).headerSectionDisjoint :=
+  ElfFile.updateSectionContent_sectionInterval_shrink e iDyn hLt newDyn oldDyn hContent hShrink
+    0 Layout.ehdrSize h
+
+theorem ElfFile.updateSectionContent_phdrSectionDisjoint_shrink
+    (e : ElfFile) (iDyn : Nat) (hLt : iDyn < e.sections.size)
+    (newDyn oldDyn : Array DynEntry)
+    (hContent : (e.sections[iDyn]'hLt).content = .dynamic oldDyn)
+    (hShrink : newDyn.size ≤ oldDyn.size)
+    (h : e.phdrSectionDisjoint) :
+    (e.updateSectionContent iDyn (.dynamic newDyn)).phdrSectionDisjoint := by
+  have hpre := ElfFile.updateSectionContent_sectionInterval_shrink e iDyn hLt newDyn oldDyn
+    hContent hShrink e.header.phoff.val (e.header.phoff.val + e.phdrs.size * Layout.phdrSize) h
+  unfold ElfFile.phdrSectionDisjoint
+  intro i hi
+  simp only [ElfFile.updateSectionContent_header, ElfFile.updateSectionContent_phdrs]
+  exact hpre i hi
+
+theorem ElfFile.updateSectionContent_shdrSectionDisjoint_shrink
+    (e : ElfFile) (iDyn : Nat) (hLt : iDyn < e.sections.size)
+    (newDyn oldDyn : Array DynEntry)
+    (hContent : (e.sections[iDyn]'hLt).content = .dynamic oldDyn)
+    (hShrink : newDyn.size ≤ oldDyn.size)
+    (h : e.shdrSectionDisjoint) :
+    (e.updateSectionContent iDyn (.dynamic newDyn)).shdrSectionDisjoint := by
+  have hpre := ElfFile.updateSectionContent_sectionInterval_shrink e iDyn hLt newDyn oldDyn
+    hContent hShrink e.header.shoff.val (e.header.shoff.val + e.sections.size * Layout.shdrSize) h
+  unfold ElfFile.shdrSectionDisjoint
+  intro i hi
+  simp only [ElfFile.updateSectionContent_header, ElfFile.updateSectionContent_sections_size]
+  exact hpre i hi
+
+/-- Section-0-is-NULL preserved: the `.dynamic` index has type SHT_DYNAMIC ≠
+    NULL, so it is not index 0, and section 0's type is untouched. -/
+theorem ElfFile.updateSectionContent_section0Null
+    (e : ElfFile) (iDyn : Nat) (hLt : iDyn < e.sections.size)
+    (oldDyn newDyn : Array DynEntry)
+    (hContent : (e.sections[iDyn]'hLt).content = .dynamic oldDyn)
+    (h : ∀ (h0 : 0 < e.sections.size), (e.sections[0]'h0).type = Layout.ShType.SHT_NULL) :
+    ∀ (h0 : 0 < (e.updateSectionContent iDyn (.dynamic newDyn)).sections.size),
+      ((e.updateSectionContent iDyn (.dynamic newDyn)).sections[0]'h0).type = Layout.ShType.SHT_NULL := by
+  intro h0
+  have h0E : 0 < e.sections.size := by rwa [ElfFile.updateSectionContent_sections_size] at h0
+  have hiDynNe : iDyn ≠ 0 := by
+    intro hEq
+    subst hEq
+    have hTyDyn : (e.sections[0]'hLt).type = Layout.ShType.SHT_DYNAMIC := by
+      unfold Section.type; rw [hContent]; rfl
+    have hTyNull : (e.sections[0]'hLt).type = Layout.ShType.SHT_NULL := h hLt
+    rw [hTyDyn] at hTyNull; exact absurd hTyNull (by decide)
+  rw [ElfFile.updateSectionContent_getElem_ne e iDyn _ 0 h0E (Ne.symm hiDynNe) h0]
+  exact h h0E
