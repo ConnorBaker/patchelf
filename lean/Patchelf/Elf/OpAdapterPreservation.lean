@@ -399,6 +399,52 @@ theorem tierD_roundtrip_of_valid (eo : ElfFile)
   tierD_roundtrip eo (prepLayout_syncDtStrsz_preserves_valid eo hVal hPhdrFit hDs)
     hPreEn hDs hFit
 
+/-- Top-level Tier-D driver taking the FULL `eo`-level surface — assembles
+    `EncodePreconditions` internally via `encodePreconditions_of_layoutNormalized`
+    (Obligation C), so an op supplies only facts about its byte output `eo`:
+    validity, the phnum bound, the dynstr witness + fit, the 6 structural
+    disjointness invariants + section-0-NULL, the four eo-level derived-field
+    facts (`identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry`), and the 4
+    residual `< 2^64` position bounds on the normalized form.  No `eo` fact is
+    about `syncDtStrszInFile eo` or the layout output — everything is on `eo`
+    except the 4 position bounds (the sanctioned "file < 2^64" precondition). -/
+theorem tierD_roundtrip_of_eo_facts (eo : ElfFile)
+    (hVal : eo.IsValid)
+    (hPhdrFit : (eo.phdrs.size + 1) < UInt16.size)
+    {ds : Patchelf.Elf.StringTable} (hDs : eo.dynstr = some ds)
+    (hFit : ds.bytes.size < UInt64.size)
+    (hS0 : ∀ (h : 0 < eo.sections.size), (eo.sections[0]'h).type = ShType.SHT_NULL)
+    (hHP : eo.headerPhdrDisjoint) (hHS : eo.headerShdrDisjoint)
+    (hPS : eo.phdrShdrDisjoint) (hHSec : eo.headerSectionDisjoint)
+    (hPSec : eo.phdrSectionDisjoint)
+    (hIdentEo : IdentBytesValid eo)
+    (hSizeFitEo : ∀ (i : Nat) (h : i < eo.sections.size),
+      (eo.sections[i]'h).shdrSize < UInt64.size)
+    (hNullEmptyEo : ∀ (i : Nat) (h : i < eo.sections.size),
+      (eo.sections[i]'h).type = ShType.SHT_NULL →
+      ∃ ty hOk bs, (eo.sections[i]'h).content = .raw ty hOk bs ∧ bs.size = 0)
+    (hHdrEntryEo : eo.header.entry.val < UInt64.size)
+    (hHdrPhoff : (prepLayoutForEncode (syncDtStrszInFile eo)).header.phoff.val < UInt64.size)
+    (hHdrShoff : (prepLayoutForEncode (syncDtStrszInFile eo)).header.shoff.val < UInt64.size)
+    (hPhdrFitEn : ∀ (i : Nat) (h : i < (prepLayoutForEncode (syncDtStrszInFile eo)).phdrs.size),
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).phdrs[i]'h).offset.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).phdrs[i]'h).vaddr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).phdrs[i]'h).paddr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).phdrs[i]'h).filesz.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).phdrs[i]'h).memsz.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).phdrs[i]'h).align.val < UInt64.size)
+    (hShdrFitEn : ∀ (i : Nat) (h : i < (prepLayoutForEncode (syncDtStrszInFile eo)).sections.size),
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).addr.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).offset.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).addralign.val < UInt64.size ∧
+      ((prepLayoutForEncode (syncDtStrszInFile eo)).sections[i]'h).entsize.val < UInt64.size) :
+    parse (encode eo)
+      = .ok ⟨prepLayoutForEncode (syncDtStrszInFile eo),
+             prepLayout_syncDtStrsz_preserves_valid eo hVal hPhdrFit hDs⟩ :=
+  tierD_roundtrip_of_valid eo hVal hPhdrFit hDs hFit
+    (encodePreconditions_of_layoutNormalized eo hDs hFit hS0 hHP hHS hPS hHSec hPSec
+      hIdentEo hSizeFitEo hNullEmptyEo hHdrEntryEo hHdrPhoff hHdrShoff hPhdrFitEn hShdrFitEn)
+
 /-! ## Worked examples: shrinking ops (`removeRpath`, `removeNeeded`)
 
     These are the two simplest Tier-2/3 ops: they only *drop* `.dynamic`
