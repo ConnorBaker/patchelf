@@ -5,6 +5,17 @@ port.  Current state of landed work is in
 [`lean/STATUS.md`](../lean/STATUS.md); this document is the
 forward-looking view.
 
+> **§5.1 genericized over `mapDynamicOp f`; 3 shrinking ops DERIVED.**
+> `OpToElfFactor.lean`'s `removeRpath`-specific factoring/transport/capstone
+> are now generic over an arbitrary `f`
+> (`toElfFile_mapDynamicOp_factor` / `mapDynamicOp_structural_transport` /
+> `toElfFile_mapDynamicOp_tierD_roundtrip_derived`); `removeRpath` (regression
+> gate, unchanged statement+axioms), `modifyRPath.remove` (free), and
+> `removeNeeded` (new `filterNeededBy` size bound via the `NeededRel` potential
+> function) all instantiate it.  The 4× type-based outer-apply duplication
+> collapsed to 3 `applyTypeOpt_*` generics.  Remaining §5.1: growing ops; a
+> fourth shrink op (`modifySoname.remove`) is one size bound away.
+>
 > **Layout + validator landed.** The PT_LOAD coherence work designed
 > in [`REWRITE-PHASE-3-DESIGN.md`](REWRITE-PHASE-3-DESIGN.md) shipped
 > in a minimal form: `growEOF` + `syncDtAddrTagsInFile` (replacing
@@ -75,7 +86,7 @@ filename it now scopes §5.1 + §3.5b + §4.2 + §5.2, in priority order).
 
 **Recommended pickup order (the complete open menu):**
 
-- **§5.1 op-level Tier D — IN PROGRESS; `removeRpath` structural invariants now DERIVED.**
+- **§5.1 op-level Tier D — IN PROGRESS; all three shrinking ops' structural invariants now DERIVED, via generic `mapDynamicOp f`.**
   The `Adapter.toElfFile` dependent-type obstacle is RESOLVED (the
   un-bundling refactor, commit `8ffe2cb`).  Tier 1 ops (`setOsAbi`,
   `modifyExecstack`) have full `_preserves_loadable`; the Tier-2/3
@@ -85,27 +96,33 @@ filename it now scopes §5.1 + §3.5b + §4.2 + §5.2, in priority order).
   Obligation C DERIVES `identValid`/`sizeFit`/`nullEmpty`/`headerFit_entry`;
   only the 4 position-bound families remain hypotheses.
 
-  **`removeRpath` criterion-2 DONE** (`Patchelf/Elf/OpToElfFactor.lean`,
-  capstone `toElfFile_removeRpath_tierD_roundtrip_derived`): its 6 structural
-  disjointness invariants + section-0-NULL on the op output are now DERIVED,
-  not hypothesized, via the two concrete lemmas this item used to flag as
-  remaining — (1) the `patchDynamicEntries` output-size bound, shipped as the
-  *relative* form `patchDynamicEntries_stripRpath_size_le` (the form the shrink
-  lemmas consume; no parse-balance preconditions), on a compositional
-  `patchDynamicEntries` refactor that dissolves the brittle `__do_jp`
-  navigation; and (2) the `toElfFile_removeRpath_factor` factoring as a single
-  `.dynamic`-shrink `updateSectionContent` on the no-op output, transported via
-  `SectionOps.updateSectionContent_*Disjoint_shrink`.  The capstone takes only
-  the *no-op output's* structural invariants (template-/parser-derivable) +
-  the sanctioned eo-level remainder (`IsValid`, phnum, dynstr + `< 2^64` fit,
-  the 4 derived-field facts, the 4 position bounds).
+  **`removeRpath` + `modifyRPath.remove` + `removeNeeded` criterion-2 DONE**
+  (`Patchelf/Elf/OpToElfFactor.lean`).  The factoring/transport/capstone are
+  now generic over an arbitrary `f` (since every shrinking op is
+  `mapDynamicOp e f`): `toElfFile_mapDynamicOp_factor` factors `toElfFile
+  template (mapDynamicOp typed f)` as a single `.dynamic`-shrink
+  `updateSectionContent` on the no-op output;
+  `mapDynamicOp_structural_transport` derives the 6 disjointness invariants +
+  section-0-NULL from the no-op output's, taking the lone per-`f` fact
+  `hSizeBound : (patch byteDyn (f d)).size ≤ (patch byteDyn d).size`; the generic
+  capstone `toElfFile_mapDynamicOp_tierD_roundtrip_derived` is instantiated at:
+  * `removeRpath` (`f := ·.stripRpath`, bound `patchDynamicEntries_stripRpath_size_le`)
+    — `toElfFile_removeRpath_tierD_roundtrip_derived`, the regression gate
+    (statement + axioms unchanged across the genericization).
+  * `modifyRPath.remove` (same `f`, free) — `toElfFile_modifyRPath_remove_tierD_roundtrip_derived`.
+  * `removeNeeded` (`f := ·.filterNeededBy lib.toUTF8`, bound
+    `patchDynamicEntries_filterNeededBy_size_le` via the `NeededRel`
+    potential function) — `toElfFile_removeNeeded_tierD_roundtrip_derived`.
 
-  Open: the analogous derivation for **`removeNeeded`** (the `filterNeededBy`
-  shrink — needs a `filterNeededBy` size bound + the interp-distinctness facts,
-  op-shaped variants of `removeRpath`'s), and the **growing ops**
-  (`addNeeded`/dynstr-growing), which widen the file and need per-op
-  `growEOFWith` layout reasoning instead of the shrink core.  See §5.1 for the
-  full chain + the reusable `OpToElfFactor` primitives.
+  Each capstone takes only the *no-op output's* structural invariants
+  (template-/parser-derivable) + the sanctioned eo-level remainder (`IsValid`,
+  phnum, dynstr + `< 2^64` fit, the 4 derived-field facts, the 4 position bounds).
+
+  Open: the **growing ops** (`addNeeded`/dynstr-growing), which widen the file
+  and need per-op `growEOFWith` layout reasoning instead of the shrink core.
+  (`modifySoname.remove` is a ready fourth shrink op — a `removeSoname`
+  soname-tail size bound, a `ShrinkRel` variant, away.)  See §5.1 for the
+  full chain + the reusable generic `OpToElfFactor` primitives.
 - **§5.2 strengthen weak `_observable` theorems** — small, independent,
   good warm-up.  `removeNeeded` / `addDebugTag` / `noDefaultLib` /
   `modifyRPath.set` / `modifySoname.set` have weak-or-missing adversarial
@@ -547,7 +564,7 @@ pattern.  Estimated ~150-200 LOC each.
 
 ### Priority 5 — Code quality
 
-#### 5.1 Op-level byte roundtrip lemmas — IN PROGRESS (Tier 1 + open core landed; `removeRpath` structural invariants DERIVED; `removeNeeded` + growing ops open)
+#### 5.1 Op-level byte roundtrip lemmas — IN PROGRESS (Tier 1 + open core landed; all 3 shrinking ops' structural invariants DERIVED via generic `mapDynamicOp f`; growing ops open)
 
 A stronger replacement for the existing `_preserves_valid` lemmas:
 prove `parse (encode (op e)) = .ok ⟨prepLayoutForEncode
@@ -693,42 +710,49 @@ disjointness clauses + section-0-NULL (disjointness is monotone in the
 section's `encodedSize = size · dynEntrySize`).  This is the layout core
 every shrinking op's structural-invariant discharge needs.
 
-**`removeRpath` per-op discharge — DONE** (`Patchelf/Elf/OpToElfFactor.lean`).
-Both concrete lemmas this section used to flag as remaining are shipped:
+**Shrinking-op per-op discharge — DONE for all 3, generic over `mapDynamicOp f`**
+(`Patchelf/Elf/OpToElfFactor.lean`).  Every shrinking op is `mapDynamicOp e f`,
+so the factoring/transport/capstone are now parameterized on `f`:
 
-1. **`patchDynamicEntries` output-size bound** — shipped as the *relative*
-   form `patchDynamicEntries_stripRpath_size_le` (`Adapter.lean`):
-   `(patchDynamicEntries byteDyn (stripRpath d)).size ≤ (patchDynamicEntries
-   byteDyn d).size`.  This is the form the shrink-monotonicity lemmas actually
-   consume (op output vs. NO-OP output on the *same* `byteDyn`), and — unlike
-   the absolute `≤ byteDyn.size` — needs **no** parse-balance preconditions
-   (NEEDED-count match / single-DT_NULL / etc.), because `stripRpath` only
-   removes the rpath/runpath pushes.  Proved on a **compositional
-   `patchDynamicEntries` refactor**: a pure loop fold (`patchStep` over
-   `byteDyn`) + explicit tail-append helpers (`appendSurplusNeeded` for the
-   `while`, `appendUnless` for the 5 trailing `unless`-blocks), byte-identical
-   to the old `Id.run do` block (confirmed by 54/54 shell tests).  This
-   dissolves the brittle desugared-`__do_jp` navigation entirely.  The relative
-   bound goes through a lockstep fold (`Array.foldl_rel` tracking a `ShrinkRel`
-   on the two accumulators) + a tail bound.  (The landed
-   `Adapter.idForIn_proj_size_le` / `foldl_proj_size_le_add` bridges — the
-   absolute-loop-bound route — are unused by this proof but kept for any growing
-   op needing the absolute form.)
-2. **Factoring `eo = (toElfFile template typed).updateSectionContent iDyn
-   (.dynamic newDyn)`** — `toElfFile_removeRpath_factor`: since `removeRpath`
-   changes only `typed.dynamic`, `eo` and the no-op output share the whole
-   `applyX` chain except `applyDynamic`'s argument; the single `.dynamic`
-   update is pushed out through the 5 outer applies (`applyVersym`…`applyInterp`,
-   each commuting since it targets a section ≠ the dynamic index — the
-   foundational `updateSectionContent_comm` dodges the dependent-`Array.set`
-   motive wall via getElem-characterization) and the header/phdrs override.
-   The no-op's dynamic content is identified as `patchDynamicEntries (template
-   bytes) typed.dynamic` by `toElfFile_content_at_dynamicIdx` (a `calc`/`.trans`
-   chain — plain `rw` on the giant `applyX` term whnf-times-out even at 1M
-   heartbeats).  `removeRpath_structural_transport` then transports the 6
-   disjointness invariants + section-0-NULL via the `SectionOps` shrink core,
-   and the capstone `toElfFile_removeRpath_tierD_roundtrip_derived` glues it into
-   the full byte round-trip.
+1. **Factoring** `toElfFile_mapDynamicOp_factor` — `toElfFile template
+   (mapDynamicOp typed f) = (toElfFile template typed).updateSectionContent iDyn
+   (.dynamic (patch bd (f td)))`.  Since `mapDynamicOp typed f` changes only
+   `typed.dynamic`, `eo` and the no-op output share the whole `applyX` chain
+   except `applyDynamic`'s argument; the single `.dynamic` update is pushed out
+   through the 5 outer applies (`applyVersym`…`applyInterp`, each commuting since
+   it targets a section ≠ the dynamic index — `updateSectionContent_comm` dodges
+   the dependent-`Array.set` motive wall via getElem-characterization) and the
+   header/phdrs override.  The 4× type-based outer-apply duplication is collapsed
+   to 3 generic `applyTypeOpt_*` lemmas.  The no-op's dynamic content is
+   identified as `patchDynamicEntries (template bytes) typed.dynamic` by
+   `toElfFile_content_at_dynamicIdx` (a `calc`/`.trans` chain — plain `rw` on the
+   giant `applyX` term whnf-times-out even at 1M heartbeats).
+2. **Transport** `mapDynamicOp_structural_transport` — derives the 6 disjointness
+   invariants + section-0-NULL on `eo` from the no-op output's via the `SectionOps`
+   shrink core, taking the lone per-`f` fact `hSizeBound : (patch byteDyn (f d)).size
+   ≤ (patch byteDyn d).size`.  The generic capstone
+   `toElfFile_mapDynamicOp_tierD_roundtrip_derived` glues it into the full byte
+   round-trip.
+3. **Per-`f` size bounds** (`Adapter.lean`), the *relative* form (op vs. NO-OP on
+   the *same* `byteDyn`; no parse-balance preconditions), proved on the
+   compositional `patchDynamicEntries` refactor (pure loop fold `patchStep` +
+   explicit tail-append helpers `appendSurplusNeeded`/`appendUnless`,
+   byte-identical to the old `Id.run do` block, confirmed by 54/54 shell tests):
+   * `patchDynamicEntries_stripRpath_size_le` — `stripRpath` nulls two TAIL
+     `unless`-blocks at EQUAL cursor; lockstep fold tracks `ShrinkRel`.  Used by
+     `removeRpath` (`toElfFile_removeRpath_tierD_roundtrip_derived`, the
+     regression gate, statement + axioms unchanged) AND `modifyRPath.remove`
+     (same `f`, free — `toElfFile_modifyRPath_remove_tierD_roundtrip_derived`).
+   * `patchDynamicEntries_filterNeededBy_size_le` — `filterNeededBy` drops LOOP
+     `needed` entries, so the op/no-op cursors run UNEQUAL; the lockstep relation
+     is a POTENTIAL function `NeededRel = result.size + (needed.size − cursor)`
+     (not `ShrinkRel`), with `appendSurplusNeeded_size_exact` + `tail_filterNeeded`
+     collapsing the tail to the loop-end potential.  Used by `removeNeeded`
+     (`toElfFile_removeNeeded_tierD_roundtrip_derived`).
+
+   (The landed `Adapter.idForIn_proj_size_le` / `foldl_proj_size_le_add` bridges —
+   the absolute-loop-bound route — are unused by these proofs but kept for any
+   growing op needing the absolute form.)
 
 **Reusable shrink-monotonicity core** (`SectionOps.lean`):
 `updateSectionContent_{headerPhdr,headerShdr,phdrShdr,headerSection,
@@ -738,15 +762,13 @@ disjointness clauses + section-0-NULL (disjointness is monotone in the
 section's `encodedSize = size · dynEntrySize`).  This is the layout core
 every shrinking op's structural-invariant discharge needs.
 
-**Remaining per-op work**: (a) **`removeNeeded`** — the same chain with the
-`filterNeededBy` shrink: needs a `filterNeededBy` relative size bound (a
-variant of `patchDynamicEntries_stripRpath_size_le`, since `filterNeededBy`
-drops `needed` entries rather than rpath/runpath) and the same interp/factor
-machinery (largely reusable from `OpToElfFactor.lean`).  (b) **growing ops**
-(`addNeeded`, dynstr-growing, and the append-an-entry `noDefaultLib`/`addDebugTag`)
-widen the file, so the shrink core doesn't apply — they need per-op
-`growEOFWith` layout reasoning (the §1.2 `updatePhdrsAfterMove_*` /
-`retargetPtPhdr_*` families are reusable).
+**Remaining per-op work**: **growing ops** (`addNeeded`, dynstr-growing, and the
+append-an-entry `noDefaultLib`/`addDebugTag`) widen the file, so the shrink core
+doesn't apply — they need per-op `growEOFWith` layout reasoning (the §1.2
+`updatePhdrsAfterMove_*` / `retargetPtPhdr_*` families are reusable).
+(`modifySoname.remove` is a ready *fourth* shrink op: it needs only a
+`removeSoname` size bound — a `ShrinkRel` variant on the soname tail block — then
+instantiates the generic capstone like the other three.)
 
 §1.1 (Parser establishes `IsLoadable`) and §1.2
 (`growEOFWith_preserves_loadable`, lifted to the end-to-end
