@@ -84,7 +84,8 @@ grep -rn "sorry\b" Patchelf/                     # zero matches expected
 - §1.2 `_preserves_valid` ladder (all 7 byte-layer theorems +
   top-level `growEOFWith_preserves_valid`) — LANDED.
 - §1.2 `_preserves_loadable` ladder (all four branches +
-  top-level `growEOFWith_preserves_loadable`) — LANDED.
+  top-level `growEOFWith_preserves_loadable`, lifted to the
+  pipeline-level `prepLayoutForEncodeWith_preserves_loadable`) — LANDED.
 - §1.3a `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` — LANDED.
 
 **Patterns to know before touching Tier D / encoder proofs:**
@@ -229,9 +230,26 @@ disjointness invariants (`hSection0Null` / `headerPhdrDisjoint` /
 `headerSectionDisjoint` / `phdrSectionDisjoint`) for the per-branch
 `sections_nonoverlapping`.
 
+**Pipeline-level closure.** The ladder was lifted one rung above
+`growEOFWith` to the full pre-encode pipeline.
+`prepLayoutForEncodeWith` is `if layoutAlreadyValid then e else
+syncDtAddrTagsInFile (growEOFWith …)`, so
+`prepLayoutForEncodeWith_preserves_loadable` (`Encoder.lean`)
+composes `growEOFWith_preserves_loadable` with a new
+`syncDtAddrTagsInFile_preserves_loadable` (`GrowEOF.lean`).  The
+latter is light: `syncDtAddrTagsInFile` only same-size-`map`s the
+`.dynamic` section, so it preserves `phdrs` verbatim and per-section
+`(type, offset, encodedSize)` everywhere; the four clauses transport
+directly (three via the literal `phdrs` preservation,
+`sections_nonoverlapping` via the per-section facts).  A
+`growEOFWith_dynstr` dispatch lemma threads the `dynstr`
+precondition (needed for `iDyn ≠ shstrndx`) through `growEOFWith`.
+
 Axioms: `[propext, Classical.choice, Quot.sound]` — no `sorryAx`.
 Actual cost was ~780 LOC across `GrowEOF.lean` (L1 per-phdr facts +
-four branch theorems + top-level dispatch).
+four branch theorems + top-level dispatch), plus ~190 LOC for the
+pipeline-level lift (`syncDtAddrTagsInFile_preserves_loadable` +
+`growEOFWith_dynstr` + `prepLayoutForEncodeWith_preserves_loadable`).
 
 **Supporting infrastructure landed.** `Patchelf/Elf/SectionOps.lean`
 (~420 LOC) exposes the helpers `growEOFWith` / `syncDtAddrTagsInFile`'s

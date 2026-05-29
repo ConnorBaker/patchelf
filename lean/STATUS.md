@@ -28,19 +28,24 @@
 > on a new `PlaceFold.placeFold_value_witness` abstraction in
 > `LayoutEngine.lean`.
 >
-> **§1.2 `_preserves_loadable` ladder complete.** All four
-> branches plus the top-level dispatch shipped:
-> `layoutForEncoding_preserves_loadable` (no-PT_LOAD branch),
-> `growEOFWithMainBody_preserves_loadable`,
+> **§1.2 `_preserves_loadable` ladder complete — through the full
+> pipeline.** All four `growEOFWith` branches plus the top-level
+> dispatch shipped: `layoutForEncoding_preserves_loadable`
+> (no-PT_LOAD branch), `growEOFWithMainBody_preserves_loadable`,
 > `growEOFWithFreshPtLoad_preserves_loadable`,
 > `growEOFWithFreshPtLoadReloc_preserves_loadable`, and the
-> user-facing top-level `growEOFWith_preserves_loadable`.  Built on
-> new per-phdr facts about `updatePhdrsAfterMove` (PT_LOAD /
-> PT_INTERP / PT_DYNAMIC, threading the `i = lastIdx` filesz/memsz
-> update) plus a `retargetPtPhdr_*` family for the relocate branch.
-> The encoder's primary layout pass now provably preserves full
-> loader-coherence (`IsValid + sectionsNonOverlapping +
-> ptInterpAgreement + ptDynamicAgreement + segmentCongruence`).
+> top-level `growEOFWith_preserves_loadable`.  Built on new per-phdr
+> facts about `updatePhdrsAfterMove` (PT_LOAD / PT_INTERP /
+> PT_DYNAMIC, threading the `i = lastIdx` filesz/memsz update) plus
+> a `retargetPtPhdr_*` family for the relocate branch.  Lifted one
+> rung higher to the **full pre-encode pipeline**:
+> `syncDtAddrTagsInFile_preserves_loadable` (the DT_* address
+> rewrite post-pass) composes with `growEOFWith_preserves_loadable`
+> to give `prepLayoutForEncodeWith_preserves_loadable`
+> (`Encoder.lean`).  The encoder's entire layout pre-pass now
+> provably preserves full loader-coherence (`IsValid +
+> sectionsNonOverlapping + ptInterpAgreement + ptDynamicAgreement +
+> segmentCongruence`).
 >
 > **Tests: 54/54 shell tests passing; 108/108 Lean build jobs;
 > zero `sorry`s.**
@@ -135,7 +140,7 @@ For the file-by-file architecture, see
 exhaustive declaration inventory, see
 [`INVENTORY.md`](INVENTORY.md).
 
-Total Lean source: ~20,470 LOC. Distribution by category:
+Total Lean source: ~20,675 LOC. Distribution by category:
 
 | Category | LOC | What it is |
 |---|---|---|
@@ -143,7 +148,7 @@ Total Lean source: ~20,470 LOC. Distribution by category:
 | DSL + op-layer infra (`SchemaDSL` + `Schemas` + `Adapter` + `ObservableCombinators`) | ~2,340 | `elf_schema` elaborator + 7 invocations + bridge |
 | Wire codec + types (Splice, Layout, Decode, Parser, ParseHeader, Reader, Writer, Serialize, DynamicParse/Encode) | ~1,670 | Reader/Writer + Splice + parsing primitives + per-clause ParseError |
 | Typed-section types (DynamicSection, StringSection, SymbolSection, ValidElfFile, InterpSection, AuxSections) | ~630 | Typed algebra + StringSection lookup roundtrip |
-| Layout pipeline + validator (`Encoder` + `GrowEOF` + `Validate`) | ~3,260 | growEOF + syncDtAddrTagsInFile + pre-write validator + `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` chain + the `_preserves_loadable` ladder |
+| Layout pipeline + validator (`Encoder` + `GrowEOF` + `Validate`) | ~3,470 | growEOF + syncDtAddrTagsInFile + pre-write validator + `prepLayoutForEncodeWith_produces_spliceRegionsDisjoint` chain + the pipeline-level `_preserves_loadable` ladder |
 | `SectionOps` | ~420 | `updateSectionContent` + projection / index-preservation / typed-accessor preservation helpers |
 | 14 ops (`Elf/Ops/*.lean`) | ~1,080 | mutating operations |
 | CLI + Main + Log | ~990 | lean4-cli subcommand tree + stderr trace logger |
@@ -382,7 +387,7 @@ See `research/ROADMAP.md` for the full prioritized list.  Highlights:
 ### PT_LOAD layout — closed for the common case
 
 The previous `layoutForEncoding` repack stomped on PT_LOAD coverage
-when sections moved.  `growEOF` (`GrowEOF.lean`, ~4,075 LOC including
+when sections moved.  `growEOF` (`GrowEOF.lean`, ~4,228 LOC including
 the `_produces_spliceRegionsDisjoint` proof, the
 `syncDtAddrTagsInFile_preserves_spliceRegionsDisjoint` lemma, and the
 full `_preserves_valid` + `_preserves_loadable` ladders)
@@ -452,6 +457,17 @@ Tests: `tests/cases/53-cli-set-rpath-bss-heavy.sh` (in-place),
   for the relocate branch's extra `retargetPtPhdr` layer.  Fresh
   PT_LOAD congruence: offset/vaddr both `roundUp _ align`, so both
   `≡ 0 (mod align)`.
+
+  Lifted to the full pre-encode pipeline:
+  `syncDtAddrTagsInFile_preserves_loadable` (`GrowEOF.lean`) plus
+  `growEOFWith_dynstr` compose with `growEOFWith_preserves_loadable`
+  into `prepLayoutForEncodeWith_preserves_loadable` (`Encoder.lean`,
+  with `none`-specialized `prepLayoutForEncode_preserves_loadable`).
+  `syncDtAddrTagsInFile` only same-size-`map`s `.dynamic` content, so
+  it preserves `phdrs` verbatim and per-section
+  `(type, offset, encodedSize)` everywhere; the four clauses
+  transport directly.  The dynstr precondition (→ `iDyn ≠ shstrndx`)
+  is the same one `_preserves_valid` needs.
 - **`spliceDisjoint` for encoder output — DONE.**
   `Encoder.prepLayoutForEncodeWith_produces_spliceRegionsDisjoint`
   is the composed API the op-level Tier D proofs consume.  See
